@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { calculateBottomSignal, calculateBreadth, calculateEquityRegime, calculateSectorRotation, calculateTopRisk } from './equityAnalytics.js';
+import { calculateBottomSignal, calculateBreadth, calculateEquityRegime, calculateMacroSensitivities, calculateSectorRotation, calculateTopRisk } from './equityAnalytics.js';
 
 function technicalFixture(overrides = {}) {
   return {
@@ -201,4 +201,29 @@ test('sector rotation ranks relative strength without fabricating missing sector
   assert.equal(rotation.sectors[0].symbol, 'XLK');
   assert.equal(rotation.sectors[0].rank, 1);
   assert.deepEqual(rotation.missing, ['1 sector histories']);
+});
+test('sector rotation carries group labels for subsectors', () => {
+  const points = (step) => Array.from({ length: 260 }, (_, index) => ({
+    timestamp: new Date(Date.UTC(2025, 0, index + 1)).toISOString(),
+    value: 100 + (index * step) + Math.sin(index / 8),
+  }));
+  const rotation = calculateSectorRotation([
+    { symbol: 'XLK', name: 'Technology', points: points(0.5) },
+    { symbol: 'SOXX', name: 'Semiconductors', group: 'Technology', points: points(0.6) },
+  ], points(0.25));
+  assert.equal(rotation.status, 'calculated');
+  assert.equal(rotation.sectors[0].group, 'Technology');
+});
+
+test('macro sensitivities correlate ETF changes against FRED histories', () => {
+  const etfPoints = Array.from({ length: 120 }, (_, index) => ({
+    date: new Date(Date.UTC(2025, 0, index + 1)).toISOString().slice(0, 10),
+    value: 100 + index + Math.sin(index / 4),
+  }));
+  const dollarHistory = etfPoints.map((point) => ({ date: point.date, value: 100 - ((point.value - 100) * 0.2) }));
+  const empty = calculateMacroSensitivities(etfPoints, { dollar: dollarHistory, realYield: [], vix: [], credit: [] });
+  assert.ok(empty.dollar < 0);
+  assert.equal(empty.realYield, null);
+  assert.equal(empty.vix, null);
+  assert.equal(empty.credit, null);
 });

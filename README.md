@@ -204,7 +204,9 @@ The macro regime combines US liquidity, Chicago Fed financial conditions, US hig
 
 `equity-regime-v1` dynamically changes factor weights, alert thresholds, and expected holding periods. It requires price trend, momentum, and volatility, and remains provisional below 75% driver coverage. `equity-top-risk-v1` and `equity-bottom-signal-v1` require both technical and constituent-breadth confirmation and do not publish from price and liquidity alone.
 
-`equity-breadth-v1` calculates advance/decline participation, McClellan measures, moving-average participation, new highs/lows, and breadth thrusts from constituent histories. `sector-rotation-v1` ranks aligned 20- and 60-session performance relative to SPY together with `technical-v1`. Missing constituent, volume, flow, sentiment, positioning, or credit inputs remain explicitly unavailable.
+`equity-breadth-v1` calculates advance/decline participation, McClellan measures, moving-average participation, new highs/lows, and breadth thrusts from constituent histories. `sector-rotation-v1` ranks aligned 20- and 60-session performance relative to SPY together with `technical-v1` across all 11 sectors and 19 subsector ETF proxies; ranks are global across the tracked universe. Missing constituent, volume, flow, sentiment, positioning, or credit inputs remain explicitly unavailable.
+
+The sector dashboard also publishes a calculated macro-sensitivity matrix: for every sector and subsector ETF it correlates 60-day daily changes against stored FRED broad-dollar, 10-year real-yield, VIX, and high-yield-spread histories. Volume, valuation, positioning, and ETF flows are not inferred from price data and remain labeled unavailable until a licensed source is connected.
 
 ## Reliability Rules
 

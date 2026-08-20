@@ -116,10 +116,12 @@ export async function getSectorDashboard() {
   let coverage = [];
   let storageAvailable = false;
   let coverageAvailable = false;
+  let liquidity = null;
   if (isDatabaseConfigured()) {
-    const [historiesResult, coverageResult] = await Promise.allSettled([
+    const [historiesResult, coverageResult, liquidityResult] = await Promise.allSettled([
       getStoredMarketHistories(symbols),
       getStoredSeriesCoverage(symbols),
+      getLiquiditySnapshot(),
     ]);
     if (historiesResult.status === 'fulfilled') {
       histories = historiesResult.value;
@@ -129,27 +131,45 @@ export async function getSectorDashboard() {
       coverage = coverageResult.value;
       coverageAvailable = true;
     }
+    if (liquidityResult.status === 'fulfilled') liquidity = liquidityResult.value;
   }
   const historyIsFresh = (points) => {
     const timestamp = new Date(points.at(-1)?.timestamp).getTime();
     return points.length > 0 && !isDailyCloseStale(timestamp);
   };
   const benchmarkHistory = histories.get('SPY') ?? [];
-  const rotation = calculateSectorRotation(sectorCatalog.map((sector) => ({
-    ...sector,
-    points: historyIsFresh(histories.get(sector.symbol) ?? []) ? histories.get(sector.symbol) : [],
-  })), historyIsFresh(benchmarkHistory) ? benchmarkHistory : []);
-  const sectorMetadata = new Map(sectorCatalog.map((sector) => [sector.symbol, sector]));
-  const enrichedRotation = {
-    ...rotation,
-    sectors: rotation.sectors.map((sector) => ({ ...sector, sensitivity: sectorMetadata.get(sector.symbol)?.sensitivity ?? null })),
+  const usableBenchmarkHistory = historyIsFresh(benchmarkHistory) ? benchmarkHistory : [];
+  const rotationInputs = [
+    ...sectorCatalog.map((sector) => ({ ...sector, kind: 'sector', points: historyIsFresh(histories.get(sector.symbol) ?? []) ? histories.get(sector.symbol) : [] })),
+    ...subsectorCatalog.map((subsector) => ({ ...subsector, kind: 'subsector', points: historyIsFresh(histories.get(subsector.symbol) ?? []) ? histories.get(subsector.symbol) : [] })),
+  ];
+  const rotation = calculateSectorRotation(rotationInputs, usableBenchmarkHistory);
+  const sectorMetadata = new Map([...sectorCatalog, ...subsectorCatalog].map((item) => [item.symbol, item]));
+
+  const fredHistoryByKey = Object.fromEntries((liquidity?.series ?? [])
+    .filter((series) => !series.stale && series.history?.length)
+    .map((series) => [series.key, series.history]));
+  const macroSeries = {
+    dollar: fredHistoryByKey.dxy ?? [],
+    realYield: fredHistoryByKey.realYield10y ?? [],
+    vix: fredHistoryByKey.vix ?? [],
+    credit: fredHistoryByKey.highYieldSpread ?? [],
   };
+  const macroSources = Object.fromEntries(Object.entries(macroSeries).map(([key, history]) => [key, history.length ? 'FRED stored history' : null]));
+  const withSensitivities = rotation.sectors.map((row) => ({
+    ...row,
+    sensitivity: sectorMetadata.get(row.symbol)?.sensitivity ?? null,
+    macroSensitivity: calculateMacroSensitivities(normalizeStoredPoints(histories.get(row.symbol) ?? []), macroSeries),
+  }));
+  const sectors = withSensitivities.filter((row) => row.group === null);
+  const subsectors = withSensitivities.filter((row) => row.group !== null);
 
   return {
     version: 'equity-sector-dashboard-v1',
     asOf: rotation.asOf,
     storage: { configured: isDatabaseConfigured(), available: storageAvailable, coverageAvailable },
-    rotation: enrichedRotation,
+    rotation: { ...rotation, sectors, subsectors },
+    macroSensitivity: { sources: macroSources, window: '60D changes' },
     sectors: attachSeriesCoverage(sectorCatalog, coverage),
     subsectors: attachSeriesCoverage(subsectorCatalog, coverage),
     sectorBreadth: {
@@ -157,6 +177,13 @@ export async function getSectorDashboard() {
       reason: 'Sector and subsector constituent histories are required for participation breadth.',
     },
     flows: unavailableDataset('Sector flows', ['ETF creations/redemptions', 'Mutual-fund flows', 'Institutional flows', 'Options flows']),
-    methodology: 'Rotation uses fresh, aligned 20- and 60-session ETF proxy performance relative to SPY together with technical-v1. Stale histories are excluded; holdings breadth and flows are not inferred.',
+    methodology: 'Rotation uses fresh, aligned 20- and 60-session ETF proxy performance relative to SPY together with technical-v1. Macro sensitivities correlate 60-day daily ETF changes against FRED broad-dollar, real-yield, VIX, and high-yield-spread histories. Stale histories are excluded; holdings breadth, volume, valuation, positioning, and flows are not inferred.',
   };
+}
+
+function normalizeStoredPoints(points) {
+  return points
+    .filter((point) => Number.isFinite(point.value) && point.timestamp)
+    .map((point) => ({ date: String(point.timestamp).slice(0, 10), value: point.value }))
+    .sort((left, right) => left.date.localeCompare(right.date));
 }

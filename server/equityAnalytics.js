@@ -1,4 +1,4 @@
-import { calculateTechnicalSnapshot } from './analytics.js';
+import { calculateChangeCorrelations, calculateTechnicalSnapshot } from './analytics.js';
 
 function clamp(value, minimum = 0, maximum = 100) {
   return Math.min(maximum, Math.max(minimum, value));
@@ -365,6 +365,19 @@ export function calculateBreadth(constituents, options = {}) {
   };
 }
 
+export function calculateMacroSensitivities(points, macroSeries) {
+  const correlate = (history) => {
+    if (!history?.length) return null;
+    return calculateChangeCorrelations(points, history)?.correlations?.['60D'] ?? null;
+  };
+  return {
+    dollar: correlate(macroSeries.dollar),
+    realYield: correlate(macroSeries.realYield),
+    vix: correlate(macroSeries.vix),
+    credit: correlate(macroSeries.credit),
+  };
+}
+
 export function calculateSectorRotation(sectors, benchmarkPoints) {
   const benchmark = normalizeHistory(benchmarkPoints ?? []);
   if (benchmark.length < 65) return { version: 'sector-rotation-v1', status: 'unavailable', asOf: null, sectors: [], missing: ['Benchmark history'] };
@@ -390,6 +403,7 @@ export function calculateSectorRotation(sectors, benchmarkPoints) {
     return [{
       symbol: sector.symbol,
       name: sector.name,
+      group: sector.group ?? null,
       asOf: points.at(-1).date,
       score,
       quadrant,
