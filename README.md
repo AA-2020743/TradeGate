@@ -41,6 +41,8 @@ curl "http://127.0.0.1:8787/api/markets/history/BTC?range=1M"
 curl http://127.0.0.1:8787/api/analytics/technical/BTC
 curl http://127.0.0.1:8787/api/analytics/dxy-btc
 curl http://127.0.0.1:8787/api/equities/catalog
+curl http://127.0.0.1:8787/api/equities/dashboard/SPY
+curl http://127.0.0.1:8787/api/equities/sectors
 curl http://127.0.0.1:8787/api/ingestion/status
 ```
 

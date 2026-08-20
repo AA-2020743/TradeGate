@@ -14,6 +14,7 @@ import {
   sentimentRequirements,
   subsectorCatalog,
 } from './equityCatalog.js';
+import { getEquityDashboard, getSectorDashboard } from './equities.js';
 import { startIngestionScheduler } from './ingestion.js';
 import { getDxyBitcoinRelationship, getLiquiditySnapshot, getMarketHistory, getMarketSnapshot, getProviderHealth, getTechnicalSnapshot } from './providers.js';
 
@@ -139,6 +140,26 @@ app.get('/api/equities/catalog', async (_request, response, next) => {
         positioning: positioningRequirements,
       },
     });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.get('/api/equities/dashboard/:symbol', async (request, response, next) => {
+  try {
+    response.json(await getEquityDashboard(request.params.symbol));
+  } catch (error) {
+    if (error.message.startsWith('Unsupported equity index proxy')) {
+      response.status(400).json({ error: error.message });
+      return;
+    }
+    next(error);
+  }
+});
+
+app.get('/api/equities/sectors', async (_request, response, next) => {
+  try {
+    response.json(await getSectorDashboard());
   } catch (error) {
     next(error);
   }
