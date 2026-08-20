@@ -277,7 +277,7 @@ export function calculateUsLiquidityModel(seriesList) {
     confidenceScore,
     breadth: { positive: positiveDrivers, negative: negativeDrivers, total: drivers.length },
     netLiquidity: netLiquidity.at(-1)?.value ?? null,
-    history: netLiquidity.slice(-52),
+    history: netLiquidity,
     composite,
     drivers: drivers.map(({ key, name, change, impulse, weight }) => ({ key, name, changePercent: change, impulse, weight })),
   };

@@ -235,6 +235,95 @@ function normalizeSparkline(values) {
   return values.map((value) => 5 + (((value - minimum) / spread) * 30));
 }
 
+function formatLiquidityValue(value) {
+  if (!Number.isFinite(value)) return 'Unavailable';
+  const absolute = Math.abs(value);
+  if (absolute >= 1_000_000) return `${value < 0 ? '-' : ''}$${(absolute / 1_000_000).toFixed(2)}T`;
+  if (absolute >= 1_000) return `${value < 0 ? '-' : ''}$${(absolute / 1_000).toFixed(1)}B`;
+  return `${value < 0 ? '-' : ''}$${absolute.toFixed(0)}M`;
+}
+
+function LiquidityHistoryChart({ history, range, onRangeChange, expanded = false }) {
+  const [hoveredIndex, setHoveredIndex] = React.useState(null);
+  const [pinnedIndex, setPinnedIndex] = React.useState(null);
+  const latestDate = new Date(history.at(-1)?.date).getTime();
+  const rangeDays = { '1Y': 366, '3Y': 1_096, '5Y': 1_827 };
+  const cutoff = rangeDays[range] && Number.isFinite(latestDate) ? latestDate - (rangeDays[range] * 86_400_000) : null;
+  const points = history.filter((point) => Number.isFinite(point.value) && point.date && (cutoff === null || new Date(point.date).getTime() >= cutoff));
+  const width = 920;
+  const height = expanded ? 390 : 220;
+  const padding = { top: 20, right: 18, bottom: 34, left: 62 };
+  const values = points.map((point) => point.value);
+  const low = values.length ? Math.min(...values) : 0;
+  const high = values.length ? Math.max(...values) : 1;
+  const spread = high - low || 1;
+  const coordinates = points.map((point, index) => ({
+    x: padding.left + (index * ((width - padding.left - padding.right) / Math.max(1, points.length - 1))),
+    y: padding.top + (((high - point.value) / spread) * (height - padding.top - padding.bottom)),
+  }));
+  const polyline = coordinates.map((point) => `${point.x},${point.y}`).join(' ');
+  const requestedIndex = pinnedIndex ?? hoveredIndex ?? (points.length ? points.length - 1 : null);
+  const activeIndex = requestedIndex === null ? null : Math.min(requestedIndex, points.length - 1);
+  const activePoint = activeIndex === null ? null : points[activeIndex];
+  const activeCoordinate = activeIndex === null ? null : coordinates[activeIndex];
+  const priorPoint = activeIndex !== null && activeIndex >= 13 ? points[activeIndex - 13] : null;
+  const change13w = priorPoint?.value ? ((activePoint.value / priorPoint.value) - 1) * 100 : null;
+  const labelIndexes = points.length ? [0, .25, .5, .75, 1].map((position) => Math.round((points.length - 1) * position)) : [];
+
+  const selectNearest = (event, pin = false) => {
+    if (!points.length) return;
+    const bounds = event.currentTarget.getBoundingClientRect();
+    const chartStart = padding.left / width;
+    const chartWidth = (width - padding.left - padding.right) / width;
+    const ratio = Math.min(1, Math.max(0, (((event.clientX - bounds.left) / bounds.width) - chartStart) / chartWidth));
+    const index = Math.round(ratio * (points.length - 1));
+    setHoveredIndex(index);
+    if (pin) setPinnedIndex((current) => current === index ? null : index);
+  };
+
+  if (points.length < 2) return <div className="liquidity-history-empty">No aligned liquidity history is available.</div>;
+  return <div className={`liquidity-history-workspace ${expanded ? 'expanded' : ''}`}>
+    <div className="liquidity-history-toolbar">
+      <div><b>{formatLiquidityValue(activePoint?.value)}</b><span>{activePoint?.date ?? 'No date'}{Number.isFinite(change13w) ? ` · 13W ${change13w >= 0 ? '+' : ''}${change13w.toFixed(2)}%` : ''}</span></div>
+      <div className="window-buttons">{['1Y', '3Y', '5Y', 'All'].map((item) => <button className={range === item ? 'selected' : ''} key={item} onClick={() => { onRangeChange(item); setPinnedIndex(null); }}>{item}</button>)}</div>
+    </div>
+    <div className="liquidity-history-plot" onPointerMove={selectNearest} onPointerLeave={() => setHoveredIndex(null)} onClick={(event) => selectNearest(event, true)}>
+      <svg viewBox={`0 0 ${width} ${height}`} preserveAspectRatio="none" role="img" aria-label={`Calculated net US liquidity from ${points[0].date} through ${points.at(-1).date}`}>
+        <defs><linearGradient id={expanded ? 'liquidity-fill-expanded' : 'liquidity-fill'} x1="0" x2="0" y1="0" y2="1"><stop offset="0" stopColor="#78c968" stopOpacity=".28"/><stop offset="1" stopColor="#78c968" stopOpacity=".02"/></linearGradient></defs>
+        {[0, .25, .5, .75, 1].map((position) => { const y = padding.top + (position * (height - padding.top - padding.bottom)); return <g key={position}><line x1={padding.left} x2={width - padding.right} y1={y} y2={y} className="liquidity-grid-line"/><text x={padding.left - 9} y={y + 4} textAnchor="end" className="liquidity-axis-label">{formatLiquidityValue(high - (position * spread))}</text></g>; })}
+        <path d={`M${coordinates[0].x},${height - padding.bottom} L${coordinates.map((point) => `${point.x},${point.y}`).join(' L')} L${coordinates.at(-1).x},${height - padding.bottom} Z`} fill={`url(#${expanded ? 'liquidity-fill-expanded' : 'liquidity-fill'})`}/>
+        <polyline points={polyline} fill="none" stroke="#71c45f" strokeWidth={expanded ? 2.5 : 2} vectorEffect="non-scaling-stroke"/>
+        {activeCoordinate && <g><line x1={activeCoordinate.x} x2={activeCoordinate.x} y1={padding.top} y2={height - padding.bottom} className="liquidity-crosshair"/><circle cx={activeCoordinate.x} cy={activeCoordinate.y} r="5" className="liquidity-active-point" vectorEffect="non-scaling-stroke"/></g>}
+        {labelIndexes.map((index) => <text key={`${points[index].date}-${index}`} x={coordinates[index].x} y={height - 8} textAnchor={index === 0 ? 'start' : index === points.length - 1 ? 'end' : 'middle'} className="liquidity-axis-label">{new Intl.DateTimeFormat('en-US', { month: 'short', year: '2-digit' }).format(new Date(points[index].date))}</text>)}
+      </svg>
+      {activeCoordinate && <div className={`liquidity-point-tooltip ${activeCoordinate.x > width * .78 ? 'align-right' : ''}`} style={{ left: `${(activeCoordinate.x / width) * 100}%`, top: `${(activeCoordinate.y / height) * 100}%` }}><b>{activePoint.date}</b><span>{formatLiquidityValue(activePoint.value)}</span><small>{pinnedIndex === activeIndex ? 'Pinned · click to release' : 'Click to pin point'}</small></div>}
+    </div>
+    <p className="liquidity-vintage-note">Current-vintage FRED reconstruction. Use for exploratory replay; a look-ahead-safe backtest requires point-in-time ALFRED vintages.</p>
+  </div>;
+}
+
+function LiquidityChartDialog({ history, onClose }) {
+  const [range, setRange] = React.useState('All');
+  React.useEffect(() => {
+    const closeOnEscape = (event) => {
+      if (event.key === 'Escape') onClose();
+    };
+    document.addEventListener('keydown', closeOnEscape);
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    return () => {
+      document.removeEventListener('keydown', closeOnEscape);
+      document.body.style.overflow = previousOverflow;
+    };
+  }, [onClose]);
+  return <div className="liquidity-dialog-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}>
+    <section className="liquidity-dialog panel" role="dialog" aria-modal="true" aria-labelledby="liquidity-dialog-title">
+      <header><div><p className="section-kicker">HISTORICAL MODEL INSPECTOR</p><h2 id="liquidity-dialog-title">Calculated net US liquidity</h2><p>Move across the chart to inspect a date. Click or tap to pin the observation for comparison.</p></div><button className="liquidity-dialog-close" onClick={onClose} aria-label="Close liquidity chart">×</button></header>
+      <LiquidityHistoryChart history={history} range={range} onRangeChange={setRange} expanded />
+    </section>
+  </div>;
+}
+
 function App() {
   const [activeNav, setActiveNav] = React.useState('Overview');
   const [period, setPeriod] = React.useState('1D');
@@ -489,6 +578,7 @@ function MacroDashboard({ data }) {
   const [activeModel, setActiveModel] = React.useState('Liquidity');
   const [correlationWindow, setCorrelationWindow] = React.useState('60D');
   const [fxHorizon, setFxHorizon] = React.useState('1M');
+  const [liquidityChartOpen, setLiquidityChartOpen] = React.useState(false);
   const liquidityModel = data.liquidity?.model;
   const liquidityHistory = normalizeSparkline(liquidityModel?.history?.map((point) => point.value) ?? []);
   const dxyBtcModel = data.dxyBtc?.model;
@@ -507,7 +597,7 @@ function MacroDashboard({ data }) {
     <section className="model-overview-grid">
       <article className={`macro-model panel ${activeModel === 'Liquidity' ? 'model-emphasis' : ''}`}>
         <div className="macro-card-top"><div><p className="section-kicker">US LIQUIDITY MODEL</p><h2>{liquidityModel?.regime ?? 'Awaiting FRED'} <span className="status-dot"></span></h2><p>{liquidityModel ? 'Fed net liquidity, M2, and dollar transmission' : 'Configure FRED to calculate the regime'}</p></div><div className="score-orbit"><b>{liquidityModel?.score ?? '—'}</b><small>/100</small></div></div>
-        <div className="liquidity-chart"><div className="chart-caption"><span>Calculated net liquidity</span><strong>{liquidityModel ? `${liquidityModel.composite >= 0 ? '+' : ''}${liquidityModel.composite.toFixed(2)}` : 'Unavailable'}</strong></div>{liquidityHistory.length ? <Sparkline color="#75c966" values={liquidityHistory} /> : <div className="model-chart-empty">No calculated history</div>}<div className="liquidity-axis"><span>52W</span><span>26W</span><span>13W</span><span>Latest</span></div></div>
+        <div className="liquidity-chart"><div className="chart-caption"><span>Calculated net liquidity</span><div><strong>{liquidityModel ? formatLiquidityValue(liquidityModel.netLiquidity) : 'Unavailable'}</strong><button className="chart-expand-button" onClick={() => setLiquidityChartOpen(true)} disabled={!liquidityModel?.history?.length} aria-label="Enlarge liquidity history chart">↗</button></div></div>{liquidityHistory.length ? <Sparkline color="#75c966" values={liquidityHistory} /> : <div className="model-chart-empty">No calculated history</div>}<div className="liquidity-axis"><span>Oldest</span><span>Midpoint</span><span>Recent</span><span>Latest</span></div></div>
         <div className="signal-summary"><span>Momentum <b>{liquidityModel?.momentum ?? 'Unavailable'}</b></span><span>Breadth <b>{liquidityModel ? `${liquidityModel.breadth.positive} of ${liquidityModel.breadth.total} positive` : 'Unavailable'}</b></span><span>Confidence <b>{liquidityModel?.confidence ?? 'Unavailable'}</b></span></div>
         <div className="model-action"><span>{liquidityModel?.version ?? 'No model output'}</span><button onClick={() => setActiveModel('Liquidity')}>Open model →</button></div>
       </article>
@@ -558,6 +648,7 @@ function MacroDashboard({ data }) {
       <article className="sources-panel panel"><p className="section-kicker">DATA PROVENANCE</p><h3>Connected and target sources.</h3><p>FRED is connected. ECB, BoJ, BoE, PBoC, BIS, IMF, and institutional market feeds remain planned inputs.</p><button>Explore sources and lags →</button></article>
     </section>
     <p className="independence-note">TradeGate is an independent market research platform and is not affiliated with Tradegate AG.</p>
+    {liquidityChartOpen && <LiquidityChartDialog history={liquidityModel?.history ?? []} onClose={() => setLiquidityChartOpen(false)} />}
   </div>;
 }
 
