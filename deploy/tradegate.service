@@ -1,0 +1,22 @@
+[Unit]
+Description=TradeGate research platform
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=tradegate
+Group=tradegate
+WorkingDirectory=/home/tradegate/TradeGate
+EnvironmentFile=/home/tradegate/TradeGate/.env
+ExecStart=/usr/bin/node server/index.js
+Restart=always
+RestartSec=5
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectHome=read-only
+ReadWritePaths=/home/tradegate/TradeGate
+
+[Install]
+WantedBy=multi-user.target

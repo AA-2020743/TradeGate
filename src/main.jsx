@@ -1,6 +1,7 @@
 import React, { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 import './styles.css';
+import { formatPercent, formatTimestamp, formatUsd, useMarketHistory, usePlatformData } from './liveData.js';
 
 const navItems = [
   ['⌘', 'Overview'],
@@ -12,10 +13,10 @@ const navItems = [
 ];
 
 const watchlist = [
-  { ticker: 'NVDA', name: 'NVIDIA Corp.', price: '$875.28', change: '+2.44%', color: '#75d95d' },
-  { ticker: 'AAPL', name: 'Apple Inc.', price: '$189.98', change: '+0.63%', color: '#f2a447' },
-  { ticker: 'GLD', name: 'SPDR Gold Shares', price: '$192.18', change: '+1.06%', color: '#c4a7ff' },
-  { ticker: 'BTC', name: 'Bitcoin', price: '$68,425', change: '+4.12%', color: '#ff7c4d' },
+  { ticker: 'NVDA', name: 'NVIDIA Corp.', color: '#75d95d' },
+  { ticker: 'AAPL', name: 'Apple Inc.', color: '#f2a447' },
+  { ticker: 'GLD', name: 'SPDR Gold Shares', color: '#c4a7ff' },
+  { ticker: 'BTC', name: 'Bitcoin', color: '#ff7c4d' },
 ];
 
 const news = [
@@ -226,6 +227,36 @@ function correlationTone(value) {
   return value > 0.2 ? 'correlation-positive' : value < -0.2 ? 'correlation-negative' : 'correlation-neutral';
 }
 
+function buildChartGeometry(points, width = 640, height = 220) {
+  if (points.length < 2) return null;
+  const values = points.map((point) => point.value);
+  const low = Math.min(...values);
+  const high = Math.max(...values);
+  const spread = high - low || 1;
+  const coordinates = values.map((value, index) => ({
+    x: index * (width / (values.length - 1)),
+    y: 8 + ((high - value) / spread) * (height - 16),
+  }));
+  const polyline = coordinates.map(({ x, y }) => `${x},${y}`).join(' ');
+
+  return {
+    polyline,
+    area: `M${coordinates[0].x},${coordinates[0].y} ${coordinates.slice(1).map(({ x, y }) => `L${x},${y}`).join(' ')} L${width},${height} L0,${height}Z`,
+    currentY: coordinates.at(-1).y,
+    open: values[0],
+    high,
+    low,
+    latest: values.at(-1),
+  };
+}
+
+function formatChartLabel(timestamp, includeTime) {
+  if (!timestamp) return '';
+  return new Intl.DateTimeFormat('en-US', includeTime
+    ? { hour: 'numeric', minute: '2-digit' }
+    : { month: 'short', day: 'numeric' }).format(new Date(timestamp));
+}
+
 function App() {
   const [activeNav, setActiveNav] = React.useState('Overview');
   const [period, setPeriod] = React.useState('1D');
@@ -235,8 +266,17 @@ function App() {
   const [searchQuery, setSearchQuery] = React.useState('');
   const [commandIndex, setCommandIndex] = React.useState(0);
   const searchInputRef = React.useRef(null);
-  const selectedAsset = watchlist.find((asset) => asset.ticker === selectedTicker) ?? watchlist[0];
-  const chartValues = [29, 32, 29, 35, 34, 45, 42, 49, 47, 57, 52, 59, 58, 65, 62, 71, 67, 75, 72, 79, 77, 86, 82, 90, 88, 94, 91, 100, 97, 105, 102, 113, 109, 118, 112, 120, 116, 124, 121, 127, 125, 133, 129, 136, 132, 140, 138, 145, 141, 151, 146, 154, 151, 159, 157, 165];
+  const platformData = usePlatformData();
+  const history = useMarketHistory(selectedTicker, period);
+  const quotesByKey = Object.fromEntries((platformData.markets?.assets ?? []).map((asset) => [asset.key, asset]));
+  const hydratedWatchlist = watchlist.map((asset) => ({ ...asset, quote: quotesByKey[asset.ticker] ?? null }));
+  const selectedAsset = hydratedWatchlist.find((asset) => asset.ticker === selectedTicker) ?? hydratedWatchlist[0];
+  const selectedQuote = selectedAsset.quote;
+  const chartGeometry = buildChartGeometry(history.data?.points ?? []);
+  const historyLabels = history.data?.points?.length ? [0, .25, .5, .75, 1].map((position) => {
+    const index = Math.min(history.data.points.length - 1, Math.round((history.data.points.length - 1) * position));
+    return formatChartLabel(history.data.points[index].timestamp, period === '1D' || period === '5D');
+  }) : [];
   const commands = [
     { label: 'Overview', detail: 'Workspace', action: () => setActiveNav('Overview') },
     { label: 'Multi-asset heatmap', detail: 'Markets', action: () => setActiveNav('Markets') },
@@ -310,22 +350,24 @@ function App() {
       <section className="content">
         <header className="topbar">
           <div className="crumb"><span>Research</span><b>/</b><strong>{activeNav}</strong></div>
-          <div className="top-actions"><button className="search" onClick={openSearch} aria-label="Search research"><span>⌕</span><span>Search anything</span><kbd>⌘ K</kbd></button><button className="icon-button theme-toggle" onClick={toggleTheme} aria-label={`Switch to ${theme === 'light' ? 'dark' : 'light'} mode`} title={`Switch to ${theme === 'light' ? 'dark' : 'light'} mode`}>{theme === 'light' ? '☾' : '☼'}</button><button className="icon-button" aria-label="Help">?</button></div>
+          <div className="top-actions"><DataStatus data={platformData} /><button className="search" onClick={openSearch} aria-label="Search research"><span>⌕</span><span>Search anything</span><kbd>⌘ K</kbd></button><button className="icon-button theme-toggle" onClick={toggleTheme} aria-label={`Switch to ${theme === 'light' ? 'dark' : 'light'} mode`} title={`Switch to ${theme === 'light' ? 'dark' : 'light'} mode`}>{theme === 'light' ? '☾' : '☼'}</button><button className="icon-button" aria-label="Help">?</button></div>
         </header>
 
         <div className="dashboard">
-          {activeNav === 'Macro' ? <MacroDashboard /> : activeNav === 'Markets' ? <MarketsDashboard /> : activeNav === 'Metals' ? <MetalsDashboard /> : <>
+          {activeNav === 'Macro' ? <MacroDashboard data={platformData} /> : activeNav === 'Markets' ? <MarketsDashboard data={platformData} /> : activeNav === 'Metals' ? <MetalsDashboard data={platformData} /> : <>
           <section className="welcome-row">
-            <div><p className="eyebrow">THURSDAY, MAY 16</p><h1>Good morning, Alex.</h1><p className="intro">Here is your market pulse for today.</p></div>
-            <div className="market-status"><span className="live-dot"></span><span>U.S. markets open</span><strong>Closes in 05:42:18</strong></div>
+            <div><p className="eyebrow">{new Intl.DateTimeFormat('en-US', { weekday: 'long', month: 'long', day: 'numeric' }).format(new Date()).toUpperCase()}</p><h1>Good morning, Alex.</h1><p className="intro">Here is your market pulse for today.</p></div>
+            <div className={`market-status ${platformData.status}`}><span className="live-dot"></span><span>{platformData.status === 'live' ? 'Data feeds connected' : platformData.status === 'partial' ? 'Partial data coverage' : 'Data API unavailable'}</span><strong>{formatTimestamp(platformData.markets?.asOf)}</strong></div>
           </section>
 
+          <DataDisclosure data={platformData} message="Live quotes and historical charts are provider-backed. Research scores and narrative signals remain model previews until their calculation pipelines are connected." />
+
           <section className="market-strip">
-            <div className="market-label"><span className="globe">◉</span><div><b>Global markets</b><small>Updated a moment ago</small></div></div>
-            <MarketCell name="S&P 500" value="5,303.27" change="+0.27%" />
-            <MarketCell name="Nasdaq" value="16,742.39" change="+0.14%" />
-            <MarketCell name="Gold" value="$2,386.10" change="+1.22%" />
-            <MarketCell name="Bitcoin" value="$68,425.00" change="+4.12%" />
+            <div className="market-label"><span className="globe">◉</span><div><b>Live market proxies</b><small>{formatTimestamp(platformData.markets?.asOf)}</small></div></div>
+            <MarketCell name="S&P 500 ETF" quote={quotesByKey.SPY} />
+            <MarketCell name="Nasdaq 100 ETF" quote={quotesByKey.QQQ} />
+            <MarketCell name="Gold ETF" quote={quotesByKey.GLD} />
+            <MarketCell name="Bitcoin" quote={quotesByKey.BTC} />
             <button className="strip-more">•••</button>
           </section>
 
@@ -333,16 +375,16 @@ function App() {
 
           <section className="focus-grid">
             <article className="chart-card panel">
-              <div className="chart-top"><div><p className="quote">{selectedAsset.price} <span>USD</span></p><p className="gain">+20.84 <span>{selectedAsset.change}</span> <small>Today</small></p></div><div className="range-selector">{['1D', '5D', '1M', '6M', 'YTD', '1Y', 'All'].map(item => <button className={period === item ? 'selected' : ''} key={item} onClick={() => setPeriod(item)}>{item}</button>)}</div></div>
-              <div className="chart-area"><div className="price-line"><span>$876.00</span><span className="price-tag">875.28</span></div><svg viewBox="0 0 640 234" preserveAspectRatio="none" aria-label="NVDA positive price chart"><defs><linearGradient id="fill" x1="0" x2="0" y1="0" y2="1"><stop offset="0" stopColor="#7dff77" stopOpacity=".25"/><stop offset="1" stopColor="#7dff77" stopOpacity="0"/></linearGradient></defs><path d={`M0,${234 - chartValues[0] * 1.55} ${chartValues.map((value, index) => `L${index * (640 / (chartValues.length - 1))},${234 - value * 1.55}`).join(' ')} L640,234 L0,234Z`} fill="url(#fill)"/><polyline points={chartValues.map((value, index) => `${index * (640 / (chartValues.length - 1))},${234 - value * 1.55}`).join(' ')} fill="none" stroke="#83ec69" strokeWidth="3" vectorEffect="non-scaling-stroke"/></svg><div className="chart-times"><span>9:30 AM</span><span>11:00 AM</span><span>1:00 PM</span><span>3:00 PM</span><span>4:00 PM</span></div></div>
-              <div className="chart-footer"><span>Open <b>861.00</b></span><span>High <b>878.80</b></span><span>Low <b>854.12</b></span><span>Volume <b>34.8M</b></span><span>Avg. Vol <b>51.2M</b></span></div>
+              <div className="chart-top"><div><p className="quote">{formatUsd(selectedQuote?.price)} <span>USD</span></p><p className={`gain ${selectedQuote?.changePercent < 0 ? 'negative' : ''}`}>{formatPercent(selectedQuote?.changePercent)} <small>{selectedQuote ? `${selectedQuote.source} · ${formatTimestamp(selectedQuote.asOf)}` : 'Configure a market provider'}</small></p></div><div className="range-selector">{['1D', '5D', '1M', '6M', 'YTD', '1Y', 'All'].map(item => <button className={period === item ? 'selected' : ''} key={item} onClick={() => setPeriod(item)}>{item}</button>)}</div></div>
+              <div className="chart-area">{chartGeometry ? <><div className="price-line" style={{ top: `${chartGeometry.currentY}px` }}><span>{formatUsd(chartGeometry.latest)}</span><span className="price-tag">{chartGeometry.latest.toFixed(chartGeometry.latest < 100 ? 2 : 0)}</span></div><svg viewBox="0 0 640 220" preserveAspectRatio="none" aria-label={`${selectedTicker} ${period} price history from ${history.data.source}`}><defs><linearGradient id="fill" x1="0" x2="0" y1="0" y2="1"><stop offset="0" stopColor="#7dff77" stopOpacity=".25"/><stop offset="1" stopColor="#7dff77" stopOpacity="0"/></linearGradient></defs><path d={chartGeometry.area} fill="url(#fill)"/><polyline points={chartGeometry.polyline} fill="none" stroke="#83ec69" strokeWidth="3" vectorEffect="non-scaling-stroke"/></svg><div className="chart-times">{historyLabels.map((label, index) => <span key={`${label}-${index}`}>{label}</span>)}</div></> : <div className="chart-unavailable"><span>{history.status === 'loading' ? 'Loading history' : 'Historical feed unavailable'}</span><p>{selectedTicker === 'BTC' ? 'The public crypto provider did not return history.' : 'Add `TWELVE_DATA_API_KEY` on the server to enable this chart.'}</p></div>}</div>
+              <div className="chart-footer">{chartGeometry ? <><span>Open <b>{formatUsd(chartGeometry.open)}</b></span><span>High <b>{formatUsd(chartGeometry.high)}</b></span><span>Low <b>{formatUsd(chartGeometry.low)}</b></span><span>Latest <b>{formatUsd(chartGeometry.latest)}</b></span><span>Source <b>{history.data.source}</b></span></> : <span>Historical market statistics will appear when the feed is available.</span>}</div>
             </article>
 
             <article className="thesis-card panel"><div className="thesis-heading"><div><p className="section-kicker">RESEARCH SIGNAL</p><h3>Investment thesis</h3></div><button>View report →</button></div><div className="signal"><span className="signal-icon">↗</span><div><strong>Constructive</strong><p>Strong earnings revisions and persistent AI demand support the setup.</p></div></div><div className="factor"><span>Earnings momentum</span><div className="factor-bar"><i style={{ width: '88%' }}></i></div><b>88</b></div><div className="factor"><span>Valuation</span><div className="factor-bar neutral"><i style={{ width: '56%' }}></i></div><b>56</b></div><div className="factor"><span>Technical setup</span><div className="factor-bar"><i style={{ width: '74%' }}></i></div><b>74</b></div><p className="updated">Last updated today at 10:14 AM</p></article>
           </section>
 
           <section className="lower-grid">
-            <article className="watchlist-card panel"><div className="card-heading"><div><p className="section-kicker">YOUR LIST</p><h3>Watchlist</h3></div><button>View all <span>→</span></button></div><div className="watchlist-table">{watchlist.map((item, index) => <button className={`watch-row ${selectedTicker === item.ticker ? 'watch-selected' : ''}`} onClick={() => setSelectedTicker(item.ticker)} key={item.ticker}><span className="asset-badge" style={{ backgroundColor: item.color }}>{item.ticker.charAt(0)}</span><span className="asset-name"><b>{item.ticker}</b><small>{item.name}</small></span><span className="mini-chart"><Sparkline color={item.color} values={[8 + index, 18, 13, 26, 21, 32, 27, 37, 34, 42]} /></span><span className="asset-price"><b>{item.price}</b><small>{item.change}</small></span></button>)}</div></article>
+            <article className="watchlist-card panel"><div className="card-heading"><div><p className="section-kicker">YOUR LIST</p><h3>Watchlist</h3></div><button>View all <span>→</span></button></div><div className="watchlist-table">{hydratedWatchlist.map((item, index) => <button className={`watch-row ${selectedTicker === item.ticker ? 'watch-selected' : ''}`} onClick={() => setSelectedTicker(item.ticker)} key={item.ticker}><span className="asset-badge" style={{ backgroundColor: item.color }}>{item.ticker.charAt(0)}</span><span className="asset-name"><b>{item.ticker}</b><small>{item.name}</small></span><span className="mini-chart"><Sparkline color={item.color} values={[8 + index, 18, 13, 26, 21, 32, 27, 37, 34, 42]} /></span><span className="asset-price"><b>{formatUsd(item.quote?.price)}</b><small className={item.quote?.changePercent < 0 ? 'negative' : ''}>{formatPercent(item.quote?.changePercent)}</small></span></button>)}</div></article>
             <article className="news-card panel"><div className="card-heading"><div><p className="section-kicker">WHAT MATTERS</p><h3>Market intelligence</h3></div><button>All news <span>→</span></button></div><div className="news-list">{news.map(([source, title, time]) => <article className="news-item" key={title}><div><p><span>{source}</span> <small>{time}</small></p><h4>{title}</h4></div><span className="news-arrow">↗</span></article>)}</div></article>
           </section>
           <p className="independence-note">TradeGate is an independent market research platform and is not affiliated with Tradegate AG.</p>
@@ -360,8 +402,27 @@ function App() {
   );
 }
 
-function MarketCell({ name, value, change }) {
-  return <div className="market-cell"><p>{name}</p><strong>{value}</strong><small className="positive">{change}</small></div>;
+function DataStatus({ data }) {
+  const labels = { loading: 'Connecting', live: 'Live data', partial: 'Partial data', offline: 'Offline' };
+  const configured = Object.values(data.health?.providers ?? {}).filter((provider) => provider.configured).length;
+  return <span className={`data-status ${data.status}`} title={data.error ?? `${configured} providers configured`}><i></i>{labels[data.status]}</span>;
+}
+
+function DataDisclosure({ data, message }) {
+  const title = data.status === 'offline' ? 'Data service offline' : data.status === 'partial' ? 'Provider coverage is partial' : data.status === 'loading' ? 'Connecting to data service' : 'Provider data connected';
+  return <section className={`data-disclosure ${data.status}`}><span className="data-disclosure-icon">{data.status === 'live' ? '✓' : 'i'}</span><div><b>{title}</b><p>{message}</p></div></section>;
+}
+
+function MarketCell({ name, quote }) {
+  const tone = !quote ? 'unavailable' : quote.changePercent < 0 ? 'negative' : 'positive';
+  return <div className="market-cell"><p>{name}</p><strong>{formatUsd(quote?.price)}</strong><small className={tone}>{formatPercent(quote?.changePercent)}</small></div>;
+}
+
+function formatMacroValue(series) {
+  if (!Number.isFinite(series.value)) return 'Unavailable';
+  if (series.unit === 'USD millions') return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', notation: 'compact', maximumFractionDigits: 2 }).format(series.value * 1_000_000);
+  if (series.unit === 'USD billions') return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', notation: 'compact', maximumFractionDigits: 2 }).format(series.value * 1_000_000_000);
+  return new Intl.NumberFormat('en-US', { maximumFractionDigits: 2 }).format(series.value);
 }
 
 function heatmapCellTone(asset, key) {
@@ -369,7 +430,7 @@ function heatmapCellTone(asset, key) {
   return asset[`${key}Tone`] ?? 'neutral';
 }
 
-function MarketsDashboard() {
+function MarketsDashboard({ data }) {
   const [group, setGroup] = React.useState('All');
   const [timeframe, setTimeframe] = React.useState('1W');
   const [activeMetric, setActiveMetric] = React.useState('score');
@@ -384,6 +445,7 @@ function MarketsDashboard() {
       <div><p className="eyebrow">MULTI-ASSET INTELLIGENCE</p><h1>See the market before it moves.</h1><p className="intro">A single scorecard for regime, participation, positioning, and market quality.</p></div>
       <div className="markets-status"><span className="live-dot"></span><div><b>11 markets monitored</b><small>Signals refreshed 14m ago</small></div></div>
     </section>
+    <DataDisclosure data={data} message="This heatmap is still a model preview. Live prices are connected at the platform layer; regime, alignment, crowding, volatility, and liquidity calculations are next in the pipeline." />
 
     <section className="heatmap-summary-grid">
       <article className="heatmap-hero panel"><div><p className="section-kicker">CROSS-ASSET REGIME</p><h2>Broadly constructive <span className="status-dot"></span></h2><p>Risk assets, metals, and the dollar remain mostly aligned. Crowding is the constraint.</p></div><div className="regime-distribution"><span className="positive">5</span><span className="neutral">4</span><span className="negative">2</span><small>Constructive</small><small>Neutral</small><small>Guarded</small></div></article>
@@ -407,7 +469,7 @@ function MarketsDashboard() {
   </div>;
 }
 
-function MetalsDashboard() {
+function MetalsDashboard({ data }) {
   const [selectedSymbol, setSelectedSymbol] = React.useState('XAU');
   const [horizon, setHorizon] = React.useState('1M');
   const selectedMetal = preciousMetalAssets.find((asset) => asset.symbol === selectedSymbol) ?? preciousMetalAssets[0];
@@ -417,6 +479,7 @@ function MetalsDashboard() {
       <div><p className="eyebrow">PRECIOUS METALS RESEARCH</p><h1>Where monetary metal meets market structure.</h1><p className="intro">Technical, macro, physical, and positioning signals for metals and their equity proxies.</p></div>
       <div className="metals-pulse"><span className="live-dot"></span><div><b>Precious metals constructive</b><small>Physical and macro signals aligned</small></div></div>
     </section>
+    <DataDisclosure data={data} message="Prices, technical readings, COT positioning, ETF flows, physical-market indicators, and cost metrics in this Metals workspace are still prototype values until their dedicated feeds are connected." />
 
     <section className="metal-asset-strip">{preciousMetalAssets.map((asset) => <button className={`metal-asset ${selectedMetal.symbol === asset.symbol ? 'selected' : ''}`} onClick={() => setSelectedSymbol(asset.symbol)} key={asset.symbol}><span className="metal-symbol" style={{ '--metal-color': asset.color }}>{asset.symbol}</span><span><b>{asset.name}</b><small>{asset.regime}</small></span><span className="metal-price"><b>{asset.price}</b><small className={asset.change.startsWith('-') ? 'negative' : 'positive'}>{asset.change}</small></span><span className="metal-spark"><Sparkline color={asset.color} values={asset.values} /></span></button>)}</section>
 
@@ -442,7 +505,7 @@ function MetalsDashboard() {
   </div>;
 }
 
-function MacroDashboard() {
+function MacroDashboard({ data }) {
   const [window, setWindow] = React.useState('13W');
   const [activeModel, setActiveModel] = React.useState('Liquidity');
   const [correlationWindow, setCorrelationWindow] = React.useState('60D');
@@ -454,6 +517,8 @@ function MacroDashboard() {
       <div><p className="eyebrow">MACRO RESEARCH SYSTEM</p><h1>Liquidity leads. Risk confirms.</h1><p className="intro">A cross-asset view of the forces shaping capital availability and market regime.</p></div>
       <div className="model-tabs"><button className={activeModel === 'Liquidity' ? 'active' : ''} onClick={() => setActiveModel('Liquidity')}>Global liquidity</button><button className={activeModel === 'Risk' ? 'active' : ''} onClick={() => setActiveModel('Risk')}>Inter-market risk</button><button className={activeModel === 'Correlations' ? 'active' : ''} onClick={() => setActiveModel('Correlations')}>Correlations</button><button className={activeModel === 'FX' ? 'active' : ''} onClick={() => setActiveModel('FX')}>FX predictive</button></div>
     </section>
+    <DataDisclosure data={data} message="Official U.S. liquidity observations below are live when FRED is configured. Composite scores, regime labels, and non-U.S. series remain model previews." />
+    {data.liquidity?.series?.length ? <section className="official-data-strip panel"><div><p className="section-kicker">OFFICIAL FRED OBSERVATIONS</p><b>Latest released data</b></div>{data.liquidity.series.slice(0, 5).map((series) => <div key={series.id}><span>{series.name}</span><strong>{formatMacroValue(series)}</strong><small>{series.date}</small></div>)}</section> : <section className="provider-setup-note"><b>FRED macro feed not configured</b><span>Add `FRED_API_KEY` to the server environment to load official liquidity observations.</span></section>}
 
     <section className="model-overview-grid">
       <article className={`macro-model panel ${activeModel === 'Liquidity' ? 'model-emphasis' : ''}`}>

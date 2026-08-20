@@ -20,11 +20,24 @@ const FRED_SERIES = [
 async function fetchJson(url) {
   const response = await fetch(url, {
     headers: { Accept: 'application/json', 'User-Agent': 'TradeGateResearch/0.1' },
+    signal: AbortSignal.timeout(12_000),
   });
 
   if (!response.ok) throw new Error(`Upstream request failed with ${response.status}`);
   return response.json();
 }
+
+const HISTORY_RANGES = {
+  '1D': { days: '1', interval: '5min', outputsize: '78' },
+  '5D': { days: '5', interval: '30min', outputsize: '80' },
+  '1M': { days: '30', interval: '1day', outputsize: '31' },
+  '6M': { days: '180', interval: '1day', outputsize: '180' },
+  YTD: { days: '365', interval: '1day', outputsize: '260' },
+  '1Y': { days: '365', interval: '1day', outputsize: '365' },
+  All: { days: 'max', interval: '1week', outputsize: '520' },
+};
+
+const HISTORY_SYMBOLS = new Set(['BTC', ...TWELVE_SYMBOLS.map((asset) => asset.symbol)]);
 
 function asNumber(value) {
   const parsed = Number(value);
@@ -94,6 +107,62 @@ export async function getMarketSnapshot() {
         coingecko: { configured: true, mode: 'public' },
         twelveData: { configured: Boolean(config.twelveDataApiKey), mode: config.twelveDataApiKey ? 'credentialed' : 'not-configured' },
       },
+    };
+  });
+}
+
+async function getBitcoinHistory(range) {
+  const settings = HISTORY_RANGES[range];
+  const url = new URL('https://api.coingecko.com/api/v3/coins/bitcoin/market_chart');
+  url.searchParams.set('vs_currency', 'usd');
+  url.searchParams.set('days', settings.days);
+  const payload = await fetchJson(url);
+
+  return (payload.prices ?? []).map(([timestamp, price]) => ({
+    timestamp: new Date(timestamp).toISOString(),
+    value: price,
+  }));
+}
+
+async function getTwelveHistory(symbol, range) {
+  if (!config.twelveDataApiKey) return [];
+
+  const settings = HISTORY_RANGES[range];
+  const url = new URL('https://api.twelvedata.com/time_series');
+  url.searchParams.set('symbol', symbol);
+  url.searchParams.set('interval', settings.interval);
+  url.searchParams.set('outputsize', settings.outputsize);
+  url.searchParams.set('order', 'ASC');
+  url.searchParams.set('apikey', config.twelveDataApiKey);
+  const payload = await fetchJson(url);
+
+  if (payload.status === 'error') throw new Error(payload.message ?? 'Twelve Data history request failed');
+  return (payload.values ?? []).flatMap((item) => {
+    const value = asNumber(item.close);
+    const isoTimestamp = item.datetime.includes(' ')
+      ? `${item.datetime.replace(' ', 'T')}Z`
+      : `${item.datetime}T00:00:00Z`;
+    return value === null ? [] : [{ timestamp: new Date(isoTimestamp).toISOString(), value }];
+  });
+}
+
+export async function getMarketHistory(symbol, requestedRange) {
+  const normalizedSymbol = symbol.toUpperCase();
+  const range = HISTORY_RANGES[requestedRange] ? requestedRange : '1M';
+  if (!HISTORY_SYMBOLS.has(normalizedSymbol)) throw new Error(`Unsupported history symbol: ${normalizedSymbol}`);
+
+  return withCache(`history:${normalizedSymbol}:${range}`, 60_000, async () => {
+    const points = normalizedSymbol === 'BTC'
+      ? await getBitcoinHistory(range)
+      : await getTwelveHistory(normalizedSymbol, range);
+
+    return {
+      symbol: normalizedSymbol,
+      range,
+      asOf: new Date().toISOString(),
+      source: normalizedSymbol === 'BTC' ? 'CoinGecko' : 'Twelve Data',
+      configured: normalizedSymbol === 'BTC' || Boolean(config.twelveDataApiKey),
+      points,
     };
   });
 }
