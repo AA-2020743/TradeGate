@@ -1,6 +1,6 @@
 import { config } from './config.js';
 import { withCache } from './cache.js';
-import { calculateCrossMarketRelationship, calculateTechnicalSnapshot, calculateUsLiquidityModel } from './analytics.js';
+import { calculateCrossMarketRelationship, calculateMacroRegimeModel, calculateTechnicalSnapshot, calculateUsdStrengthModel, calculateUsLiquidityModel } from './analytics.js';
 import { getStoredFredSeries, getStoredMarketHistory, getStoredMarketSnapshot } from './database.js';
 import { getAllEquityHistorySymbols, getCoreEquityHistorySymbols } from './equityCatalog.js';
 
@@ -19,6 +19,11 @@ const FRED_SERIES = [
   { id: 'RRPONTSYD', key: 'reverseRepo', name: 'Overnight reverse repo', unit: 'USD billions', multiplier: 1000 },
   { id: 'M2SL', key: 'usM2', name: 'US M2', unit: 'USD billions', multiplier: 1000 },
   { id: 'DTWEXBGS', key: 'dxy', name: 'Broad dollar index', unit: 'Index', multiplier: 1 },
+  { id: 'DGS2', key: 'us2yYield', name: '2-Year Treasury yield', unit: 'Percent', multiplier: 1 },
+  { id: 'DFII10', key: 'realYield10y', name: '10-Year real Treasury yield', unit: 'Percent', multiplier: 1 },
+  { id: 'NFCI', key: 'financialConditions', name: 'Chicago Fed financial conditions', unit: 'Index', multiplier: 1 },
+  { id: 'BAMLH0A0HYM2', key: 'highYieldSpread', name: 'US high-yield option-adjusted spread', unit: 'Percent', multiplier: 1 },
+  { id: 'VIXCLS', key: 'vix', name: 'CBOE VIX close', unit: 'Index', multiplier: 1 },
 ];
 
 let twelveQueue = Promise.resolve();
@@ -358,6 +363,8 @@ export async function getLiquiditySnapshot() {
     const values = Object.fromEntries(series.map((item) => [item.key, item.value * item.multiplier]));
     const hasNetLiquidityInputs = ['fedBalanceSheet', 'treasuryGeneralAccount', 'reverseRepo'].every((key) => values[key] !== undefined);
     const model = calculateUsLiquidityModel(series);
+    const usdStrength = calculateUsdStrengthModel(series, model);
+    const macroRegime = calculateMacroRegimeModel(series, model, usdStrength);
 
     return {
       asOf: new Date().toISOString(),
@@ -365,6 +372,8 @@ export async function getLiquiditySnapshot() {
       series,
       netLiquidity: hasNetLiquidityInputs ? values.fedBalanceSheet - values.treasuryGeneralAccount - values.reverseRepo : null,
       model,
+      usdStrength,
+      macroRegime,
       errors,
     };
   });

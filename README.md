@@ -13,7 +13,7 @@ The application now has a server-side data layer. It never exposes provider cred
 | FRED | Official U.S. macro and liquidity observations | `FRED_API_KEY` |
 | PostgreSQL | Observations, revisions, ingestion runs, and model lineage | `DATABASE_URL` |
 
-Technical scores are calculated by `technical-v1` from provider history. The US liquidity regime is calculated by `us-liquidity-v1` from Fed net liquidity, M2 growth, and inverse dollar transmission. UI sections explicitly identify the remaining model previews.
+Technical scores are calculated by `technical-v1` from provider history. The US liquidity regime is calculated by `us-liquidity-v1`; `usd-strength-v1` and `macro-regime-v1` use additional FRED market and financial-condition histories. UI sections explicitly identify the remaining model previews.
 
 ## Local Development
 
@@ -160,6 +160,14 @@ The output is Expansion above `+0.15`, Contraction below `-0.15`, and Neutral be
 ### `cross-market-correlation-v1`
 
 DXY/BTC uses aligned daily log returns rather than price levels. It calculates 20-day, 60-day, and one-year Pearson correlations, momentum alignment, and a 20-session dollar breakout state. Twelve Data DXY is preferred; FRED's broad-dollar index is explicitly labeled as a proxy when used.
+
+### `usd-strength-v1`
+
+USD strength combines FRED's broad trade-weighted dollar trend and momentum with 10-year real-yield impulse, 2-year Treasury impulse, VIX/NFCI dollar-smile stress, and inverse dollar-liquidity pressure. It is marked provisional below 75% driver coverage. DTWEXBGS is always identified as a broad-dollar proxy and is never displayed as the ICE DXY level.
+
+### `macro-regime-v1`
+
+The macro regime combines US liquidity, Chicago Fed financial conditions, US high-yield spreads, VIX, and inverse dollar pressure. It changes risk budget, alert threshold, preferred factor emphasis, and expected holding period by regime. At least two independent sleeves and 40% coverage are required; full calculated status requires 75% coverage. A stress regime requires simultaneous VIX, credit-spread, and financial-condition confirmation.
 
 ### Equity calculation engines
 

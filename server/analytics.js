@@ -226,6 +226,39 @@ function boundedImpulse(change, scale, inverse = false) {
   return inverse ? -impulse : impulse;
 }
 
+function absoluteChangeOverDays(points, days) {
+  if (points.length < 2) return null;
+  const latest = points.at(-1);
+  const targetDate = new Date(latest.date);
+  targetDate.setUTCDate(targetDate.getUTCDate() - days);
+  const previous = latestAtOrBefore(points, targetDate.toISOString().slice(0, 10));
+  return previous ? latest.value - previous.value : null;
+}
+
+function driverComposite(drivers, minimumCoverage, minimumDrivers = 1) {
+  const available = drivers.filter((driver) => Number.isFinite(driver.score));
+  const availableWeight = available.reduce((total, driver) => total + driver.weight, 0);
+  const coverage = Math.round(availableWeight * 100);
+  const score = availableWeight
+    ? Math.round(clamp(available.reduce((total, driver) => total + (driver.score * driver.weight), 0) / availableWeight))
+    : null;
+  return {
+    publishable: availableWeight >= minimumCoverage - 1e-9 && available.length >= minimumDrivers,
+    score,
+    coverage,
+    missing: drivers.filter((driver) => !Number.isFinite(driver.score)).map((driver) => driver.name),
+    drivers: drivers.map((driver) => ({
+      key: driver.key,
+      name: driver.name,
+      score: Number.isFinite(driver.score) ? Math.round(clamp(driver.score)) : null,
+      weight: driver.weight,
+      value: Number.isFinite(driver.value) ? driver.value : null,
+      change: Number.isFinite(driver.change) ? driver.change : null,
+      source: driver.source,
+    })),
+  };
+}
+
 export function calculateUsLiquidityModel(seriesList) {
   const series = Object.fromEntries(seriesList.map((item) => [item.key, item]));
   const fed = pointsForSeries(series.fedBalanceSheet);
@@ -280,5 +313,108 @@ export function calculateUsLiquidityModel(seriesList) {
     history: netLiquidity,
     composite,
     drivers: drivers.map(({ key, name, change, impulse, weight }) => ({ key, name, changePercent: change, impulse, weight })),
+  };
+}
+
+export function calculateUsdStrengthModel(seriesList, liquidityModel = null) {
+  const series = Object.fromEntries(seriesList.map((item) => [item.key, item]));
+  const dollar = pointsForSeries(series.dxy);
+  const dollarTechnical = calculateTechnicalSnapshot(dollar.map((point) => ({ timestamp: `${point.date}T00:00:00.000Z`, value: point.value })));
+  if (!dollarTechnical) return null;
+
+  const realYield = pointsForSeries(series.realYield10y);
+  const frontEndYield = pointsForSeries(series.us2yYield);
+  const financialConditions = pointsForSeries(series.financialConditions);
+  const volatility = pointsForSeries(series.vix);
+  const realYieldChange = absoluteChangeOverDays(realYield, 91);
+  const frontEndChange = absoluteChangeOverDays(frontEndYield, 91);
+  const financialConditionsChange = absoluteChangeOverDays(financialConditions, 91);
+  const vixLatest = volatility.at(-1)?.value ?? null;
+  const financialConditionsLatest = financialConditions.at(-1)?.value ?? null;
+  const stressScores = [
+    Number.isFinite(vixLatest) ? clamp(50 + ((vixLatest - 20) * 3)) : null,
+    Number.isFinite(financialConditionsLatest) ? clamp(50 + (financialConditionsLatest * 35) + ((financialConditionsChange ?? 0) * 25)) : null,
+  ].filter(Number.isFinite);
+  const drivers = [
+    { key: 'dollarTrend', name: 'Broad-dollar trend', score: dollarTechnical.components.trend, weight: 0.3, value: dollarTechnical.latest, change: dollarTechnical.indicators.momentum20d, source: 'FRED DTWEXBGS' },
+    { key: 'dollarMomentum', name: 'Broad-dollar momentum', score: dollarTechnical.components.momentum, weight: 0.15, value: dollarTechnical.indicators.rsi14, change: dollarTechnical.indicators.momentum20d, source: 'FRED DTWEXBGS' },
+    { key: 'realYield', name: '10Y real-yield impulse', score: realYieldChange === null ? null : clamp(50 + (Math.tanh(realYieldChange / 0.5) * 50)), weight: 0.15, value: realYield.at(-1)?.value, change: realYieldChange, source: 'FRED DFII10' },
+    { key: 'frontEnd', name: '2Y yield impulse', score: frontEndChange === null ? null : clamp(50 + (Math.tanh(frontEndChange / 0.75) * 50)), weight: 0.1, value: frontEndYield.at(-1)?.value, change: frontEndChange, source: 'FRED DGS2' },
+    { key: 'stress', name: 'Dollar-smile stress support', score: stressScores.length ? mean(stressScores) : null, weight: 0.15, value: vixLatest, change: financialConditionsChange, source: 'FRED VIXCLS / NFCI' },
+    { key: 'liquidity', name: 'Inverse dollar-liquidity impulse', score: Number.isFinite(liquidityModel?.score) ? 100 - liquidityModel.score : null, weight: 0.15, value: liquidityModel?.score, change: liquidityModel?.composite, source: liquidityModel?.version },
+  ];
+  const model = driverComposite(drivers, 0.45, 2);
+  if (!model.publishable) return null;
+  const regime = model.score >= 70 ? 'Strong' : model.score >= 58 ? 'Firm' : model.score <= 30 ? 'Weak' : model.score <= 42 ? 'Soft' : 'Neutral';
+  const confidenceScore = Math.round((model.coverage * 0.8) + (Math.min(dollarTechnical.observations / 252, 1) * 20));
+  const dollarSmile = vixLatest >= 25
+    ? 'Global stress support'
+    : realYieldChange > 0 && dollarTechnical.components.trend >= 50 ? 'U.S. real-yield support' : 'Balanced / inactive';
+  return {
+    version: 'usd-strength-v1',
+    status: model.coverage >= 75 ? 'calculated' : 'provisional',
+    asOf: dollar.at(-1)?.date ?? null,
+    source: 'FRED broad U.S. dollar index and U.S. macro drivers',
+    proxy: 'DTWEXBGS is a broad trade-weighted dollar index, not the ICE DXY level.',
+    score: model.score,
+    regime,
+    coverage: model.coverage,
+    confidence: confidenceScore >= 80 ? 'High' : confidenceScore >= 60 ? 'Medium' : 'Low',
+    confidenceScore,
+    dollarSmile,
+    missing: model.missing,
+    drivers: model.drivers,
+    indicators: dollarTechnical.indicators,
+    observations: dollarTechnical.observations,
+    history: dollar,
+  };
+}
+
+const MACRO_REGIME_SETTINGS = {
+  'Expansion / risk-on': { riskBudget: 'High', alertThreshold: 68, holdingPeriod: '20-60 sessions', emphasis: 'Trend and cyclical beta' },
+  Constructive: { riskBudget: 'Moderate-high', alertThreshold: 65, holdingPeriod: '15-45 sessions', emphasis: 'Quality growth and selective cyclicals' },
+  'Transition / choppy': { riskBudget: 'Moderate', alertThreshold: 72, holdingPeriod: '5-20 sessions', emphasis: 'Relative value and mean reversion' },
+  'Contraction / risk-off': { riskBudget: 'Low', alertThreshold: 75, holdingPeriod: '5-30 sessions', emphasis: 'Defensive quality and liquidity' },
+  'Stress / deleveraging': { riskBudget: 'Minimal', alertThreshold: 80, holdingPeriod: '1-10 sessions', emphasis: 'Capital preservation and convexity' },
+};
+
+export function calculateMacroRegimeModel(seriesList, liquidityModel = null, usdStrengthModel = null) {
+  const series = Object.fromEntries(seriesList.map((item) => [item.key, item]));
+  const financialConditions = pointsForSeries(series.financialConditions);
+  const credit = pointsForSeries(series.highYieldSpread);
+  const volatility = pointsForSeries(series.vix);
+  const financialLatest = financialConditions.at(-1)?.value ?? null;
+  const creditLatest = credit.at(-1)?.value ?? null;
+  const vixLatest = volatility.at(-1)?.value ?? null;
+  const financialChange = absoluteChangeOverDays(financialConditions, 91);
+  const creditChange = absoluteChangeOverDays(credit, 91);
+  const drivers = [
+    { key: 'liquidity', name: 'US liquidity impulse', score: liquidityModel?.score, weight: 0.3, value: liquidityModel?.score, change: liquidityModel?.composite, source: liquidityModel?.version },
+    { key: 'financialConditions', name: 'Financial conditions', score: Number.isFinite(financialLatest) ? clamp(50 - (financialLatest * 40) - ((financialChange ?? 0) * 30)) : null, weight: 0.25, value: financialLatest, change: financialChange, source: 'FRED NFCI' },
+    { key: 'credit', name: 'High-yield credit', score: Number.isFinite(creditLatest) ? clamp(80 - ((creditLatest - 3) * 15) - ((creditChange ?? 0) * 20)) : null, weight: 0.2, value: creditLatest, change: creditChange, source: 'FRED BAMLH0A0HYM2' },
+    { key: 'volatility', name: 'Equity volatility', score: Number.isFinite(vixLatest) ? clamp(100 - ((vixLatest - 12) * 3.5)) : null, weight: 0.15, value: vixLatest, change: absoluteChangeOverDays(volatility, 28), source: 'FRED VIXCLS' },
+    { key: 'dollar', name: 'Inverse dollar pressure', score: Number.isFinite(usdStrengthModel?.score) ? 100 - usdStrengthModel.score : null, weight: 0.1, value: usdStrengthModel?.score, change: usdStrengthModel?.indicators?.momentum20d, source: usdStrengthModel?.version },
+  ];
+  const model = driverComposite(drivers, 0.4, 2);
+  if (!model.publishable) {
+    return { version: 'macro-regime-v1', status: 'unavailable', asOf: null, score: null, regime: null, settings: null, coverage: model.coverage, missing: model.missing, drivers: model.drivers };
+  }
+  const panicConfirmed = vixLatest >= 35 && creditLatest >= 5 && financialLatest >= 0.5;
+  const regime = panicConfirmed
+    ? 'Stress / deleveraging'
+    : model.score >= 70 ? 'Expansion / risk-on' : model.score >= 58 ? 'Constructive' : model.score <= 35 ? 'Contraction / risk-off' : 'Transition / choppy';
+  const asOf = [liquidityModel?.asOf, usdStrengthModel?.asOf, financialConditions.at(-1)?.date, credit.at(-1)?.date, volatility.at(-1)?.date].filter(Boolean).sort().at(-1) ?? null;
+  return {
+    version: 'macro-regime-v1',
+    status: model.coverage >= 75 ? 'calculated' : 'provisional',
+    asOf,
+    score: model.score,
+    regime,
+    coverage: model.coverage,
+    confidence: model.coverage >= 85 ? 'High' : model.coverage >= 65 ? 'Medium' : 'Low',
+    panicConfirmed,
+    missing: model.missing,
+    drivers: model.drivers,
+    settings: MACRO_REGIME_SETTINGS[regime],
   };
 }

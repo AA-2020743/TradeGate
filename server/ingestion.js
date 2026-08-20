@@ -148,10 +148,12 @@ export async function ingestLiquiditySnapshot() {
       reportWritten(written);
     }
     await persistModelOutput('us-liquidity', snapshot.model, snapshot.series.map((series) => ({ seriesId: `fred:${series.id}`, asOf: series.date })), runId);
+    await persistModelOutput('usd-strength', snapshot.usdStrength, snapshot.series.map((series) => ({ seriesId: `fred:${series.id}`, asOf: series.date })), runId);
+    await persistModelOutput('macro-regime', snapshot.macroRegime, snapshot.series.map((series) => ({ seriesId: `fred:${series.id}`, asOf: series.date })), runId);
 
     return {
       status: snapshot.errors.length || !snapshot.model ? 'partial' : 'completed',
-      details: { seriesReceived: snapshot.series.length, modelVersion: snapshot.model?.version ?? null, providerErrors: snapshot.errors },
+      details: { seriesReceived: snapshot.series.length, modelVersion: snapshot.model?.version ?? null, usdStrengthVersion: snapshot.usdStrength?.version ?? null, macroRegimeVersion: snapshot.macroRegime?.version ?? null, providerErrors: snapshot.errors },
     };
   });
 }

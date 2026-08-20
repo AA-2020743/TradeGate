@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { calculateCrossMarketRelationship, calculateRsi, calculateTechnicalSnapshot, calculateUsLiquidityModel, pearsonCorrelation } from './analytics.js';
+import { calculateCrossMarketRelationship, calculateMacroRegimeModel, calculateRsi, calculateTechnicalSnapshot, calculateUsdStrengthModel, calculateUsLiquidityModel, pearsonCorrelation } from './analytics.js';
 
 test('RSI reaches 100 for an uninterrupted advance', () => {
   const values = Array.from({ length: 30 }, (_, index) => 100 + index);
@@ -79,4 +79,70 @@ test('US liquidity model refuses to publish with a missing mandatory driver', ()
     { key: 'usM2', multiplier: 1, history },
     { key: 'dxy', multiplier: 1, history },
   ]), null);
+});
+
+test('USD strength combines the broad dollar with connected macro drivers', () => {
+  const daily = (key, start, step) => ({
+    key,
+    multiplier: 1,
+    history: Array.from({ length: 300 }, (_, index) => ({
+      date: new Date(Date.UTC(2025, 0, index + 1)).toISOString().slice(0, 10),
+      value: start + (index * step),
+    })),
+  });
+  const model = calculateUsdStrengthModel([
+    daily('dxy', 100, 0.04),
+    daily('realYield10y', 1.5, 0.003),
+    daily('us2yYield', 4, 0.002),
+    daily('financialConditions', -0.4, 0.0005),
+    daily('vix', 16, 0),
+  ], { score: 45, composite: -0.1, version: 'liquidity-test' });
+  assert.equal(model.version, 'usd-strength-v1');
+  assert.equal(model.status, 'calculated');
+  assert.equal(model.coverage, 100);
+  assert.ok(model.score > 50);
+  assert.equal(model.history.length, 300);
+  assert.match(model.proxy, /not the ICE DXY/);
+});
+
+test('USD strength is explicitly provisional when only dollar price is available', () => {
+  const series = {
+    key: 'dxy',
+    multiplier: 1,
+    history: Array.from({ length: 260 }, (_, index) => ({
+      date: new Date(Date.UTC(2025, 0, index + 1)).toISOString().slice(0, 10),
+      value: 100 + (index * 0.02),
+    })),
+  };
+  const model = calculateUsdStrengthModel([series]);
+  assert.equal(model.status, 'provisional');
+  assert.equal(model.coverage, 45);
+  assert.ok(model.missing.includes('10Y real-yield impulse'));
+});
+
+test('macro regime uses independent liquidity, conditions, credit, volatility, and dollar sleeves', () => {
+  const history = (key, value) => ({
+    key,
+    multiplier: 1,
+    history: Array.from({ length: 120 }, (_, index) => ({
+      date: new Date(Date.UTC(2025, 0, 1 + (index * 3))).toISOString().slice(0, 10),
+      value,
+    })),
+  });
+  const model = calculateMacroRegimeModel([
+    history('financialConditions', -0.5),
+    history('highYieldSpread', 3),
+    history('vix', 15),
+  ], { score: 75, composite: 0.3, version: 'liquidity-test', asOf: '2026-01-01' }, { score: 40, version: 'usd-test', asOf: '2026-01-01', indicators: { momentum20d: -1 } });
+  assert.equal(model.version, 'macro-regime-v1');
+  assert.equal(model.status, 'calculated');
+  assert.equal(model.coverage, 100);
+  assert.equal(model.regime, 'Expansion / risk-on');
+  assert.equal(model.settings.riskBudget, 'High');
+});
+
+test('macro regime refuses a single-sleeve classification', () => {
+  const model = calculateMacroRegimeModel([], { score: 70, version: 'liquidity-test' });
+  assert.equal(model.status, 'unavailable');
+  assert.equal(model.regime, null);
 });
