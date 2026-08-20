@@ -192,13 +192,23 @@ const server = app.listen(config.port, config.host, () => {
   console.log(`TradeGate API listening on http://${config.host}:${config.port}`);
 });
 const stopIngestion = startIngestionScheduler();
+let shutdownStarted = false;
 
 async function shutdown() {
+  if (shutdownStarted) return;
+  shutdownStarted = true;
   await stopIngestion();
   await new Promise((resolve) => server.close(resolve));
   await closeDatabase();
-  process.exit(0);
+  process.exitCode = 0;
 }
 
-process.on('SIGTERM', shutdown);
-process.on('SIGINT', shutdown);
+function requestShutdown() {
+  void shutdown().catch((error) => {
+    console.error('Graceful shutdown failed:', error);
+    process.exitCode = 1;
+  });
+}
+
+process.on('SIGTERM', requestShutdown);
+process.on('SIGINT', requestShutdown);

@@ -481,11 +481,11 @@ function formatResearchDate(value) {
   return new Intl.DateTimeFormat('en-US', { month: 'short', day: 'numeric', year: 'numeric', timeZone: 'UTC' }).format(new Date(value));
 }
 
-function EquitySignalCard({ kicker, title, model, empty }) {
+function EquitySignalCard({ kicker, title, model, empty, coverageLabel = 'driver coverage' }) {
   return <article className="equity-signal-card panel">
     <div className="equity-signal-head"><div><p className="section-kicker">{kicker}</p><h3>{model?.risk ?? model?.signal ?? model?.regime ?? title}</h3></div><EquityStatus status={model?.status} /></div>
     <div className="equity-signal-score"><b>{Number.isFinite(model?.score) ? model.score : '—'}</b><span>/100</span><i><b style={{ width: `${model?.score ?? 0}%` }}></b></i></div>
-    <p>{model?.status === 'unavailable' || !model ? empty : `${model.version} · ${model.coverage}% driver coverage`}</p>
+    <p>{model?.status === 'unavailable' || !model ? empty : `${model.version} · ${model.coverage}% ${coverageLabel}`}</p>
     {model?.missing?.length ? <small>Missing: {model.missing.slice(0, 3).join(', ')}{model.missing.length > 3 ? ` +${model.missing.length - 3}` : ''}</small> : null}
   </article>;
 }
@@ -523,7 +523,7 @@ function EquitiesDashboard() {
       </article>
 
       <article className="equity-focus-panel panel">
-        <div className="panel-title"><div><p className="section-kicker">SELECTED INDEX PROXY</p><h3>{selectedIndex?.name ?? 'Awaiting selection'}</h3></div><EquityStatus status={dashboard?.technical?.model ? dashboard.technical.stale ? 'stale' : 'available' : 'unavailable'} /></div>
+        <div className="panel-title"><div><p className="section-kicker">SELECTED INDEX PROXY</p><h3>{selectedIndex?.name ?? 'Awaiting selection'}</h3></div><EquityStatus status={dashboard?.technical?.stale ? 'stale' : dashboard?.technical?.model ? 'available' : 'unavailable'} /></div>
         <div className="equity-focus-price"><b>{formatUsd(technical?.latest)}</b><span>{selectedIndex?.symbol ?? '—'}</span><small>{selectedIndex?.instrument ?? 'Provider history unavailable'}</small></div>
         <div className="equity-technical-grid"><div><span>Technical score</span><b>{technical?.score ?? '—'}</b></div><div><span>20D momentum</span><b>{formatPercent(technical?.indicators?.momentum20d)}</b></div><div><span>RSI 14</span><b>{technical?.indicators?.rsi14?.toFixed(1) ?? '—'}</b></div><div><span>20D volatility</span><b>{Number.isFinite(technical?.indicators?.annualizedVolatility20d) ? `${technical.indicators.annualizedVolatility20d.toFixed(1)}%` : '—'}</b></div></div>
         <p className="equity-source-line">{dashboard?.technical?.source ?? 'No market history source'} · {formatResearchDate(dashboard?.technical?.asOf)}</p>
@@ -535,7 +535,7 @@ function EquitiesDashboard() {
       <EquitySignalCard kicker="DYNAMIC REGIME" title="Regime unavailable" model={regime} empty="Price trend, momentum, and volatility are mandatory before a regime can be classified." />
       <EquitySignalCard kicker="TOP-RISK DETECTION" title="Top risk unavailable" model={dashboard?.topRisk} empty="Top risk requires technical deterioration plus constituent breadth and independent confirmation." />
       <EquitySignalCard kicker="BOTTOM / RALLY DETECTION" title="Bottom signal unavailable" model={dashboard?.bottomSignal} empty="Bottom detection requires a breadth washout/thrust plus technical and macro confirmation." />
-      <EquitySignalCard kicker="CONSTITUENT BREADTH" title="Breadth unavailable" model={dashboard?.breadth} empty={dashboard?.breadth?.reason ?? 'Constituent histories are not connected.'} />
+      <EquitySignalCard kicker="CONSTITUENT BREADTH" title={dashboard?.breadth?.status === 'calculated' ? 'Calculated breadth' : dashboard?.breadth?.status === 'partial' ? 'Partial breadth' : 'Breadth unavailable'} model={dashboard?.breadth} empty={dashboard?.breadth?.reason ?? 'Constituent histories are not connected.'} coverageLabel="constituent coverage" />
     </section>
 
     <section className="equity-regime-layout">
@@ -677,7 +677,7 @@ function MacroDashboard({ data }) {
       <div className="model-tabs"><button className={activeModel === 'Liquidity' ? 'active' : ''} onClick={() => setActiveModel('Liquidity')}>US liquidity</button><button className={activeModel === 'Risk' ? 'active' : ''} onClick={() => setActiveModel('Risk')}>Macro regime</button><button className={activeModel === 'Correlations' ? 'active' : ''} onClick={() => setActiveModel('Correlations')}>Correlations <small className="tab-preview">Preview</small></button><button className={activeModel === 'FX' ? 'active' : ''} onClick={() => setActiveModel('FX')}>USD & FX <small className="tab-preview">Preview mix</small></button></div>
     </section>
     <DataDisclosure data={data} message="US liquidity, USD strength, macro regime, and DXY/BTC are versioned calculations. Every remaining designed value is labeled Preview at its tab or section." />
-    {data.liquidity?.series?.length ? <section className="official-data-strip panel"><div><p className="section-kicker">OFFICIAL FRED OBSERVATIONS</p><b>Latest released data</b></div>{data.liquidity.series.slice(0, 5).map((series) => <div key={series.id}><span>{series.name}</span><strong>{formatMacroValue(series)}</strong><small>{series.date}</small></div>)}</section> : <section className="provider-setup-note"><b>FRED macro feed not configured</b><span>Add `FRED_API_KEY` to the server environment to load official liquidity observations.</span></section>}
+    {data.liquidity?.series?.length ? <section className="official-data-strip panel"><div><p className="section-kicker">OFFICIAL FRED OBSERVATIONS</p><b>Latest released data</b></div>{data.liquidity.series.slice(0, 5).map((series) => <div key={series.id}><span>{series.name}</span><strong>{formatMacroValue(series)}</strong><small>{series.date}{series.stale ? ' · stale' : series.stored ? ' · stored' : ' · live'}</small></div>)}</section> : <section className="provider-setup-note"><b>FRED macro feed not configured</b><span>Add `FRED_API_KEY` to the server environment to load official liquidity observations.</span></section>}
 
     <section className="model-overview-grid">
       <article className={`macro-model panel ${activeModel === 'Liquidity' ? 'model-emphasis' : ''}`}>
@@ -690,7 +690,7 @@ function MacroDashboard({ data }) {
       <article className={`macro-model panel risk-model ${activeModel === 'Risk' ? 'model-emphasis' : ''}`}>
         <div className="macro-card-top"><div><p className="section-kicker">MACRO REGIME · {macroRegime?.status?.toUpperCase() ?? 'UNAVAILABLE'}</p><h2>{macroRegime?.regime ?? 'Awaiting inputs'} <span className="status-dot blue"></span></h2><p>{macroRegime ? `${macroRegime.coverage}% independent-driver coverage` : 'Connect at least two independent FRED sleeves'}</p></div><div className="score-orbit blue-orbit"><b>{macroRegime?.score ?? '—'}</b><small>/100</small></div></div>
         <div className="risk-lanes">{(macroRegime?.drivers ?? []).slice(0, 3).map((driver) => <div key={driver.key}><span>{driver.name}</span><i><b style={{ width: `${driver.score ?? 0}%` }}></b></i><strong>{driver.score ?? '—'}</strong></div>)}</div>
-        <div className="signal-summary"><span>Risk budget <b>{macroRegime?.settings?.riskBudget ?? 'Unavailable'}</b></span><span>Confidence <b>{macroRegime?.confidence ?? 'Unavailable'}</b></span><span>Panic <b>{macroRegime?.panicConfirmed ? 'Confirmed' : 'Not confirmed'}</b></span></div>
+        <div className="signal-summary"><span>Risk budget <b>{macroRegime?.settings?.riskBudget ?? 'Unavailable'}</b></span><span>Confidence <b>{macroRegime?.confidence ?? 'Unavailable'}</b></span><span>Panic <b>{macroRegime?.panicConfirmed === true ? 'Confirmed' : macroRegime?.panicConfirmed === false ? 'Not confirmed' : 'Unavailable'}</b></span></div>
         <div className="model-action"><span>{macroRegime?.version ?? 'No model output'}</span><button onClick={() => setActiveModel('Risk')}>Open model →</button></div>
       </article>
       <article className={`macro-model panel correlation-model preview-section ${activeModel === 'Correlations' ? 'model-emphasis' : ''}`}>

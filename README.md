@@ -54,11 +54,15 @@ Create `.env` from `.env.example` and set the server-side keys:
 HOST=127.0.0.1
 PORT=8787
 TWELVE_DATA_API_KEY=your_twelve_data_key
+TWELVE_MINUTE_CREDIT_LIMIT=8
+TWELVE_DAILY_CREDIT_LIMIT=760
+TWELVE_MAX_INTERACTIVE_WAIT_MS=10000
+TWELVE_QUOTE_REFRESH_MS=900000
 FRED_API_KEY=your_fred_key
 DATABASE_URL=postgresql://tradegate_app:password@127.0.0.1:5432/tradegate
 DATABASE_SSL=false
 INGESTION_ENABLED=true
-MARKET_REFRESH_MS=60000
+MARKET_REFRESH_MS=900000
 MACRO_REFRESH_MS=21600000
 HISTORY_REFRESH_MS=86400000
 ```
@@ -125,17 +129,17 @@ sudo -u tradegate npm run db:migrate
 sudo -u tradegate npm run ingest:once
 ```
 
-The migration creates raw series, current observations, revision history, ingestion runs, and versioned model outputs. `ingest:once` backfills one year of supported market history and available FRED history. Scheduled ingestion starts only when both `DATABASE_URL` and `INGESTION_ENABLED=true` are configured.
+The migration creates raw series, current observations, revision history, ingestion runs, versioned model outputs, and the provider-credit ledger. `ingest:once` backfills one year of supported market history and available FRED history. Scheduled ingestion starts only when both `DATABASE_URL` and `INGESTION_ENABLED=true` are configured.
 
 Default ingestion intervals are:
 
 | Job | Interval |
 | --- | --- |
-| Current market snapshot | 60 seconds |
+| Current market snapshot | 15 minutes |
 | FRED macro and liquidity | 6 hours |
 | One-year market and core equity history refresh | 24 hours |
 
-Provider caches, scheduled intervals, and the serialized Twelve Data history backfill reduce the chance of exceeding free-plan limits. Confirm the exact quotas and licensing terms on your provider account.
+The Twelve Data limiter allows at most eight credits in a rolling minute and 760 credits per UTC day by default. When scheduled ingestion is enabled, interactive requests can use at most 140 of those credits so they cannot consume the backfill allocation. Set `TWELVE_INTERACTIVE_DAILY_LIMIT` explicitly to override that allocation; `0` disables interactive provider calls. PostgreSQL records daily reservations across service restarts; installations without PostgreSQL use the same limits in memory. A six-symbol quote batch is treated as six credits, not one request, and interactive requests fail fast when rolling-minute capacity would exceed the proxy timeout. A completed daily history backfill is not repeated after a same-day service restart. Confirm the exact quotas and licensing terms on your provider account before changing these limits.
 
 The core equity backfill covers priority global-index proxies and the 11 U.S. sector ETFs. Less-liquid secondary index and subsector proxies remain queryable but are not scheduled by default. Every proxy is labeled; the application does not substitute an ETF price while presenting it as an exact local index level.
 
@@ -184,6 +188,8 @@ The macro regime combines US liquidity, Chicago Fed financial conditions, US hig
 - Missing provider data returns unavailable; it is never silently replaced with a sample value.
 - PostgreSQL provides last-known-good history when an upstream provider fails.
 - Stored fallbacks retain their original provider timestamp and source label.
+- Successful provider responses are also freshness-checked; stale observations remain labeled and may be retained as raw history, but are excluded from current models.
+- Partial quote refreshes retain missing last-known-good assets as explicitly stale cache fallbacks.
 - FRED revisions are preserved in `observation_revisions` rather than overwritten without an audit trail.
 - Ingestion runs record status, write count, provider errors, and completion time.
 - Model outputs store their version, effective date, JSON output, and input-series lineage.

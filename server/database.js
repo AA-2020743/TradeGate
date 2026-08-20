@@ -1,5 +1,6 @@
 import pg from 'pg';
 import { config } from './config.js';
+import { isDailyCloseStale, isFredSeriesStale } from './freshness.js';
 
 const { Pool } = pg;
 const pool = config.databaseUrl
@@ -25,7 +26,7 @@ export async function getDatabaseHealth() {
          to_regclass('public.schema_migrations') AS migrations`,
     );
     const latestMigration = result.rows[0].migrations
-      ? await pool.query("SELECT EXISTS (SELECT 1 FROM schema_migrations WHERE filename = '002_ingestion_lineage.sql') AS applied")
+      ? await pool.query("SELECT EXISTS (SELECT 1 FROM schema_migrations WHERE filename = '003_provider_credit_usage.sql') AS applied")
       : null;
     const migrated = Boolean(result.rows[0].observations && latestMigration?.rows[0].applied);
     return { configured: true, connected: true, migrated, mode: migrated ? 'postgresql' : 'migration-required', purpose: 'Time-series persistence and revision history' };
@@ -129,6 +130,30 @@ export async function persistModelOutput(modelId, model, inputLineage = [], inge
   );
 }
 
+export async function reserveProviderCredits(provider, credits, dailyLimit, interactiveLimit, usage, usageDate) {
+  if (!pool) return { persisted: false, allowed: true };
+  const interactiveCredits = usage === 'interactive' ? credits : 0;
+  if (credits > dailyLimit || interactiveCredits > interactiveLimit) return { persisted: true, allowed: false };
+  const result = await pool.query(
+    `INSERT INTO provider_credit_usage (provider, usage_date, total_credits, interactive_credits)
+     VALUES ($1, $2, $3, $4)
+     ON CONFLICT (provider, usage_date) DO UPDATE SET
+       total_credits = provider_credit_usage.total_credits + EXCLUDED.total_credits,
+       interactive_credits = provider_credit_usage.interactive_credits + EXCLUDED.interactive_credits,
+       updated_at = NOW()
+     WHERE provider_credit_usage.total_credits + EXCLUDED.total_credits <= $5
+       AND provider_credit_usage.interactive_credits + EXCLUDED.interactive_credits <= $6
+     RETURNING total_credits, interactive_credits`,
+    [provider, usageDate, credits, interactiveCredits, dailyLimit, interactiveLimit],
+  );
+  return {
+    persisted: true,
+    allowed: result.rowCount === 1,
+    totalCredits: result.rows[0]?.total_credits ?? null,
+    interactiveCredits: result.rows[0]?.interactive_credits ?? null,
+  };
+}
+
 export async function acquireIngestionLock(jobName) {
   if (!pool) return { acquired: false, release: async () => {} };
   const client = await pool.connect();
@@ -160,6 +185,22 @@ export async function getIngestionStatus() {
   return result.rows;
 }
 
+export async function hasIngestedMarketHistoriesSince(since, minimumTwelveSymbols) {
+  if (!pool) return false;
+  const result = await pool.query(
+    `SELECT EXISTS (
+       SELECT 1
+       FROM ingestion_runs
+       WHERE job_name = 'market-history'
+         AND status IN ('completed', 'partial')
+         AND finished_at >= $1
+         AND COALESCE((details->>'twelveSymbolsReceived')::integer, 0) >= $2
+     ) AS ingested`,
+    [since, minimumTwelveSymbols],
+  );
+  return result.rows[0].ingested;
+}
+
 export async function getStoredMarketSnapshot() {
   if (!pool) return [];
   const result = await pool.query(
@@ -187,7 +228,7 @@ export async function getStoredMarketSnapshot() {
     asOf: row.observed_at,
     source: `${row.provider} (stored)`,
     stored: true,
-    stale: Date.now() - new Date(row.observed_at).getTime() > (row.key === 'BTC' ? 5 * 60_000 : 4 * 86_400_000),
+    stale: row.key === 'BTC' ? Date.now() - new Date(row.observed_at).getTime() > 5 * 60_000 : isDailyCloseStale(row.observed_at),
   }));
 }
 
@@ -232,6 +273,7 @@ export async function getStoredFredSeries() {
     ...series,
     value: series.history.at(-1)?.value ?? null,
     date: series.history.at(-1)?.date ?? null,
+    stale: isFredSeriesStale(series.id, series.history.at(-1)?.date),
   }));
 }
 
@@ -266,7 +308,7 @@ export async function getStoredSeriesCoverage(symbols) {
   const result = await pool.query(
     `SELECT
        series.provider_series_id AS symbol,
-       COUNT(observations.id)::integer AS observations,
+       COUNT(observations.observed_at)::integer AS observations,
        MIN(observations.observed_at) AS starts_at,
        MAX(observations.observed_at) AS ends_at
      FROM data_series AS series

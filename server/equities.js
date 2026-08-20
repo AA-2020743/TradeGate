@@ -11,6 +11,7 @@ import {
   subsectorCatalog,
 } from './equityCatalog.js';
 import { getLiquiditySnapshot } from './providers.js';
+import { isDailyCloseStale } from './freshness.js';
 
 const unavailableBreadth = {
   version: 'equity-breadth-v1',
@@ -37,17 +38,18 @@ async function getStoredTechnicalSnapshot(symbol) {
   if (!isDatabaseConfigured()) return { symbol, source: null, configured: false, stored: false, stale: false, asOf: null, model: null };
   const histories = await getStoredMarketHistories([symbol]);
   const points = histories.get(symbol) ?? [];
-  const model = calculateTechnicalSnapshot(points);
-  const asOf = model?.asOf ?? points.at(-1)?.timestamp ?? null;
+  const calculatedModel = calculateTechnicalSnapshot(points);
+  const asOf = calculatedModel?.asOf ?? points.at(-1)?.timestamp ?? null;
   const latestTimestamp = new Date(asOf).getTime();
+  const stale = Boolean(points.length) && isDailyCloseStale(latestTimestamp);
   return {
     symbol,
     source: points.length ? 'PostgreSQL (stored Twelve Data history)' : null,
     configured: true,
     stored: Boolean(points.length),
-    stale: Boolean(points.length) && Number.isFinite(latestTimestamp) && Date.now() - latestTimestamp > 4 * 86_400_000,
+    stale,
     asOf,
-    model,
+    model: stale ? null : calculatedModel,
   };
 }
 
@@ -62,9 +64,10 @@ export async function getEquityDashboard(requestedSymbol = 'SPY') {
   ]);
   const technical = technicalResult.status === 'fulfilled' ? technicalResult.value : null;
   const liquidity = liquidityResult.status === 'fulfilled' ? liquidityResult.value : null;
-  const regime = calculateEquityRegime({ technical: technical?.model, liquidity: liquidity?.model, breadth: unavailableBreadth });
-  const topRisk = calculateTopRisk({ technical: technical?.model, breadth: unavailableBreadth, liquidity: liquidity?.model });
-  const bottomSignal = calculateBottomSignal({ technical: technical?.model, breadth: unavailableBreadth, liquidity: liquidity?.model });
+  const usableTechnical = technical?.stale ? null : technical?.model;
+  const regime = calculateEquityRegime({ technical: usableTechnical, liquidity: liquidity?.model, breadth: unavailableBreadth });
+  const topRisk = calculateTopRisk({ technical: usableTechnical, breadth: unavailableBreadth, liquidity: liquidity?.model });
+  const bottomSignal = calculateBottomSignal({ technical: usableTechnical, breadth: unavailableBreadth, liquidity: liquidity?.model });
 
   return {
     version: 'equity-dashboard-v1',
@@ -85,7 +88,7 @@ export async function getEquityDashboard(requestedSymbol = 'SPY') {
     sources: [
       {
         name: 'Index market history',
-        status: technical?.model ? technical.stale ? 'stale' : 'available' : 'unavailable',
+        status: technical?.stale ? 'stale' : technical?.model ? 'available' : 'unavailable',
         source: technical?.source ?? null,
         asOf: technical?.asOf ?? null,
         disclosure: `${index.name} is represented by ${index.symbol}, a ${index.instrument}.`,
@@ -102,6 +105,7 @@ export async function getEquityDashboard(requestedSymbol = 'SPY') {
     errors: [
       ...(technicalResult.status === 'rejected' ? [technicalResult.reason.message] : []),
       ...(liquidityResult.status === 'rejected' ? [liquidityResult.reason.message] : []),
+      ...(technical?.stale ? [`Stored ${symbol} history is stale; signal models were suppressed`] : []),
     ],
   };
 }
@@ -111,21 +115,30 @@ export async function getSectorDashboard() {
   let histories = new Map(symbols.map((symbol) => [symbol, []]));
   let coverage = [];
   let storageAvailable = false;
+  let coverageAvailable = false;
   if (isDatabaseConfigured()) {
-    try {
-      [histories, coverage] = await Promise.all([
-        getStoredMarketHistories(symbols),
-        getStoredSeriesCoverage(symbols),
-      ]);
+    const [historiesResult, coverageResult] = await Promise.allSettled([
+      getStoredMarketHistories(symbols),
+      getStoredSeriesCoverage(symbols),
+    ]);
+    if (historiesResult.status === 'fulfilled') {
+      histories = historiesResult.value;
       storageAvailable = true;
-    } catch {
-      storageAvailable = false;
+    }
+    if (coverageResult.status === 'fulfilled') {
+      coverage = coverageResult.value;
+      coverageAvailable = true;
     }
   }
+  const historyIsFresh = (points) => {
+    const timestamp = new Date(points.at(-1)?.timestamp).getTime();
+    return points.length > 0 && !isDailyCloseStale(timestamp);
+  };
+  const benchmarkHistory = histories.get('SPY') ?? [];
   const rotation = calculateSectorRotation(sectorCatalog.map((sector) => ({
     ...sector,
-    points: histories.get(sector.symbol) ?? [],
-  })), histories.get('SPY') ?? []);
+    points: historyIsFresh(histories.get(sector.symbol) ?? []) ? histories.get(sector.symbol) : [],
+  })), historyIsFresh(benchmarkHistory) ? benchmarkHistory : []);
   const sectorMetadata = new Map(sectorCatalog.map((sector) => [sector.symbol, sector]));
   const enrichedRotation = {
     ...rotation,
@@ -135,7 +148,7 @@ export async function getSectorDashboard() {
   return {
     version: 'equity-sector-dashboard-v1',
     asOf: rotation.asOf,
-    storage: { configured: isDatabaseConfigured(), available: storageAvailable },
+    storage: { configured: isDatabaseConfigured(), available: storageAvailable, coverageAvailable },
     rotation: enrichedRotation,
     sectors: attachSeriesCoverage(sectorCatalog, coverage),
     subsectors: attachSeriesCoverage(subsectorCatalog, coverage),
@@ -144,6 +157,6 @@ export async function getSectorDashboard() {
       reason: 'Sector and subsector constituent histories are required for participation breadth.',
     },
     flows: unavailableDataset('Sector flows', ['ETF creations/redemptions', 'Mutual-fund flows', 'Institutional flows', 'Options flows']),
-    methodology: 'Rotation uses aligned 20- and 60-session ETF proxy performance relative to SPY together with technical-v1. It does not infer holdings breadth or flows.',
+    methodology: 'Rotation uses fresh, aligned 20- and 60-session ETF proxy performance relative to SPY together with technical-v1. Stale histories are excluded; holdings breadth and flows are not inferred.',
   };
 }

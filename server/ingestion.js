@@ -3,6 +3,7 @@ import { calculateTechnicalSnapshot } from './analytics.js';
 import {
   acquireIngestionLock,
   finishIngestionRun,
+  hasIngestedMarketHistoriesSince,
   isDatabaseConfigured,
   persistModelOutput,
   persistSeries,
@@ -39,8 +40,8 @@ async function executeIngestion(jobName, loader) {
 
 export async function ingestMarketSnapshot() {
   return executeIngestion('market-snapshot', async ({ runId, reportWritten }) => {
-    const snapshot = await getMarketSnapshot();
-    const liveAssets = snapshot.assets.filter((item) => !item.stored);
+    const snapshot = await getMarketSnapshot({ refresh: true, usage: 'scheduled' });
+    const liveAssets = snapshot.assets.filter((item) => !item.stored && !item.cached && !item.stale);
     if (!liveAssets.length) throw new Error('No live market observations were returned');
 
     for (const asset of liveAssets) {
@@ -67,7 +68,7 @@ export async function ingestMarketSnapshot() {
 
     return {
       status: snapshot.errors.length ? 'partial' : 'completed',
-      details: { liveAssetsReceived: liveAssets.length, storedAssetsIgnored: snapshot.assets.length - liveAssets.length, providerErrors: snapshot.errors },
+      details: { liveAssetsReceived: liveAssets.length, fallbackAssetsIgnored: snapshot.assets.length - liveAssets.length, providerErrors: snapshot.errors },
     };
   });
 }
@@ -75,17 +76,18 @@ export async function ingestMarketSnapshot() {
 export async function ingestMarketHistory() {
   return executeIngestion('market-history', async ({ runId, reportWritten }) => {
     let symbolsReceived = 0;
+    let twelveSymbolsReceived = 0;
     const errors = [];
 
     for (const symbol of getIngestionHistorySymbols()) {
       if (symbol !== 'BTC' && !config.twelveDataApiKey) continue;
       try {
-        const history = await getMarketHistory(symbol, '1Y', { preferStored: false });
+        const history = await getMarketHistory(symbol, '1Y', { preferStored: false, usage: 'scheduled' });
         if (!history.points.length) {
           errors.push({ symbol, message: 'Provider returned no history' });
           continue;
         }
-        symbolsReceived += 1;
+        if (history.stale) throw new Error(`Provider returned stale history ending ${history.asOf ?? 'without a timestamp'}`);
         const written = await persistSeries({
           id: `market:${symbol}:close:usd`,
           provider: history.source,
@@ -111,6 +113,8 @@ export async function ingestMarketHistory() {
           to: history.points.at(-1).timestamp,
           observations: history.points.length,
         }], runId);
+        symbolsReceived += 1;
+        if (symbol !== 'BTC') twelveSymbolsReceived += 1;
       } catch (error) {
         errors.push({ symbol, message: error.message });
       }
@@ -118,13 +122,13 @@ export async function ingestMarketHistory() {
 
     if (!symbolsReceived) throw new Error(`No market histories were ingested: ${JSON.stringify(errors)}`);
 
-    return { status: errors.length ? 'partial' : 'completed', details: { symbolsReceived, errors } };
+    return { status: errors.length ? 'partial' : 'completed', details: { symbolsReceived, twelveSymbolsReceived, errors } };
   });
 }
 
 export async function ingestLiquiditySnapshot() {
   return executeIngestion('fred-liquidity', async ({ runId, reportWritten }) => {
-    const snapshot = await getLiquiditySnapshot();
+    const snapshot = await getLiquiditySnapshot({ refresh: true });
     if (!snapshot.series.length) throw new Error('No FRED series were returned');
 
     for (const series of snapshot.series) {
@@ -147,9 +151,34 @@ export async function ingestLiquiditySnapshot() {
       }, runId);
       reportWritten(written);
     }
-    await persistModelOutput('us-liquidity', snapshot.model, snapshot.series.map((series) => ({ seriesId: `fred:${series.id}`, asOf: series.date })), runId);
-    await persistModelOutput('usd-strength', snapshot.usdStrength, snapshot.series.map((series) => ({ seriesId: `fred:${series.id}`, asOf: series.date })), runId);
-    await persistModelOutput('macro-regime', snapshot.macroRegime, snapshot.series.map((series) => ({ seriesId: `fred:${series.id}`, asOf: series.date })), runId);
+    const usableSeries = snapshot.series.filter((series) => !series.stale);
+    const lineageFor = (keys) => {
+      const requested = new Set(keys);
+      return usableSeries.filter((series) => requested.has(series.key)).map((series) => ({ seriesId: `fred:${series.id}`, asOf: series.date }));
+    };
+    const contributingDrivers = (model) => new Set((model?.drivers ?? []).filter((driver) => Number.isFinite(driver.score)).map((driver) => driver.key));
+    const liquidityKeys = ['fedBalanceSheet', 'treasuryGeneralAccount', 'reverseRepo', 'usM2', 'dxy'];
+    const usdDrivers = contributingDrivers(snapshot.usdStrength);
+    const usdKeys = [
+      ...(usdDrivers.has('dollarTrend') || usdDrivers.has('dollarMomentum') ? ['dxy'] : []),
+      ...(usdDrivers.has('realYield') ? ['realYield10y'] : []),
+      ...(usdDrivers.has('frontEnd') ? ['us2yYield'] : []),
+      ...(usdDrivers.has('stress') ? ['financialConditions', 'vix'] : []),
+      ...(usdDrivers.has('liquidity') ? liquidityKeys : []),
+    ];
+    const macroDrivers = contributingDrivers(snapshot.macroRegime);
+    const macroKeys = [
+      ...(macroDrivers.has('liquidity') ? liquidityKeys : []),
+      ...(macroDrivers.has('financialConditions') ? ['financialConditions'] : []),
+      ...(macroDrivers.has('credit') ? ['highYieldSpread'] : []),
+      ...(macroDrivers.has('volatility') ? ['vix'] : []),
+      ...(macroDrivers.has('dollar') ? usdKeys : []),
+    ];
+    await persistModelOutput('us-liquidity', snapshot.model, lineageFor(liquidityKeys), runId);
+    await persistModelOutput('usd-strength', snapshot.usdStrength, lineageFor(usdKeys), runId);
+    if (snapshot.macroRegime?.status !== 'unavailable') {
+      await persistModelOutput('macro-regime', snapshot.macroRegime, lineageFor(macroKeys), runId);
+    }
 
     return {
       status: snapshot.errors.length || !snapshot.model ? 'partial' : 'completed',
@@ -207,10 +236,16 @@ export function startIngestionScheduler() {
     }
   };
 
-  const runHistory = async () => {
+  const runHistory = async (options = {}) => {
     if (historyRunning) return;
     historyRunning = true;
     try {
+      if (options.skipCompletedToday) {
+        const utcDayStart = new Date();
+        utcDayStart.setUTCHours(0, 0, 0, 0);
+        const minimumTwelveSymbols = config.twelveDataApiKey ? getIngestionHistorySymbols().filter((symbol) => symbol !== 'BTC').length : 0;
+        if (await hasIngestedMarketHistoriesSince(utcDayStart.toISOString(), minimumTwelveSymbols)) return;
+      }
       await track(ingestMarketHistory());
     } catch (error) {
       console.error('History ingestion failed:', error.message);
@@ -221,10 +256,10 @@ export function startIngestionScheduler() {
 
   void runMarket();
   void runMacro();
-  void runHistory();
-  const marketTimer = setInterval(runMarket, config.marketRefreshMs);
+  void runHistory({ skipCompletedToday: true });
+  const marketTimer = setInterval(runMarket, Math.max(config.marketRefreshMs, config.twelveQuoteRefreshMs));
   const macroTimer = setInterval(runMacro, config.macroRefreshMs);
-  const historyTimer = setInterval(runHistory, config.historyRefreshMs);
+  const historyTimer = setInterval(() => runHistory({ skipCompletedToday: true }), config.historyRefreshMs);
   marketTimer.unref();
   macroTimer.unref();
   historyTimer.unref();

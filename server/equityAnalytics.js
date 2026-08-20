@@ -29,10 +29,11 @@ function ema(values, period) {
 }
 
 function normalizeHistory(points) {
-  return points
+  const normalized = points
     .filter((point) => Number.isFinite(point.value) && (point.timestamp || point.date))
     .map((point) => ({ ...point, date: (point.timestamp ?? point.date).slice(0, 10) }))
-    .sort((left, right) => left.date.localeCompare(right.date));
+    .sort((left, right) => String(left.timestamp ?? left.date).localeCompare(String(right.timestamp ?? right.date)));
+  return [...new Map(normalized.map((point) => [point.date, point])).values()];
 }
 
 function weightedModel(definitions, minimumCoverage, mandatory = []) {
@@ -72,10 +73,11 @@ const REGIME_SETTINGS = {
 
 export function calculateEquityRegime({ technical, liquidity, breadth, credit, sentiment, positioning } = {}) {
   const volatility = technical?.indicators?.annualizedVolatility20d;
+  const calculatedBreadth = breadth?.status === 'calculated' ? breadth : null;
   const definitions = [
     { key: 'trend', name: 'Price trend', score: technical?.components?.trend, weight: 0.24, source: 'Provider close history' },
     { key: 'momentum', name: 'Price momentum', score: technical?.components?.momentum, weight: 0.18, source: 'Provider close history' },
-    { key: 'breadth', name: 'Market breadth', score: breadth?.score, weight: 0.18, source: breadth?.source },
+    { key: 'breadth', name: 'Market breadth', score: calculatedBreadth?.score, weight: 0.18, source: calculatedBreadth?.source },
     { key: 'liquidity', name: 'Liquidity impulse', score: liquidity?.score, weight: 0.12, source: liquidity?.version },
     { key: 'credit', name: 'Credit conditions', score: credit?.score, weight: 0.1, source: credit?.source },
     { key: 'volatility', name: 'Volatility quality', score: technical?.components?.volatilityQuality, weight: 0.1, source: 'Provider close history' },
@@ -133,9 +135,10 @@ function technicalBottomScore(technical) {
 }
 
 export function calculateTopRisk({ technical, breadth, sentiment, positioning, credit, liquidity, flows } = {}) {
+  const calculatedBreadth = breadth?.status === 'calculated' ? breadth : null;
   const definitions = [
     { key: 'technical', name: 'Technical deterioration', score: technicalTopRisk(technical), weight: 0.25, source: 'Provider close history' },
-    { key: 'breadth', name: 'Breadth deterioration', score: breadth?.topRisk, weight: 0.2, source: breadth?.source },
+    { key: 'breadth', name: 'Breadth deterioration', score: calculatedBreadth?.topRisk, weight: 0.2, source: calculatedBreadth?.source },
     { key: 'sentiment', name: 'Sentiment euphoria', score: sentiment?.euphoria, weight: 0.15, source: sentiment?.source },
     { key: 'positioning', name: 'Crowded positioning', score: positioning?.crowding, weight: 0.15, source: positioning?.source },
     { key: 'credit', name: 'Credit deterioration', score: credit?.deterioration, weight: 0.1, source: credit?.source },
@@ -155,9 +158,10 @@ export function calculateTopRisk({ technical, breadth, sentiment, positioning, c
 }
 
 export function calculateBottomSignal({ technical, breadth, sentiment, positioning, credit, liquidity, flows } = {}) {
+  const calculatedBreadth = breadth?.status === 'calculated' ? breadth : null;
   const definitions = [
     { key: 'technical', name: 'Technical washout and turn', score: technicalBottomScore(technical), weight: 0.25, source: 'Provider close history' },
-    { key: 'breadth', name: 'Breadth washout and thrust', score: breadth?.bottomScore, weight: 0.2, source: breadth?.source },
+    { key: 'breadth', name: 'Breadth washout and thrust', score: calculatedBreadth?.bottomScore, weight: 0.2, source: calculatedBreadth?.source },
     { key: 'sentiment', name: 'Sentiment pessimism', score: sentiment?.pessimism, weight: 0.15, source: sentiment?.source },
     { key: 'positioning', name: 'Positioning underexposure', score: positioning?.underexposure, weight: 0.1, source: positioning?.source },
     { key: 'credit', name: 'Credit stabilization', score: credit?.stabilization, weight: 0.1, source: credit?.source },
@@ -166,8 +170,9 @@ export function calculateBottomSignal({ technical, breadth, sentiment, positioni
   ];
   const model = weightedModel(definitions, 0.55, ['technical', 'breadth']);
   const score = model.publishable ? model.score : null;
-  const belowLongTrend = Number.isFinite(technical?.indicators?.sma200) && technical.latest < technical.indicators.sma200;
-  const breadthConfirmed = Number.isFinite(breadth?.bottomScore) && breadth.bottomScore >= 60;
+  const longTrendAvailable = Number.isFinite(technical?.indicators?.sma200) && Number.isFinite(technical?.latest);
+  const belowLongTrend = longTrendAvailable && technical.latest < technical.indicators.sma200;
+  const breadthConfirmed = Number.isFinite(calculatedBreadth?.bottomScore) && calculatedBreadth.bottomScore >= 60;
   return {
     version: 'equity-bottom-signal-v1',
     status: model.publishable ? 'calculated' : 'unavailable',
@@ -175,20 +180,27 @@ export function calculateBottomSignal({ technical, breadth, sentiment, positioni
     ...model,
     score,
     signal: score === null ? null : score >= 75 ? 'Capitulation reversal' : score >= 55 ? 'Bottoming watch' : score >= 35 ? 'Stabilizing' : 'Unconfirmed',
-    bearMarketRallyRisk: belowLongTrend && !breadthConfirmed ? 'Elevated' : 'Normal',
+    bearMarketRallyRisk: model.publishable && longTrendAvailable ? belowLongTrend && !breadthConfirmed ? 'Elevated' : 'Normal' : null,
   };
 }
 
-export function calculateBreadth(constituents) {
-  const histories = constituents.map((constituent) => ({ ...constituent, points: normalizeHistory(constituent.points ?? []) }));
+export function calculateBreadth(constituents, options = {}) {
+  const histories = constituents.map((constituent) => {
+    const points = normalizeHistory(constituent.points ?? []);
+    return { ...constituent, points, pointIndexByDate: new Map(points.map((point, index) => [point.date, index])) };
+  });
   const eligible = histories.filter((constituent) => constituent.points.length >= 20);
-  if (eligible.length < 20) {
+  const expectedConstituents = Math.max(constituents.length, options.expectedConstituents ?? constituents.length);
+  const minimumConstituents = Math.max(20, Math.ceil(expectedConstituents * 0.7));
+  if (eligible.length < minimumConstituents) {
     return {
       version: 'equity-breadth-v1',
       status: 'unavailable',
       asOf: null,
       constituents: eligible.length,
-      minimumConstituents: 20,
+      expectedConstituents,
+      minimumConstituents,
+      coverage: expectedConstituents ? Math.round((eligible.length / expectedConstituents) * 100) : 0,
       missing: ['Constituent-level price history'],
     };
   }
@@ -200,11 +212,13 @@ export function calculateBreadth(constituents) {
     let advanceVolume = 0;
     let declineVolume = 0;
     let volumeParticipants = 0;
+    let observed = 0;
     for (const constituent of eligible) {
-      const index = constituent.points.findIndex((point) => point.date === date);
+      const index = constituent.pointIndexByDate.get(date) ?? -1;
       if (index <= 0) continue;
       const point = constituent.points[index];
       const change = point.value - constituent.points[index - 1].value;
+      observed += 1;
       if (Number.isFinite(point.volume)) volumeParticipants += 1;
       if (change > 0) {
         advances += 1;
@@ -214,35 +228,56 @@ export function calculateBreadth(constituents) {
         if (Number.isFinite(point.volume)) declineVolume += point.volume;
       }
     }
-    const participating = advances + declines;
     return {
       date,
       advances,
       declines,
       netAdvances: advances - declines,
-      advanceRatio: participating ? advances / participating : null,
+      advanceRatio: observed ? advances / observed : null,
       advanceVolume,
       declineVolume,
       volumeParticipants,
+      observed,
     };
-  }).filter((day) => day.advances + day.declines >= Math.ceil(eligible.length * 0.7));
-  if (daily.length < 19) {
-    return { version: 'equity-breadth-v1', status: 'unavailable', asOf: daily.at(-1)?.date ?? null, constituents: eligible.length, minimumConstituents: 20, missing: ['Synchronized constituent observations'] };
+  }).filter((day) => day.observed >= minimumConstituents);
+  if (daily.length < 39) {
+    return {
+      version: 'equity-breadth-v1',
+      status: 'unavailable',
+      asOf: daily.at(-1)?.date ?? null,
+      constituents: eligible.length,
+      expectedConstituents,
+      minimumConstituents,
+      coverage: expectedConstituents ? Math.round((eligible.length / expectedConstituents) * 100) : 0,
+      missing: ['At least 39 synchronized constituent observations'],
+    };
   }
 
   const latestDate = daily.at(-1).date;
-  const latestMetrics = { above20: 0, above50: 0, above200: 0, highs: 0, lows: 0, observed: 0 };
+  const latestMetrics = { above20: 0, eligible20: 0, above50: 0, eligible50: 0, above200: 0, eligible200: 0, highs: 0, lows: 0, eligible252: 0 };
   for (const constituent of eligible) {
-    const points = constituent.points.filter((point) => point.date <= latestDate);
-    if (!points.length) continue;
+    const latestIndex = constituent.pointIndexByDate.get(latestDate);
+    if (latestIndex === undefined) continue;
+    const points = constituent.points.slice(0, latestIndex + 1);
     const values = points.map((point) => point.value);
     const latest = values.at(-1);
-    latestMetrics.observed += 1;
-    if (latest > movingAverage(values, 20)) latestMetrics.above20 += 1;
-    if (values.length >= 50 && latest > movingAverage(values, 50)) latestMetrics.above50 += 1;
-    if (values.length >= 200 && latest > movingAverage(values, 200)) latestMetrics.above200 += 1;
-    if (values.length >= 252 && latest >= Math.max(...values.slice(-252))) latestMetrics.highs += 1;
-    if (values.length >= 252 && latest <= Math.min(...values.slice(-252))) latestMetrics.lows += 1;
+    if (values.length >= 20) {
+      latestMetrics.eligible20 += 1;
+      if (latest > movingAverage(values, 20)) latestMetrics.above20 += 1;
+    }
+    if (values.length >= 50) {
+      latestMetrics.eligible50 += 1;
+      if (latest > movingAverage(values, 50)) latestMetrics.above50 += 1;
+    }
+    if (values.length >= 200) {
+      latestMetrics.eligible200 += 1;
+      if (latest > movingAverage(values, 200)) latestMetrics.above200 += 1;
+    }
+    if (values.length >= 252) {
+      latestMetrics.eligible252 += 1;
+      if (latest >= Math.max(...values.slice(-252))) latestMetrics.highs += 1;
+      if (latest <= Math.min(...values.slice(-252))) latestMetrics.lows += 1;
+    }
   }
 
   const netAdvances = daily.map((day) => day.netAdvances);
@@ -251,31 +286,61 @@ export function calculateBreadth(constituents) {
   const mcClellanHistory = daily.flatMap((day, index) => Number.isFinite(ema19[index]) && Number.isFinite(ema39[index])
     ? [{ date: day.date, value: ema19[index] - ema39[index] }]
     : []);
-  const breadthThrust = daily.length >= 10
-    ? mean(daily.slice(-10).map((day) => day.advanceRatio))
+  const meanAdvanceRatio = (days) => days.every((day) => Number.isFinite(day.advanceRatio)) ? mean(days.map((day) => day.advanceRatio)) : null;
+  const breadthThrust = daily.length >= 10 ? meanAdvanceRatio(daily.slice(-10)) : null;
+  const previousThrust = daily.length >= 20 ? meanAdvanceRatio(daily.slice(-20, -10)) : null;
+  const participation = (value, denominator) => denominator >= minimumConstituents ? (value / denominator) * 100 : null;
+  const percentAbove20 = participation(latestMetrics.above20, latestMetrics.eligible20);
+  const percentAbove50 = participation(latestMetrics.above50, latestMetrics.eligible50);
+  const percentAbove200 = participation(latestMetrics.above200, latestMetrics.eligible200);
+  const newHighLow = latestMetrics.eligible252 >= minimumConstituents ? ((latestMetrics.highs - latestMetrics.lows) / latestMetrics.eligible252) * 100 : null;
+  const scoreComponents = [
+    { value: percentAbove20, weight: 0.25 },
+    { value: percentAbove50, weight: 0.3 },
+    { value: percentAbove200, weight: 0.3 },
+    { value: Number.isFinite(newHighLow) ? (newHighLow + 100) / 2 : null, weight: 0.15 },
+  ].filter((component) => Number.isFinite(component.value));
+  const scoreCoverage = scoreComponents.reduce((total, component) => total + component.weight, 0);
+  const score = scoreCoverage >= 0.55 - 1e-9
+    ? Math.round(clamp(scoreComponents.reduce((total, component) => total + (component.value * component.weight), 0) / scoreCoverage))
     : null;
-  const previousThrust = daily.length >= 20
-    ? mean(daily.slice(-20, -10).map((day) => day.advanceRatio))
+  const latestAdvanceRatio = Number.isFinite(daily.at(-1).advanceRatio) ? daily.at(-1).advanceRatio * 100 : null;
+  const topRisk = [percentAbove20, percentAbove50, latestAdvanceRatio].every(Number.isFinite)
+    ? Math.round(clamp((100 - percentAbove20) * 0.35 + (100 - percentAbove50) * 0.35 + (100 - latestAdvanceRatio) * 0.3))
     : null;
-  const observed = latestMetrics.observed;
-  const percentAbove20 = (latestMetrics.above20 / observed) * 100;
-  const percentAbove50 = (latestMetrics.above50 / observed) * 100;
-  const percentAbove200 = (latestMetrics.above200 / observed) * 100;
-  const newHighLow = ((latestMetrics.highs - latestMetrics.lows) / observed) * 100;
-  const score = Math.round(clamp((percentAbove20 * 0.25) + (percentAbove50 * 0.3) + (percentAbove200 * 0.3) + ((newHighLow + 100) / 2 * 0.15)));
-  const latestAdvanceRatio = daily.at(-1).advanceRatio * 100;
-  const topRisk = Math.round(clamp((100 - percentAbove20) * 0.35 + (100 - percentAbove50) * 0.35 + (100 - latestAdvanceRatio) * 0.3));
-  const washout = clamp((35 - percentAbove20) * 2.5);
-  const thrust = breadthThrust !== null && previousThrust !== null ? clamp((breadthThrust - previousThrust) * 500 + 50) : 50;
-  const bottomScore = Math.round((washout * 0.55) + (thrust * 0.45));
-  const hasVolume = daily.at(-1).volumeParticipants >= Math.ceil(eligible.length * 0.7);
+  const washout = Number.isFinite(percentAbove20) ? clamp((35 - percentAbove20) * 2.5) : null;
+  const thrust = breadthThrust !== null && previousThrust !== null ? clamp((breadthThrust - previousThrust) * 500 + 50) : null;
+  const bottomScore = Number.isFinite(washout) && Number.isFinite(thrust) ? Math.round((washout * 0.55) + (thrust * 0.45)) : null;
+  const hasVolume = daily.at(-1).volumeParticipants >= minimumConstituents;
+  const mcClellanSummation = mcClellanHistory.length >= 20 ? mcClellanHistory.reduce((total, point) => total + point.value, 0) : null;
+  const unavailable = [
+    ...(!hasVolume ? ['Advance/Decline Volume'] : []),
+    ...(!Number.isFinite(percentAbove50) ? ['% above 50DMA'] : []),
+    ...(!Number.isFinite(percentAbove200) ? ['% above 200DMA'] : []),
+    ...(!Number.isFinite(newHighLow) ? ['New highs/new lows'] : []),
+    ...(!Number.isFinite(mcClellanSummation) ? ['McClellan Summation'] : []),
+    'Equal-weight vs cap-weight',
+    'Sector breadth',
+    'Small-cap vs large-cap participation',
+  ];
+  let advanceDeclineLine = 0;
+  const history = daily.slice(-252).map((day) => {
+    advanceDeclineLine += day.netAdvances;
+    return { date: day.date, netAdvances: day.netAdvances, advanceDeclineLine };
+  });
+  const universeCoverage = expectedConstituents ? Math.round((latestMetrics.eligible20 / expectedConstituents) * 100) : 0;
 
   return {
     version: 'equity-breadth-v1',
-    status: 'calculated',
+    status: scoreCoverage >= 0.85 - 1e-9 && universeCoverage >= 85 ? 'calculated' : 'partial',
     source: 'Constituent provider histories',
     asOf: latestDate,
-    constituents: observed,
+    constituents: latestMetrics.eligible20,
+    expectedConstituents,
+    minimumConstituents,
+    coverage: universeCoverage,
+    scoreCoverage: Math.round(scoreCoverage * 100),
+    metricCoverage: { dma20: latestMetrics.eligible20, dma50: latestMetrics.eligible50, dma200: latestMetrics.eligible200, highLow252: latestMetrics.eligible252 },
     score,
     topRisk,
     bottomScore,
@@ -287,24 +352,16 @@ export function calculateBreadth(constituents) {
     },
     mcClellan: {
       oscillator: mcClellanHistory.at(-1)?.value ?? null,
-      summation: mcClellanHistory.reduce((total, point) => total + point.value, 0),
+      summation: mcClellanSummation,
     },
     percentAbove: { dma20: percentAbove20, dma50: percentAbove50, dma200: percentAbove200 },
-    newHighs: latestMetrics.highs,
-    newLows: latestMetrics.lows,
+    newHighs: latestMetrics.eligible252 >= minimumConstituents ? latestMetrics.highs : null,
+    newLows: latestMetrics.eligible252 >= minimumConstituents ? latestMetrics.lows : null,
     breadthThrust: breadthThrust === null ? null : breadthThrust * 100,
     thrustTriggered: previousThrust !== null && previousThrust < 0.4 && breadthThrust >= 0.615,
-    history: daily.slice(-252).map((day, index, values) => ({
-      date: day.date,
-      netAdvances: day.netAdvances,
-      advanceDeclineLine: values.slice(0, index + 1).reduce((total, value) => total + value.netAdvances, 0),
-    })),
-    unavailable: [
-      ...(!hasVolume ? ['Advance/Decline Volume'] : []),
-      'Equal-weight vs cap-weight',
-      'Sector breadth',
-      'Small-cap vs large-cap participation',
-    ],
+    history,
+    unavailable,
+    missing: unavailable,
   };
 }
 

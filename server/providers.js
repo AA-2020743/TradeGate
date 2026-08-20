@@ -1,8 +1,9 @@
 import { config } from './config.js';
 import { withCache } from './cache.js';
 import { calculateCrossMarketRelationship, calculateMacroRegimeModel, calculateTechnicalSnapshot, calculateUsdStrengthModel, calculateUsLiquidityModel } from './analytics.js';
-import { getStoredFredSeries, getStoredMarketHistory, getStoredMarketSnapshot } from './database.js';
+import { getStoredFredSeries, getStoredMarketHistory, getStoredMarketSnapshot, isDatabaseConfigured, reserveProviderCredits } from './database.js';
 import { getAllEquityHistorySymbols, getCoreEquityHistorySymbols } from './equityCatalog.js';
+import { isCryptoHistoryStale, isDailyCloseStale, isFredSeriesStale } from './freshness.js';
 
 const TWELVE_SYMBOLS = [
   { symbol: 'SPY', key: 'SPY', name: 'S&P 500 proxy', kind: 'ETF' },
@@ -26,37 +27,90 @@ const FRED_SERIES = [
   { id: 'VIXCLS', key: 'vix', name: 'CBOE VIX close', unit: 'Index', multiplier: 1 },
 ];
 
-let twelveQueue = Promise.resolve();
-let lastTwelveRequestAt = 0;
+let twelveLimiterQueue = Promise.resolve();
+let twelveCreditReservations = [];
+const inMemoryDailyUsage = new Map();
 
 function wait(milliseconds) {
   return new Promise((resolve) => setTimeout(resolve, milliseconds));
 }
 
-async function fetchJson(url, attempt = 0) {
+async function fetchJson(url, attempt = 0, maxRetries = 2) {
   const response = await fetch(url, {
     headers: { Accept: 'application/json', 'User-Agent': 'TradeGateResearch/0.1' },
     signal: AbortSignal.timeout(12_000),
   });
 
-  if (response.status === 429 && attempt < 2) {
-    const retryAfter = Number(response.headers.get('retry-after'));
+  if (response.status === 429 && attempt < maxRetries) {
+    const retryAfterHeader = response.headers.get('retry-after');
+    const retryAfter = retryAfterHeader === null ? Number.NaN : Number(retryAfterHeader);
     await wait(Number.isFinite(retryAfter) ? Math.min(retryAfter * 1000, 30_000) : 5_000 * (attempt + 1));
-    return fetchJson(url, attempt + 1);
+    return fetchJson(url, attempt + 1, maxRetries);
   }
   if (!response.ok) throw new Error(`Upstream request failed with ${response.status}`);
   return response.json();
 }
 
-function fetchTwelveJson(url) {
-  const scheduled = twelveQueue.then(async () => {
-    const waitFor = Math.max(0, config.twelveMinIntervalMs - (Date.now() - lastTwelveRequestAt));
-    if (waitFor) await wait(waitFor);
-    lastTwelveRequestAt = Date.now();
-    return fetchJson(url);
+export function calculateTwelveCreditSlot(reservations, requestedAt, credits, limit) {
+  let candidate = Math.max(requestedAt, reservations.at(-1)?.at ?? requestedAt);
+  while (true) {
+    const active = reservations.filter((reservation) => reservation.at > candidate - 60_000 && reservation.at <= candidate);
+    const used = active.reduce((total, reservation) => total + reservation.credits, 0);
+    if (used + credits <= limit) return candidate;
+    candidate = Math.min(...active.map((reservation) => reservation.at)) + 60_000;
+  }
+}
+
+async function reserveTwelveDailyCredits(credits, usage, usageDate) {
+  const scheduledReserveEnabled = config.ingestionEnabled && isDatabaseConfigured();
+  const interactiveLimit = scheduledReserveEnabled || config.twelveInteractiveLimitConfigured
+    ? Math.min(config.twelveInteractiveDailyLimit, config.twelveDailyCreditLimit)
+    : config.twelveDailyCreditLimit;
+  const persistent = await reserveProviderCredits('twelve-data', credits, config.twelveDailyCreditLimit, interactiveLimit, usage, usageDate);
+  if (persistent.persisted) return persistent.allowed;
+
+  const current = inMemoryDailyUsage.get(usageDate) ?? { total: 0, interactive: 0 };
+  const nextTotal = current.total + credits;
+  const nextInteractive = current.interactive + (usage === 'interactive' ? credits : 0);
+  if (nextTotal > config.twelveDailyCreditLimit || nextInteractive > interactiveLimit) return false;
+  inMemoryDailyUsage.set(usageDate, { total: nextTotal, interactive: nextInteractive });
+  return true;
+}
+
+function acquireTwelveCredits(credits, usage) {
+  const requestedCredits = Math.max(1, Math.ceil(credits));
+  const requestedUsage = usage === 'scheduled' ? 'scheduled' : 'interactive';
+  const reservation = twelveLimiterQueue.then(async () => {
+    if (requestedCredits > config.twelveMinuteCreditLimit) throw new Error('Twelve Data request exceeds the configured per-minute credit limit');
+    const now = Date.now();
+    twelveCreditReservations = twelveCreditReservations.filter((item) => item.at > now - 60_000);
+    const slot = calculateTwelveCreditSlot(twelveCreditReservations, now, requestedCredits, config.twelveMinuteCreditLimit);
+    const waitFor = Math.max(0, slot - now);
+    if (requestedUsage === 'interactive' && waitFor > config.twelveMaxInteractiveWaitMs) {
+      throw new Error('Twelve Data rate capacity is temporarily unavailable');
+    }
+    const usageDate = new Date(slot).toISOString().slice(0, 10);
+    if (!await reserveTwelveDailyCredits(requestedCredits, requestedUsage, usageDate)) {
+      throw new Error(`Twelve Data ${requestedUsage} daily credit budget is exhausted`);
+    }
+    const executionSlot = calculateTwelveCreditSlot(twelveCreditReservations, Math.max(slot, Date.now()), requestedCredits, config.twelveMinuteCreditLimit);
+    if (new Date(executionSlot).toISOString().slice(0, 10) !== usageDate) {
+      throw new Error('Twelve Data request crossed the UTC credit boundary; retry the request');
+    }
+    const entry = { at: executionSlot, credits: requestedCredits };
+    twelveCreditReservations.push(entry);
+    return executionSlot;
   });
-  twelveQueue = scheduled.catch(() => undefined);
-  return scheduled;
+  twelveLimiterQueue = reservation.catch(() => undefined);
+  return reservation;
+}
+
+async function fetchTwelveJson(url, options = {}) {
+  const usage = options.usage === 'scheduled' ? 'scheduled' : 'interactive';
+  const slot = await acquireTwelveCredits(options.credits ?? 1, usage);
+  const waitFor = Math.max(0, slot - Date.now());
+  if (waitFor) await wait(waitFor);
+  return fetchJson(url, 0, 0);
 }
 
 const HISTORY_RANGES = {
@@ -110,6 +164,7 @@ async function getBitcoin() {
   const bitcoin = payload.bitcoin;
   if (!bitcoin?.usd) throw new Error('CoinGecko did not return a Bitcoin quote');
 
+  const asOf = bitcoin.last_updated_at ? new Date(bitcoin.last_updated_at * 1000).toISOString() : null;
   return {
     key: 'BTC',
     symbol: 'BTC',
@@ -117,12 +172,13 @@ async function getBitcoin() {
     kind: 'Crypto',
     price: bitcoin.usd,
     changePercent: bitcoin.usd_24h_change ?? null,
-    asOf: bitcoin.last_updated_at ? new Date(bitcoin.last_updated_at * 1000).toISOString() : null,
+    asOf,
     source: 'CoinGecko',
+    stale: !asOf || Date.now() - new Date(asOf).getTime() > 5 * 60_000,
   };
 }
 
-async function getTwelveQuotes() {
+async function getTwelveQuotes(options = {}) {
   if (!config.twelveDataApiKey) return { assets: [], errors: [] };
 
   const symbols = TWELVE_SYMBOLS.map((asset) => asset.symbol).join(',');
@@ -130,7 +186,7 @@ async function getTwelveQuotes() {
   url.searchParams.set('symbol', symbols);
   url.searchParams.set('timezone', 'UTC');
   url.searchParams.set('apikey', config.twelveDataApiKey);
-  const payload = await fetchTwelveJson(url);
+  const payload = await fetchTwelveJson(url, { credits: TWELVE_SYMBOLS.length, usage: options.usage });
   if (payload.status === 'error' || payload.code) throw new Error(payload.message ?? 'Twelve Data quote request failed');
 
   const assets = [];
@@ -142,20 +198,63 @@ async function getTwelveQuotes() {
       continue;
     }
     const quote = parseTwelveQuote(payload, asset.symbol);
-    if (quote) assets.push({ ...asset, ...quote, source: 'Twelve Data' });
+    if (quote) {
+      const stale = isDailyCloseStale(quote.asOf);
+      assets.push({ ...asset, ...quote, source: 'Twelve Data', stale });
+      if (stale) errors.push({ provider: 'Twelve Data', symbol: asset.symbol, message: 'Quote timestamp is stale' });
+    }
     else errors.push({ provider: 'Twelve Data', symbol: asset.symbol, message: 'Quote missing from provider response' });
   }
 
   return { assets, errors };
 }
 
-export async function getMarketSnapshot() {
-  return withCache('market-snapshot', 30_000, async () => {
-    const results = await Promise.allSettled([getBitcoin(), getTwelveQuotes()]);
+export function mergeMarketSnapshot(previous, next) {
+  if (!next.errors.length) return next;
+  const currentKeys = new Set(next.assets.filter((asset) => !asset.stale).map((asset) => asset.key));
+  const cachedFallbacks = (previous.assets ?? []).filter((asset) => {
+    if (currentKeys.has(asset.key)) return false;
+    const providerFailed = next.errors.some((error) => error.symbol ? error.symbol === asset.symbol : asset.source?.includes(error.provider));
+    if (!providerFailed) return false;
+    const current = next.assets.find((candidate) => candidate.key === asset.key);
+    if (!current) return true;
+    const previousTime = new Date(asset.asOf).getTime();
+    const currentTime = new Date(current.asOf).getTime();
+    return !asset.stale || !Number.isFinite(currentTime) || Number.isFinite(previousTime) && previousTime >= currentTime;
+  }).map((asset) => ({
+    ...asset,
+    cached: true,
+    stale: true,
+    source: asset.cached ? asset.source : `${asset.source} (cached last known good)`,
+  }));
+  if (!cachedFallbacks.length) return next;
+  const fallbackKeys = new Set(cachedFallbacks.map((asset) => asset.key));
+  const assets = [...next.assets.filter((asset) => !fallbackKeys.has(asset.key)), ...cachedFallbacks];
+  const sourceTimes = assets.map((asset) => new Date(asset.asOf).getTime()).filter(Number.isFinite);
+  return { ...next, assets, asOf: sourceTimes.length ? new Date(Math.max(...sourceTimes)).toISOString() : null };
+}
+
+export function mergeFredSeries(liveSeries, storedSeries) {
+  const seriesByKey = new Map(storedSeries.map((series) => [series.key, series]));
+  for (const live of liveSeries) {
+    const stored = seriesByKey.get(live.key);
+    const liveTime = new Date(`${live.date}T00:00:00.000Z`).getTime();
+    const storedTime = new Date(`${stored?.date}T00:00:00.000Z`).getTime();
+    if (!live.stale || !stored || (stored.stale && (!Number.isFinite(storedTime) || liveTime >= storedTime))) seriesByKey.set(live.key, live);
+  }
+  return FRED_SERIES.flatMap((definition) => seriesByKey.has(definition.key) ? [seriesByKey.get(definition.key)] : []);
+}
+
+export async function getMarketSnapshot(options = {}) {
+  return withCache('market-snapshot', config.twelveQuoteRefreshMs, async () => {
+    const results = await Promise.allSettled([getBitcoin(), getTwelveQuotes(options)]);
     const assets = [];
     const errors = [];
 
-    if (results[0].status === 'fulfilled') assets.push(results[0].value);
+    if (results[0].status === 'fulfilled') {
+      assets.push(results[0].value);
+      if (results[0].value.stale) errors.push({ provider: 'CoinGecko', symbol: 'BTC', message: 'Quote timestamp is stale' });
+    }
     else errors.push({ provider: 'CoinGecko', message: results[0].reason.message });
 
     if (results[1].status === 'fulfilled') {
@@ -165,8 +264,11 @@ export async function getMarketSnapshot() {
     else errors.push({ provider: 'Twelve Data', message: results[1].reason.message });
 
     const storedAssets = await getStoredMarketSnapshot().catch(() => []);
-    const liveKeys = new Set(assets.map((asset) => asset.key));
-    assets.push(...storedAssets.filter((asset) => !liveKeys.has(asset.key)));
+    for (const storedAsset of storedAssets) {
+      const liveIndex = assets.findIndex((asset) => asset.key === storedAsset.key);
+      if (liveIndex === -1) assets.push(storedAsset);
+      else if (assets[liveIndex].stale && !storedAsset.stale) assets[liveIndex] = storedAsset;
+    }
 
     const sourceTimes = assets.map((asset) => new Date(asset.asOf).getTime()).filter(Number.isFinite);
     return {
@@ -179,7 +281,7 @@ export async function getMarketSnapshot() {
         twelveData: { configured: Boolean(config.twelveDataApiKey), mode: config.twelveDataApiKey ? 'credentialed' : 'not-configured' },
       },
     };
-  });
+  }, { force: options.refresh === true, merge: mergeMarketSnapshot });
 }
 
 async function getBitcoinHistory(range) {
@@ -195,7 +297,7 @@ async function getBitcoinHistory(range) {
   }));
 }
 
-async function getTwelveHistory(symbol, range) {
+async function getTwelveHistory(symbol, range, usage) {
   if (!config.twelveDataApiKey) return [];
 
   const settings = HISTORY_RANGES[range];
@@ -206,7 +308,7 @@ async function getTwelveHistory(symbol, range) {
   url.searchParams.set('order', 'ASC');
   url.searchParams.set('timezone', 'UTC');
   url.searchParams.set('apikey', config.twelveDataApiKey);
-  const payload = await fetchTwelveJson(url);
+  const payload = await fetchTwelveJson(url, { usage });
 
   if (payload.status === 'error') throw new Error(payload.message ?? 'Twelve Data history request failed');
   return (payload.values ?? []).flatMap((item) => {
@@ -232,12 +334,13 @@ export async function getMarketHistory(symbol, requestedRange, options = {}) {
   if (!HISTORY_SYMBOLS.has(normalizedSymbol)) throw new Error(`Unsupported history symbol: ${normalizedSymbol}`);
 
   const cacheMode = options.preferStored === false ? 'provider' : 'default';
+  const historyIsStale = (timestamp) => normalizedSymbol === 'BTC' ? isCryptoHistoryStale(timestamp) : isDailyCloseStale(timestamp);
   return withCache(`history:${normalizedSymbol}:${range}:${cacheMode}`, 60_000, async () => {
     let storedPoints = [];
     if (options.preferStored !== false) {
       storedPoints = await getStoredMarketHistory(normalizedSymbol, range).catch(() => []);
       const latestStoredTime = new Date(storedPoints.at(-1)?.timestamp).getTime();
-      const storedHistoryIsFresh = Number.isFinite(latestStoredTime) && Date.now() - latestStoredTime < 4 * 86_400_000;
+      const storedHistoryIsFresh = Number.isFinite(latestStoredTime) && !historyIsStale(latestStoredTime);
       if (storedPoints.length >= 2 && storedHistoryIsFresh) {
         return {
           symbol: normalizedSymbol,
@@ -256,7 +359,7 @@ export async function getMarketHistory(symbol, requestedRange, options = {}) {
     try {
       points = normalizedSymbol === 'BTC'
         ? await getBitcoinHistory(range)
-        : await getTwelveHistory(normalizedSymbol, range);
+        : await getTwelveHistory(normalizedSymbol, range, options.usage);
       points = filterHistoryRange(points, range);
     } catch (error) {
       if (options.preferStored === false) throw error;
@@ -266,14 +369,16 @@ export async function getMarketHistory(symbol, requestedRange, options = {}) {
 
     if (!points.length && providerError) throw providerError;
 
+    const asOf = points.at(-1)?.timestamp ?? null;
+    const stale = Boolean(providerError) || Boolean(points.length && historyIsStale(asOf));
     return {
       symbol: normalizedSymbol,
       range,
-      asOf: providerError ? points.at(-1)?.timestamp ?? new Date().toISOString() : new Date().toISOString(),
+      asOf,
       source: providerError ? 'PostgreSQL (last known good)' : normalizedSymbol === 'BTC' ? 'CoinGecko' : 'Twelve Data',
       configured: normalizedSymbol === 'BTC' || Boolean(config.twelveDataApiKey),
       stored: Boolean(providerError),
-      stale: Boolean(providerError),
+      stale,
       points,
     };
   });
@@ -289,7 +394,7 @@ export async function getTechnicalSnapshot(symbol) {
     stored: history.stored ?? false,
     stale: history.stale ?? false,
     asOf: model?.asOf ?? history.asOf,
-    model,
+    model: history.stale ? null : model,
   };
 }
 
@@ -302,8 +407,8 @@ export async function getDxyBitcoinRelationship() {
     if (config.twelveDataApiKey) {
       try {
         const dxy = await getMarketHistory('DXY', '1Y');
-        dollarPoints = dxy.points;
-        dollarSource = dxy.points.length ? `DXY · ${dxy.source}` : null;
+        dollarPoints = dxy.stale ? [] : dxy.points;
+        dollarSource = dollarPoints.length ? `DXY · ${dxy.source}` : null;
       } catch {
         dollarPoints = [];
       }
@@ -311,16 +416,17 @@ export async function getDxyBitcoinRelationship() {
     if (!dollarPoints.length) {
       const liquidity = await getLiquiditySnapshot();
       const dollarSeries = liquidity.series.find((series) => series.key === 'dxy');
-      dollarPoints = dollarSeries?.history ?? [];
+      dollarPoints = dollarSeries?.stale ? [] : dollarSeries?.history ?? [];
       dollarSource = dollarPoints.length ? 'FRED DTWEXBGS broad-dollar proxy' : null;
     }
 
     const bitcoin = await bitcoinPromise;
-    const model = dollarPoints.length ? calculateCrossMarketRelationship(dollarPoints, bitcoin.points) : null;
+    const model = dollarPoints.length && !bitcoin.stale ? calculateCrossMarketRelationship(dollarPoints, bitcoin.points) : null;
     return {
       source: { left: dollarSource, right: bitcoin.source },
       asOf: model?.asOf ?? null,
       model,
+      staleInputs: [!dollarPoints.length ? 'Dollar history' : null, bitcoin.stale ? 'Bitcoin history' : null].filter(Boolean),
     };
   });
 }
@@ -342,6 +448,8 @@ async function getFredSeries(series) {
     ...series,
     value,
     date: observation.date,
+    stored: false,
+    stale: isFredSeriesStale(series.id, observation.date),
     history: observations.map((item) => ({
       date: item.date,
       value: Number(item.value),
@@ -351,24 +459,28 @@ async function getFredSeries(series) {
   };
 }
 
-export async function getLiquiditySnapshot() {
+export async function getLiquiditySnapshot(options = {}) {
   return withCache('liquidity-snapshot', 15 * 60_000, async () => {
     const storedSeries = await getStoredFredSeries().catch(() => []);
     const results = config.fredApiKey ? await Promise.allSettled(FRED_SERIES.map(getFredSeries)) : [];
     const liveSeries = results.flatMap((result) => result.status === 'fulfilled' ? [result.value] : []);
-    const liveKeys = new Set(liveSeries.map((series) => series.key));
-    const series = [...liveSeries, ...storedSeries.filter((stored) => !liveKeys.has(stored.key))];
+    const series = mergeFredSeries(liveSeries, storedSeries);
+    const modelSeries = series.filter((item) => !item.stale);
+    const staleSeries = series.filter((item) => item.stale);
+    const staleLiveSeries = liveSeries.filter((item) => item.stale);
     const errors = results.flatMap((result) => result.status === 'rejected' ? [result.reason.message] : []);
     if (!config.fredApiKey && !storedSeries.length) errors.push('FRED_API_KEY is not configured and no stored observations are available');
-    const values = Object.fromEntries(series.map((item) => [item.key, item.value * item.multiplier]));
+    if (staleLiveSeries.length) errors.push(`Latest FRED responses are stale: ${staleLiveSeries.map((item) => item.id).join(', ')}`);
+    if (staleSeries.length) errors.push(`FRED series are stale and excluded from models: ${staleSeries.map((item) => item.id).join(', ')}`);
+    const values = Object.fromEntries(modelSeries.map((item) => [item.key, item.value * item.multiplier]));
     const hasNetLiquidityInputs = ['fedBalanceSheet', 'treasuryGeneralAccount', 'reverseRepo'].every((key) => values[key] !== undefined);
-    const model = calculateUsLiquidityModel(series);
-    const usdStrength = calculateUsdStrengthModel(series, model);
-    const macroRegime = calculateMacroRegimeModel(series, model, usdStrength);
+    const model = calculateUsLiquidityModel(modelSeries);
+    const usdStrength = calculateUsdStrengthModel(modelSeries, model);
+    const macroRegime = calculateMacroRegimeModel(modelSeries, model, usdStrength);
 
     return {
       asOf: new Date().toISOString(),
-      provider: { configured: Boolean(config.fredApiKey), name: 'FRED', storedFallbacks: series.filter((item) => item.stored).length },
+      provider: { configured: Boolean(config.fredApiKey), name: 'FRED', storedFallbacks: series.filter((item) => item.stored).length, staleSeries: staleSeries.length },
       series,
       netLiquidity: hasNetLiquidityInputs ? values.fedBalanceSheet - values.treasuryGeneralAccount - values.reverseRepo : null,
       model,
@@ -376,13 +488,18 @@ export async function getLiquiditySnapshot() {
       macroRegime,
       errors,
     };
-  });
+  }, { force: options.refresh === true });
 }
 
 export function getProviderHealth() {
   return {
     coingecko: { configured: true, mode: 'public', purpose: 'Crypto spot data' },
-    twelveData: { configured: Boolean(config.twelveDataApiKey), mode: config.twelveDataApiKey ? 'credentialed' : 'not-configured', purpose: 'Equities, ETFs, FX, and metals proxies' },
+    twelveData: {
+      configured: Boolean(config.twelveDataApiKey),
+      mode: config.twelveDataApiKey ? 'credentialed' : 'not-configured',
+      purpose: 'Equities, ETFs, FX, and metals proxies',
+      limits: { creditsPerMinute: config.twelveMinuteCreditLimit, creditsPerDay: config.twelveDailyCreditLimit },
+    },
     fred: { configured: Boolean(config.fredApiKey), mode: config.fredApiKey ? 'credentialed' : 'not-configured', purpose: 'Official U.S. macro and liquidity series' },
   };
 }

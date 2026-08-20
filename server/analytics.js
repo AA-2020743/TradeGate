@@ -349,7 +349,9 @@ export function calculateUsdStrengthModel(seriesList, liquidityModel = null) {
   const confidenceScore = Math.round((model.coverage * 0.8) + (Math.min(dollarTechnical.observations / 252, 1) * 20));
   const dollarSmile = vixLatest >= 25
     ? 'Global stress support'
-    : realYieldChange > 0 && dollarTechnical.components.trend >= 50 ? 'U.S. real-yield support' : 'Balanced / inactive';
+    : Number.isFinite(vixLatest) && Number.isFinite(realYieldChange)
+      ? realYieldChange > 0 && dollarTechnical.components.trend >= 50 ? 'U.S. real-yield support' : 'Balanced / inactive'
+      : null;
   return {
     version: 'usd-strength-v1',
     status: model.coverage >= 75 ? 'calculated' : 'provisional',
@@ -397,9 +399,10 @@ export function calculateMacroRegimeModel(seriesList, liquidityModel = null, usd
   ];
   const model = driverComposite(drivers, 0.4, 2);
   if (!model.publishable) {
-    return { version: 'macro-regime-v1', status: 'unavailable', asOf: null, score: null, regime: null, settings: null, coverage: model.coverage, missing: model.missing, drivers: model.drivers };
+    return { version: 'macro-regime-v1', status: 'unavailable', asOf: null, score: null, regime: null, settings: null, coverage: model.coverage, panicConfirmed: null, missing: model.missing, drivers: model.drivers };
   }
-  const panicConfirmed = vixLatest >= 35 && creditLatest >= 5 && financialLatest >= 0.5;
+  const panicInputsAvailable = [vixLatest, creditLatest, financialLatest].every(Number.isFinite);
+  const panicConfirmed = panicInputsAvailable ? vixLatest >= 35 && creditLatest >= 5 && financialLatest >= 0.5 : null;
   const regime = panicConfirmed
     ? 'Stress / deleveraging'
     : model.score >= 70 ? 'Expansion / risk-on' : model.score >= 58 ? 'Constructive' : model.score <= 35 ? 'Contraction / risk-off' : 'Transition / choppy';

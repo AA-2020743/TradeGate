@@ -117,7 +117,25 @@ test('USD strength is explicitly provisional when only dollar price is available
   const model = calculateUsdStrengthModel([series]);
   assert.equal(model.status, 'provisional');
   assert.equal(model.coverage, 45);
+  assert.equal(model.dollarSmile, null);
   assert.ok(model.missing.includes('10Y real-yield impulse'));
+});
+
+test('USD dollar-smile state stays unavailable with one-sided benign inputs', () => {
+  const daily = (key, start, step = 0) => ({
+    key,
+    multiplier: 1,
+    history: Array.from({ length: 260 }, (_, index) => ({
+      date: new Date(Date.UTC(2025, 0, index + 1)).toISOString().slice(0, 10),
+      value: start + (index * step),
+    })),
+  });
+  const lowVixOnly = calculateUsdStrengthModel([daily('dxy', 100, 0.02), daily('vix', 15)]);
+  const realYieldOnly = calculateUsdStrengthModel([daily('dxy', 100, 0.02), daily('realYield10y', 1.5, 0.002)]);
+  const highVix = calculateUsdStrengthModel([daily('dxy', 100, 0.02), daily('vix', 30)]);
+  assert.equal(lowVixOnly.dollarSmile, null);
+  assert.equal(realYieldOnly.dollarSmile, null);
+  assert.equal(highVix.dollarSmile, 'Global stress support');
 });
 
 test('macro regime uses independent liquidity, conditions, credit, volatility, and dollar sleeves', () => {
@@ -139,10 +157,18 @@ test('macro regime uses independent liquidity, conditions, credit, volatility, a
   assert.equal(model.coverage, 100);
   assert.equal(model.regime, 'Expansion / risk-on');
   assert.equal(model.settings.riskBudget, 'High');
+  assert.equal(model.panicConfirmed, false);
 });
 
 test('macro regime refuses a single-sleeve classification', () => {
   const model = calculateMacroRegimeModel([], { score: 70, version: 'liquidity-test' });
   assert.equal(model.status, 'unavailable');
   assert.equal(model.regime, null);
+  assert.equal(model.panicConfirmed, null);
+});
+
+test('macro regime leaves panic confirmation unavailable without stress inputs', () => {
+  const model = calculateMacroRegimeModel([], { score: 70, version: 'liquidity-test' }, { score: 45, version: 'usd-test', indicators: {} });
+  assert.equal(model.status, 'provisional');
+  assert.equal(model.panicConfirmed, null);
 });

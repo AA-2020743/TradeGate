@@ -1,3 +1,5 @@
+import { isDailyCloseStale } from './freshness.js';
+
 export const indexCatalog = [
   { id: 'sp500', region: 'United States', name: 'S&P 500', symbol: 'SPY', instrument: 'ETF proxy', priority: 1 },
   { id: 'nasdaq100', region: 'United States', name: 'Nasdaq-100', symbol: 'QQQ', instrument: 'ETF proxy', priority: 1 },
@@ -116,7 +118,7 @@ export function attachSeriesCoverage(items, coverageRows, now = Date.now()) {
     const row = coverage.get(item.symbol);
     const observations = row?.observations ?? 0;
     const latestTimestamp = new Date(row?.endsAt).getTime();
-    const stale = observations > 0 && (!Number.isFinite(latestTimestamp) || now - latestTimestamp > 4 * 86_400_000);
+    const stale = observations > 0 && isDailyCloseStale(latestTimestamp, now);
     return {
       ...item,
       coverage: {
