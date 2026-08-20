@@ -22,5 +22,5 @@ export const config = {
   ingestionEnabled: booleanFromEnvironment('INGESTION_ENABLED'),
   marketRefreshMs: numberFromEnvironment('MARKET_REFRESH_MS', 60_000),
   macroRefreshMs: numberFromEnvironment('MACRO_REFRESH_MS', 6 * 60 * 60_000),
-  historyRefreshMs: numberFromEnvironment('HISTORY_REFRESH_MS', 6 * 60 * 60_000),
+  historyRefreshMs: numberFromEnvironment('HISTORY_REFRESH_MS', 24 * 60 * 60_000),
 };

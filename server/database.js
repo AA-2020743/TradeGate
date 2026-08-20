@@ -182,7 +182,7 @@ export async function getStoredMarketSnapshot() {
     symbol: row.symbol,
     name: row.name,
     kind: row.kind,
-    price: row.price,
+    price: Number(row.price),
     changePercent: row.metadata?.changePercent ?? null,
     asOf: row.observed_at,
     source: `${row.provider} (stored)`,
@@ -223,7 +223,7 @@ export async function getStoredFredSeries() {
     }
     grouped.get(row.id).history.push({
       date: row.observed_at.toISOString().slice(0, 10),
-      value: row.value,
+      value: Number(row.value),
       realtimeStart: row.provider_as_of?.toISOString().slice(0, 10) ?? null,
       realtimeEnd: row.observation_metadata?.realtimeEnd ?? null,
     });
@@ -257,5 +257,48 @@ export async function getStoredMarketHistory(symbol, range) {
      ORDER BY observed_at ASC`,
     [`market:${symbol}:close:usd`, start.toISOString()],
   );
-  return result.rows.map((row) => ({ timestamp: row.observed_at.toISOString(), value: row.value }));
+  return result.rows.map((row) => ({ timestamp: row.observed_at.toISOString(), value: Number(row.value) }));
+}
+
+export async function getStoredSeriesCoverage(symbols) {
+  if (!pool || !symbols.length) return [];
+  const seriesIds = symbols.map((symbol) => `market:${symbol}:close:usd`);
+  const result = await pool.query(
+    `SELECT
+       series.provider_series_id AS symbol,
+       COUNT(observations.id)::integer AS observations,
+       MIN(observations.observed_at) AS starts_at,
+       MAX(observations.observed_at) AS ends_at
+     FROM data_series AS series
+     JOIN observations ON observations.series_id = series.id
+     WHERE series.id = ANY($1::text[])
+     GROUP BY series.provider_series_id`,
+    [seriesIds],
+  );
+  return result.rows.map((row) => ({
+    symbol: row.symbol,
+    observations: row.observations,
+    startsAt: row.starts_at?.toISOString() ?? null,
+    endsAt: row.ends_at?.toISOString() ?? null,
+  }));
+}
+
+export async function getStoredMarketHistories(symbols, days = 400) {
+  if (!pool || !symbols.length) return new Map();
+  const seriesIds = symbols.map((symbol) => `market:${symbol}:close:usd`);
+  const start = new Date(Date.now() - (days * 86_400_000)).toISOString();
+  const result = await pool.query(
+    `SELECT series.provider_series_id AS symbol, observations.observed_at, observations.value
+     FROM data_series AS series
+     JOIN observations ON observations.series_id = series.id
+     WHERE series.id = ANY($1::text[])
+       AND observations.observed_at >= $2
+     ORDER BY series.provider_series_id, observations.observed_at ASC`,
+    [seriesIds, start],
+  );
+  const histories = new Map(symbols.map((symbol) => [symbol, []]));
+  for (const row of result.rows) {
+    histories.get(row.symbol)?.push({ timestamp: row.observed_at.toISOString(), value: Number(row.value) });
+  }
+  return histories;
 }

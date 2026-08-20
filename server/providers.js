@@ -2,6 +2,7 @@ import { config } from './config.js';
 import { withCache } from './cache.js';
 import { calculateCrossMarketRelationship, calculateTechnicalSnapshot, calculateUsLiquidityModel } from './analytics.js';
 import { getStoredFredSeries, getStoredMarketHistory, getStoredMarketSnapshot } from './database.js';
+import { getAllEquityHistorySymbols, getCoreEquityHistorySymbols } from './equityCatalog.js';
 
 const TWELVE_SYMBOLS = [
   { symbol: 'SPY', key: 'SPY', name: 'S&P 500 proxy', kind: 'ETF' },
@@ -63,7 +64,8 @@ const HISTORY_RANGES = {
   All: { days: 'max', interval: '1week', outputsize: '520' },
 };
 
-const HISTORY_SYMBOLS = new Set(['BTC', ...TWELVE_SYMBOLS.map((asset) => asset.symbol)]);
+const HISTORY_SYMBOLS = new Set(['BTC', ...TWELVE_SYMBOLS.map((asset) => asset.symbol), ...getAllEquityHistorySymbols()]);
+const INGESTION_HISTORY_SYMBOLS = new Set(['BTC', ...TWELVE_SYMBOLS.map((asset) => asset.symbol), ...getCoreEquityHistorySymbols()]);
 
 function asNumber(value) {
   const parsed = Number(value);
@@ -213,6 +215,10 @@ async function getTwelveHistory(symbol, range) {
 
 export function getSupportedHistorySymbols() {
   return [...HISTORY_SYMBOLS];
+}
+
+export function getIngestionHistorySymbols() {
+  return [...INGESTION_HISTORY_SYMBOLS];
 }
 
 export async function getMarketHistory(symbol, requestedRange, options = {}) {

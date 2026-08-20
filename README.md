@@ -40,6 +40,7 @@ curl http://127.0.0.1:8787/api/markets/snapshot
 curl "http://127.0.0.1:8787/api/markets/history/BTC?range=1M"
 curl http://127.0.0.1:8787/api/analytics/technical/BTC
 curl http://127.0.0.1:8787/api/analytics/dxy-btc
+curl http://127.0.0.1:8787/api/equities/catalog
 curl http://127.0.0.1:8787/api/ingestion/status
 ```
 
@@ -56,8 +57,8 @@ DATABASE_URL=postgresql://tradegate_app:password@127.0.0.1:5432/tradegate
 DATABASE_SSL=false
 INGESTION_ENABLED=true
 MARKET_REFRESH_MS=60000
-MACRO_REFRESH_MS=900000
-HISTORY_REFRESH_MS=21600000
+MACRO_REFRESH_MS=21600000
+HISTORY_REFRESH_MS=86400000
 ```
 
 Never prefix these values with `VITE_`; doing so would expose them in the browser bundle. `.env` is ignored by Git.
@@ -129,10 +130,12 @@ Default ingestion intervals are:
 | Job | Interval |
 | --- | --- |
 | Current market snapshot | 60 seconds |
-| FRED macro and liquidity | 15 minutes |
-| One-year market history refresh | 6 hours |
+| FRED macro and liquidity | 6 hours |
+| One-year market and core equity history refresh | 24 hours |
 
 Provider caches, scheduled intervals, and the serialized Twelve Data history backfill reduce the chance of exceeding free-plan limits. Confirm the exact quotas and licensing terms on your provider account.
+
+The core equity backfill covers priority global-index proxies and the 11 U.S. sector ETFs. Less-liquid secondary index and subsector proxies remain queryable but are not scheduled by default. Every proxy is labeled; the application does not substitute an ETF price while presenting it as an exact local index level.
 
 ## Calculation Methodology
 

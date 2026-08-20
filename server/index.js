@@ -3,7 +3,17 @@ import { existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import { config } from './config.js';
-import { closeDatabase, getDatabaseHealth, getIngestionStatus } from './database.js';
+import { closeDatabase, getDatabaseHealth, getIngestionStatus, getStoredSeriesCoverage, isDatabaseConfigured } from './database.js';
+import {
+  attachSeriesCoverage,
+  breadthRequirements,
+  getAllEquityHistorySymbols,
+  indexCatalog,
+  positioningRequirements,
+  sectorCatalog,
+  sentimentRequirements,
+  subsectorCatalog,
+} from './equityCatalog.js';
 import { startIngestionScheduler } from './ingestion.js';
 import { getDxyBitcoinRelationship, getLiquiditySnapshot, getMarketHistory, getMarketSnapshot, getProviderHealth, getTechnicalSnapshot } from './providers.js';
 
@@ -97,6 +107,38 @@ app.get('/api/analytics/dxy-btc', async (_request, response, next) => {
 app.get('/api/macro/liquidity', async (_request, response, next) => {
   try {
     response.json(await getLiquiditySnapshot());
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.get('/api/equities/catalog', async (_request, response, next) => {
+  try {
+    let coverage = [];
+    let coverageAvailable = false;
+    if (isDatabaseConfigured()) {
+      try {
+        coverage = await getStoredSeriesCoverage(getAllEquityHistorySymbols());
+        coverageAvailable = true;
+      } catch {
+        coverageAvailable = false;
+      }
+    }
+    response.json({
+      version: 'equity-coverage-v1',
+      asOf: new Date().toISOString(),
+      provider: 'Twelve Data',
+      storage: { configured: isDatabaseConfigured(), available: coverageAvailable },
+      methodology: 'US-listed ETFs are explicitly labeled as investable proxies; they are not presented as exact local index levels.',
+      indices: attachSeriesCoverage(indexCatalog, coverage),
+      sectors: attachSeriesCoverage(sectorCatalog, coverage),
+      subsectors: attachSeriesCoverage(subsectorCatalog, coverage),
+      requiredFeeds: {
+        breadth: breadthRequirements,
+        sentiment: sentimentRequirements,
+        positioning: positioningRequirements,
+      },
+    });
   } catch (error) {
     next(error);
   }

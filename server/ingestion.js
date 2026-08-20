@@ -8,7 +8,7 @@ import {
   persistSeries,
   startIngestionRun,
 } from './database.js';
-import { getLiquiditySnapshot, getMarketHistory, getMarketSnapshot, getSupportedHistorySymbols } from './providers.js';
+import { getIngestionHistorySymbols, getLiquiditySnapshot, getMarketHistory, getMarketSnapshot } from './providers.js';
 
 function observationTimestamp(value, fallback) {
   const timestamp = value ? new Date(value) : new Date(fallback);
@@ -77,7 +77,7 @@ export async function ingestMarketHistory() {
     let symbolsReceived = 0;
     const errors = [];
 
-    for (const symbol of getSupportedHistorySymbols()) {
+    for (const symbol of getIngestionHistorySymbols()) {
       if (symbol !== 'BTC' && !config.twelveDataApiKey) continue;
       try {
         const history = await getMarketHistory(symbol, '1Y', { preferStored: false });
