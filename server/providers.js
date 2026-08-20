@@ -1,6 +1,6 @@
 import { config } from './config.js';
 import { withCache } from './cache.js';
-import { calculateCrossMarketRelationship, calculateMacroRegimeModel, calculateTechnicalSnapshot, calculateUsdStrengthModel, calculateUsLiquidityModel } from './analytics.js';
+import { calculateCrossMarketRelationship, calculateGlobalLiquidityModel, calculateMacroRegimeModel, calculateTechnicalSnapshot, calculateUsdStrengthModel, calculateUsLiquidityModel } from './analytics.js';
 import { getStoredFredSeries, getStoredMarketHistory, getStoredMarketSnapshot, isDatabaseConfigured, reserveProviderCredits } from './database.js';
 import { getAllEquityHistorySymbols, getCoreEquityHistorySymbols } from './equityCatalog.js';
 import { isCryptoHistoryStale, isDailyCloseStale, isFredSeriesStale } from './freshness.js';
@@ -25,6 +25,10 @@ const FRED_SERIES = [
   { id: 'NFCI', key: 'financialConditions', name: 'Chicago Fed financial conditions', unit: 'Index', multiplier: 1 },
   { id: 'BAMLH0A0HYM2', key: 'highYieldSpread', name: 'US high-yield option-adjusted spread', unit: 'Percent', multiplier: 1 },
   { id: 'VIXCLS', key: 'vix', name: 'CBOE VIX close', unit: 'Index', multiplier: 1 },
+  { id: 'ECBASSETSW', key: 'ecbBalanceSheet', name: 'ECB balance sheet', unit: 'EUR millions', multiplier: 1 },
+  { id: 'JPNASSETS', key: 'bojBalanceSheet', name: 'Bank of Japan total assets', unit: '100M yen', multiplier: 1 },
+  { id: 'DEXUSEU', key: 'eurUsd', name: 'US dollars per euro', unit: 'USD per EUR', multiplier: 1 },
+  { id: 'DEXJPUS', key: 'yenPerUsd', name: 'Yen per US dollar', unit: 'JPY per USD', multiplier: 1 },
 ];
 
 let twelveLimiterQueue = Promise.resolve();
@@ -475,6 +479,7 @@ export async function getLiquiditySnapshot(options = {}) {
     const values = Object.fromEntries(modelSeries.map((item) => [item.key, item.value * item.multiplier]));
     const hasNetLiquidityInputs = ['fedBalanceSheet', 'treasuryGeneralAccount', 'reverseRepo'].every((key) => values[key] !== undefined);
     const model = calculateUsLiquidityModel(modelSeries);
+    const globalLiquidity = calculateGlobalLiquidityModel(modelSeries);
     const usdStrength = calculateUsdStrengthModel(modelSeries, model);
     const macroRegime = calculateMacroRegimeModel(modelSeries, model, usdStrength);
 
@@ -484,6 +489,7 @@ export async function getLiquiditySnapshot(options = {}) {
       series,
       netLiquidity: hasNetLiquidityInputs ? values.fedBalanceSheet - values.treasuryGeneralAccount - values.reverseRepo : null,
       model,
+      globalLiquidity,
       usdStrength,
       macroRegime,
       errors,

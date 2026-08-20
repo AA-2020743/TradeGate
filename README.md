@@ -13,7 +13,7 @@ The application now has a server-side data layer. It never exposes provider cred
 | FRED | Official U.S. macro and liquidity observations | `FRED_API_KEY` |
 | PostgreSQL | Observations, revisions, ingestion runs, and model lineage | `DATABASE_URL` |
 
-Technical scores are calculated by `technical-v1` from provider history. The US liquidity regime is calculated by `us-liquidity-v1`; `usd-strength-v1` and `macro-regime-v1` use additional FRED market and financial-condition histories. UI sections explicitly identify the remaining model previews.
+Technical scores are calculated by `technical-v1` from provider history. The US liquidity regime is calculated by `us-liquidity-v1`; `global-liquidity-v1` aggregates Fed, ECB, and BoJ balance sheets in USD; `usd-strength-v1` and `macro-regime-v1` use additional FRED market and financial-condition histories. UI sections explicitly identify the remaining model previews.
 
 ## Local Development
 
@@ -163,7 +163,22 @@ The US liquidity model uses:
 | US M2 13-week growth | 25% |
 | Inverse broad-dollar 13-week change | 20% |
 
-The output is Expansion above `+0.15`, Contraction below `-0.15`, and Neutral between those thresholds. This is a US foundation model, not yet the proposed full global-liquidity model.
+The output is Expansion above `+0.15`, Contraction below `-0.15`, and Neutral between those thresholds.
+
+### `global-liquidity-v1`
+
+The global liquidity model aggregates central-bank balance sheets converted to US dollars:
+
+| Driver | Weight |
+| --- | ---: |
+| Global central-bank impulse (pooled USD total, 13-week change) | 40% |
+| Fed net liquidity impulse | 25% |
+| ECB + BoJ combined impulse | 15% |
+| Inverse broad-dollar 13-week change | 20% |
+
+Unit conversions use FRED H.10 rates matched to each observation date (`DEXUSEU`, `DEXJPUS`, maximum 35-day gap): Fed assets are used directly in USD millions; ECB assets are EUR millions multiplied by USD/EUR; BoJ assets are reported in units of 100 million yen and are divided by the yen rate after scaling. The pooled history is published in USD millions with a cycle percentile, per-central-bank shares, and 91/365-day changes. The same Expansion/Contraction thresholds as `us-liquidity-v1` apply.
+
+Documented exclusions: Bank of England assets were discontinued on FRED in 2014, no PBoC balance-sheet series exists on FRED, and all broad-money series (OECD MEI M2/M3, IMF IFS) are frozen at stale dates, so none are used. These legs require national-source ingestion before they can be added.
 
 ### `cross-market-correlation-v1`
 

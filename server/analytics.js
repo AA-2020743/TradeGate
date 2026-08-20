@@ -1,4 +1,5 @@
 const TRADING_DAYS = 252;
+const DAY_MS = 86_400_000;
 
 function clamp(value, minimum = 0, maximum = 100) {
   return Math.min(maximum, Math.max(minimum, value));
@@ -312,6 +313,119 @@ export function calculateUsLiquidityModel(seriesList) {
     netLiquidity: netLiquidity.at(-1)?.value ?? null,
     history: netLiquidity,
     composite,
+    drivers: drivers.map(({ key, name, change, impulse, weight }) => ({ key, name, changePercent: change, impulse, weight })),
+  };
+}
+
+const GLOBAL_LIQUIDITY_MAX_GAP_DAYS = 35;
+
+function alignedUsdLeg(points, fxPoints, conversion) {
+  const legs = [];
+  for (const point of points) {
+    const fxPoint = latestAtOrBefore(fxPoints, point.date);
+    if (!fxPoint) continue;
+    const gapDays = (new Date(point.date) - new Date(fxPoint.date)) / DAY_MS;
+    if (gapDays > GLOBAL_LIQUIDITY_MAX_GAP_DAYS) continue;
+    const value = conversion(point.value, fxPoint.value);
+    if (Number.isFinite(value) && value > 0) legs.push({ date: point.date, value });
+  }
+  return legs;
+}
+
+function sumSeries(basePoints, overlayPoints) {
+  const merged = new Map(basePoints.map((point) => [point.date, point.value]));
+  for (const point of overlayPoints) merged.set(point.date, (merged.get(point.date) ?? 0) + point.value);
+  return [...merged.entries()].map(([date, value]) => ({ date, value })).sort((left, right) => new Date(left.date) - new Date(right.date));
+}
+
+export function calculateGlobalLiquidityModel(seriesList) {
+  const series = Object.fromEntries(seriesList.map((item) => [item.key, item]));
+  const fed = pointsForSeries(series.fedBalanceSheet);
+  const treasury = pointsForSeries(series.treasuryGeneralAccount);
+  const reverseRepo = pointsForSeries(series.reverseRepo);
+  const ecb = pointsForSeries(series.ecbBalanceSheet);
+  const boj = pointsForSeries(series.bojBalanceSheet);
+  const eurUsd = pointsForSeries(series.eurUsd);
+  const yenPerUsd = pointsForSeries(series.yenPerUsd);
+  const dollar = pointsForSeries(series.dxy);
+
+  const fedLeg = fed.map((point) => ({ date: point.date, value: point.value }));
+  const ecbLeg = alignedUsdLeg(ecb, eurUsd, (value, rate) => value * rate);
+  const bojLeg = alignedUsdLeg(boj, yenPerUsd, (value, rate) => (value * 100) / rate);
+  if (!fedLeg.length || !ecbLeg.length || !bojLeg.length) return null;
+
+  const globalLiquidity = sumSeries(sumSeries(fedLeg, ecbLeg), bojLeg);
+  const netLiquidity = fed.flatMap((point) => {
+    const treasuryPoint = latestAtOrBefore(treasury, point.date);
+    const reverseRepoPoint = latestAtOrBefore(reverseRepo, point.date);
+    return treasuryPoint && reverseRepoPoint
+      ? [{ date: point.date, value: point.value - treasuryPoint.value - reverseRepoPoint.value }]
+      : [];
+  });
+
+  const exUs = sumSeries(ecbLeg, bojLeg);
+  const driverDefinitions = [
+    { key: 'globalCentralBank', name: 'Global central-bank impulse', change: changeOverDays(globalLiquidity, 91), scale: 3, weight: 0.4 },
+    { key: 'fedNetLiquidity', name: 'Fed net liquidity', change: changeOverDays(netLiquidity, 91), scale: 3, weight: 0.25 },
+    { key: 'exUsCentralBank', name: 'ECB + BoJ impulse', change: changeOverDays(exUs, 91), scale: 3, weight: 0.15 },
+    { key: 'dollar', name: 'Dollar transmission', change: changeOverDays(dollar, 91), scale: 3, weight: 0.2, inverse: true },
+  ];
+  const drivers = driverDefinitions.map((driver) => ({
+    ...driver,
+    impulse: boundedImpulse(driver.change, driver.scale, driver.inverse),
+  })).filter((driver) => driver.impulse !== null);
+  if (drivers.length !== driverDefinitions.length) return null;
+
+  const availableWeight = drivers.reduce((total, driver) => total + driver.weight, 0);
+  const composite = drivers.reduce((total, driver) => total + (driver.impulse * driver.weight), 0) / availableWeight;
+  const positiveDrivers = drivers.filter((driver) => driver.impulse > 0.05).length;
+  const negativeDrivers = drivers.filter((driver) => driver.impulse < -0.05).length;
+  const agreement = Math.max(positiveDrivers, negativeDrivers) / drivers.length;
+  const score = Math.round(clamp(50 + (composite * 50)));
+  const regime = composite >= 0.15 ? 'Expansion' : composite <= -0.15 ? 'Contraction' : 'Neutral';
+  const shortImpulse = boundedImpulse(changeOverDays(globalLiquidity, 28), 1.5);
+  const longImpulse = boundedImpulse(changeOverDays(globalLiquidity, 91), 3);
+  const momentum = shortImpulse === null || longImpulse === null
+    ? 'Unavailable'
+    : shortImpulse > longImpulse ? 'Accelerating' : 'Decelerating';
+  const confidenceScore = Math.round(((availableWeight * 0.55) + (agreement * 0.45)) * 100);
+
+  const latestTotal = globalLiquidity.at(-1)?.value ?? null;
+  const rankedHistory = globalLiquidity.filter((point) => Number.isFinite(point.value)).map((point) => point.value);
+  const cyclePercentile = latestTotal === null || rankedHistory.length < 2
+    ? null
+    : Math.round((rankedHistory.filter((value) => value <= latestTotal).length / rankedHistory.length) * 100);
+  const legSummary = [
+    { key: 'fed', name: 'Federal Reserve', points: fedLeg },
+    { key: 'ecb', name: 'European Central Bank', points: ecbLeg },
+    { key: 'boj', name: 'Bank of Japan', points: bojLeg },
+  ].map((leg) => {
+    const latest = leg.points.at(-1)?.value ?? null;
+    return {
+      key: leg.key,
+      name: leg.name,
+      valueUsdMillions: latest,
+      sharePercent: latest !== null && latestTotal ? Math.round((latest / latestTotal) * 100) : null,
+      change91d: changeOverDays(leg.points, 91),
+      change365d: changeOverDays(leg.points, 365),
+      asOf: leg.points.at(-1)?.date ?? null,
+    };
+  });
+
+  return {
+    version: 'global-liquidity-v1',
+    asOf: globalLiquidity.at(-1)?.date ?? null,
+    score,
+    regime,
+    momentum,
+    confidence: confidenceScore >= 75 ? 'High' : confidenceScore >= 50 ? 'Medium' : 'Low',
+    confidenceScore,
+    breadth: { positive: positiveDrivers, negative: negativeDrivers, total: drivers.length },
+    globalLiquidityUsdMillions: latestTotal,
+    cyclePercentile,
+    centralBanks: legSummary,
+    composite,
+    history: globalLiquidity,
     drivers: drivers.map(({ key, name, change, impulse, weight }) => ({ key, name, changePercent: change, impulse, weight })),
   };
 }

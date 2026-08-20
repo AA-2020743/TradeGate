@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { calculateCrossMarketRelationship, calculateMacroRegimeModel, calculateRsi, calculateTechnicalSnapshot, calculateUsdStrengthModel, calculateUsLiquidityModel, pearsonCorrelation } from './analytics.js';
+import { calculateCrossMarketRelationship, calculateGlobalLiquidityModel, calculateMacroRegimeModel, calculateRsi, calculateTechnicalSnapshot, calculateUsdStrengthModel, calculateUsLiquidityModel, pearsonCorrelation } from './analytics.js';
 
 test('RSI reaches 100 for an uninterrupted advance', () => {
   const values = Array.from({ length: 30 }, (_, index) => 100 + index);
@@ -78,6 +78,60 @@ test('US liquidity model refuses to publish with a missing mandatory driver', ()
   assert.equal(calculateUsLiquidityModel([
     { key: 'usM2', multiplier: 1, history },
     { key: 'dxy', multiplier: 1, history },
+  ]), null);
+});
+
+test('Global liquidity model aggregates USD-converted central-bank legs', () => {
+  const weekly = (key, start, step) => ({
+    key,
+    multiplier: 1,
+    history: Array.from({ length: 120 }, (_, index) => ({
+      date: new Date(Date.UTC(2024, 0, 1 + (index * 7))).toISOString().slice(0, 10),
+      value: start + (index * step),
+    })),
+  });
+  const model = calculateGlobalLiquidityModel([
+    weekly('fedBalanceSheet', 7_000_000, 20_000),
+    weekly('treasuryGeneralAccount', 800_000, -5_000),
+    weekly('reverseRepo', 500, -8),
+    weekly('ecbBalanceSheet', 6_200_000, 15_000),
+    weekly('bojBalanceSheet', 7_500_000, 8_000),
+    weekly('eurUsd', 1.08, 0.002),
+    weekly('yenPerUsd', 150, -0.2),
+    weekly('dxy', 110, -0.15),
+  ]);
+  assert.equal(model.version, 'global-liquidity-v1');
+  assert.equal(model.regime, 'Expansion');
+  assert.ok(model.score > 50);
+  assert.equal(model.centralBanks.length, 3);
+  const fedLeg = model.centralBanks.find((leg) => leg.key === 'fed');
+  const ecbLeg = model.centralBanks.find((leg) => leg.key === 'ecb');
+  const bojLeg = model.centralBanks.find((leg) => leg.key === 'boj');
+  assert.ok(Math.abs(fedLeg.valueUsdMillions - 9_380_000) < 1_000);
+  assert.ok(Math.abs(ecbLeg.valueUsdMillions - ((6_200_000 + (119 * 15_000)) * (1.08 + (119 * 0.002)))) < 1_000);
+  assert.ok(Math.abs(bojLeg.valueUsdMillions - (((7_500_000 + (119 * 8_000)) * 100) / (150 - (119 * 0.2)))) < 1_000);
+  const shareTotal = model.centralBanks.reduce((total, leg) => total + leg.sharePercent, 0);
+  assert.ok(Math.abs(shareTotal - 100) <= 1);
+  assert.equal(model.history.length, 120);
+  assert.ok(Number.isFinite(model.cyclePercentile));
+});
+
+test('Global liquidity model refuses to publish without FX conversion rates', () => {
+  const weekly = (key, start, step = 0) => ({
+    key,
+    multiplier: 1,
+    history: Array.from({ length: 30 }, (_, index) => ({
+      date: new Date(Date.UTC(2025, 0, 1 + (index * 7))).toISOString().slice(0, 10),
+      value: start + (index * step),
+    })),
+  });
+  assert.equal(calculateGlobalLiquidityModel([
+    weekly('fedBalanceSheet', 7_000_000, 20_000),
+    weekly('treasuryGeneralAccount', 800_000, -5_000),
+    weekly('reverseRepo', 500, -8),
+    weekly('ecbBalanceSheet', 6_200_000, 15_000),
+    weekly('bojBalanceSheet', 750_000, 2_000),
+    weekly('dxy', 110, -0.15),
   ]), null);
 });
 

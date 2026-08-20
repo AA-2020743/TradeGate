@@ -158,6 +158,7 @@ export async function ingestLiquiditySnapshot() {
     };
     const contributingDrivers = (model) => new Set((model?.drivers ?? []).filter((driver) => Number.isFinite(driver.score)).map((driver) => driver.key));
     const liquidityKeys = ['fedBalanceSheet', 'treasuryGeneralAccount', 'reverseRepo', 'usM2', 'dxy'];
+    const globalKeys = [...new Set([...liquidityKeys, 'ecbBalanceSheet', 'bojBalanceSheet', 'eurUsd', 'yenPerUsd'])];
     const usdDrivers = contributingDrivers(snapshot.usdStrength);
     const usdKeys = [
       ...(usdDrivers.has('dollarTrend') || usdDrivers.has('dollarMomentum') ? ['dxy'] : []),
@@ -175,6 +176,7 @@ export async function ingestLiquiditySnapshot() {
       ...(macroDrivers.has('dollar') ? usdKeys : []),
     ];
     await persistModelOutput('us-liquidity', snapshot.model, lineageFor(liquidityKeys), runId);
+    await persistModelOutput('global-liquidity', snapshot.globalLiquidity, lineageFor(globalKeys), runId);
     await persistModelOutput('usd-strength', snapshot.usdStrength, lineageFor(usdKeys), runId);
     if (snapshot.macroRegime?.status !== 'unavailable') {
       await persistModelOutput('macro-regime', snapshot.macroRegime, lineageFor(macroKeys), runId);

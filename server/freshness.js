@@ -11,6 +11,10 @@ const FRED_MAX_OBSERVATION_AGE_DAYS = {
   NFCI: 14,
   BAMLH0A0HYM2: 7,
   VIXCLS: 7,
+  ECBASSETSW: 21,
+  JPNASSETS: 60,
+  DEXUSEU: 7,
+  DEXJPUS: 7,
 };
 
 export function isFredSeriesStale(id, date, now = Date.now()) {
