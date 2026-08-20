@@ -343,30 +343,30 @@ export function calculateGlobalLiquidityModel(seriesList) {
   const fed = pointsForSeries(series.fedBalanceSheet);
   const treasury = pointsForSeries(series.treasuryGeneralAccount);
   const reverseRepo = pointsForSeries(series.reverseRepo);
+  const m2 = pointsForSeries(series.usM2);
   const ecb = pointsForSeries(series.ecbBalanceSheet);
   const boj = pointsForSeries(series.bojBalanceSheet);
   const eurUsd = pointsForSeries(series.eurUsd);
   const yenPerUsd = pointsForSeries(series.yenPerUsd);
   const dollar = pointsForSeries(series.dxy);
 
-  const fedLeg = fed.map((point) => ({ date: point.date, value: point.value }));
-  const ecbLeg = alignedUsdLeg(ecb, eurUsd, (value, rate) => value * rate);
-  const bojLeg = alignedUsdLeg(boj, yenPerUsd, (value, rate) => (value * 100) / rate);
-  if (!fedLeg.length || !ecbLeg.length || !bojLeg.length) return null;
-
-  const globalLiquidity = sumSeries(sumSeries(fedLeg, ecbLeg), bojLeg);
-  const netLiquidity = fed.flatMap((point) => {
+  const usLeg = fed.flatMap((point) => {
     const treasuryPoint = latestAtOrBefore(treasury, point.date);
     const reverseRepoPoint = latestAtOrBefore(reverseRepo, point.date);
-    return treasuryPoint && reverseRepoPoint
-      ? [{ date: point.date, value: point.value - treasuryPoint.value - reverseRepoPoint.value }]
-      : [];
+    if (!treasuryPoint || !reverseRepoPoint) return [];
+    const value = point.value - treasuryPoint.value - reverseRepoPoint.value;
+    return Number.isFinite(value) && value > 0 ? [{ date: point.date, value }] : [];
   });
+  const ecbLeg = alignedUsdLeg(ecb, eurUsd, (value, rate) => value * rate);
+  const bojLeg = alignedUsdLeg(boj, yenPerUsd, (value, rate) => (value * 100) / rate);
+  if (!usLeg.length || !ecbLeg.length || !bojLeg.length) return null;
+
+  const globalLiquidity = sumSeries(sumSeries(usLeg, ecbLeg), bojLeg);
 
   const exUs = sumSeries(ecbLeg, bojLeg);
   const driverDefinitions = [
     { key: 'globalCentralBank', name: 'Global central-bank impulse', change: changeOverDays(globalLiquidity, 91), scale: 3, weight: 0.4 },
-    { key: 'fedNetLiquidity', name: 'Fed net liquidity', change: changeOverDays(netLiquidity, 91), scale: 3, weight: 0.25 },
+    { key: 'usM2', name: 'US M2 growth', change: changeOverDays(m2, 91), scale: 2, weight: 0.25 },
     { key: 'exUsCentralBank', name: 'ECB + BoJ impulse', change: changeOverDays(exUs, 91), scale: 3, weight: 0.15 },
     { key: 'dollar', name: 'Dollar transmission', change: changeOverDays(dollar, 91), scale: 3, weight: 0.2, inverse: true },
   ];
@@ -396,7 +396,7 @@ export function calculateGlobalLiquidityModel(seriesList) {
     ? null
     : Math.round((rankedHistory.filter((value) => value <= latestTotal).length / rankedHistory.length) * 100);
   const legSummary = [
-    { key: 'fed', name: 'Federal Reserve', points: fedLeg },
+    { key: 'us', name: 'United States (net liquidity)', points: usLeg },
     { key: 'ecb', name: 'European Central Bank', points: ecbLeg },
     { key: 'boj', name: 'Bank of Japan', points: bojLeg },
   ].map((leg) => {
@@ -428,6 +428,64 @@ export function calculateGlobalLiquidityModel(seriesList) {
     history: globalLiquidity,
     drivers: drivers.map(({ key, name, change, impulse, weight }) => ({ key, name, changePercent: change, impulse, weight })),
   };
+}
+
+export function calculateChangeCorrelations(leftPoints, rightPoints) {
+  const leftByDate = new Map(leftPoints.map((point) => [(point.date ?? point.timestamp).slice(0, 10), point.value]));
+  const rightByDate = new Map(rightPoints.map((point) => [(point.date ?? point.timestamp).slice(0, 10), point.value]));
+  const dates = [...leftByDate.keys()].filter((date) => Number.isFinite(leftByDate.get(date)) && Number.isFinite(rightByDate.get(date))).sort();
+  if (dates.length < 22) return null;
+
+  const leftChanges = [];
+  const rightChanges = [];
+  for (let index = 1; index < dates.length; index += 1) {
+    const leftChange = leftByDate.get(dates[index]) - leftByDate.get(dates[index - 1]);
+    const rightChange = rightByDate.get(dates[index]) - rightByDate.get(dates[index - 1]);
+    if (!Number.isFinite(leftChange) || !Number.isFinite(rightChange)) continue;
+    leftChanges.push(leftChange);
+    rightChanges.push(rightChange);
+  }
+  if (leftChanges.length < 21) return null;
+
+  const correlations = {};
+  for (const [key, window] of [['20D', 20], ['60D', 60], ['1Y', 252]]) {
+    correlations[key] = leftChanges.length >= window
+      ? pearsonCorrelation(leftChanges.slice(-window), rightChanges.slice(-window))
+      : null;
+  }
+  return { correlations, observations: leftChanges.length, asOf: dates.at(-1) };
+}
+
+export function buildLiquidityNarrative(usOutputs = [], globalOutputs = []) {
+  const entries = [];
+  const usLatest = usOutputs[0]?.output ?? null;
+  const usPrevious = usOutputs[1]?.output ?? null;
+  const globalLatest = globalOutputs[0]?.output ?? null;
+  const globalPrevious = globalOutputs[1]?.output ?? null;
+  const hasRunPairs = Boolean((usLatest && usPrevious) || (globalLatest && globalPrevious));
+
+  if (usLatest && usPrevious && Number.isFinite(usLatest.score) && Number.isFinite(usPrevious.score)) {
+    const delta = usLatest.score - usPrevious.score;
+    if (Math.abs(delta) >= 1) entries.push({ key: 'usScore', text: `US liquidity score moved ${delta > 0 ? 'up' : 'down'} ${Math.abs(delta)} points to ${usLatest.score}/100 since the previous run.` });
+    if (usLatest.regime !== usPrevious.regime) entries.push({ key: 'usRegime', text: `US regime shifted from ${usPrevious.regime} to ${usLatest.regime}.` });
+  }
+  if (globalLatest && globalPrevious && Number.isFinite(globalLatest.score) && Number.isFinite(globalPrevious.score)) {
+    const delta = globalLatest.score - globalPrevious.score;
+    if (Math.abs(delta) >= 1) entries.push({ key: 'globalScore', text: `Global liquidity score moved ${delta > 0 ? 'up' : 'down'} ${Math.abs(delta)} points to ${globalLatest.score}/100 since the previous run.` });
+    if (globalLatest.regime !== globalPrevious.regime) entries.push({ key: 'globalRegime', text: `Global regime shifted from ${globalPrevious.regime} to ${globalLatest.regime}.` });
+    if (Number.isFinite(globalLatest.globalLiquidityUsdMillions) && Number.isFinite(globalPrevious.globalLiquidityUsdMillions) && globalPrevious.globalLiquidityUsdMillions > 0) {
+      const changePercent = ((globalLatest.globalLiquidityUsdMillions / globalPrevious.globalLiquidityUsdMillions) - 1) * 100;
+      if (Math.abs(changePercent) >= 0.05) entries.push({ key: 'globalPool', text: `Pooled central-bank liquidity ${changePercent > 0 ? 'rose' : 'fell'} ${Math.abs(changePercent).toFixed(2)}% to ${formatUsdBillions(globalLatest.globalLiquidityUsdMillions)}.` });
+    }
+  }
+
+  if (entries.length) return { status: 'updated', entries };
+  return { status: hasRunPairs ? 'stable' : 'insufficient-history', entries: [] };
+}
+
+function formatUsdBillions(valueInMillions) {
+  const billions = valueInMillions / 1000;
+  return billions >= 1000 ? `$${(billions / 1000).toFixed(2)}T` : `$${billions.toFixed(1)}B`;
 }
 
 export function calculateUsdStrengthModel(seriesList, liquidityModel = null) {

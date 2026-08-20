@@ -1,7 +1,7 @@
 import { config } from './config.js';
 import { withCache } from './cache.js';
-import { calculateCrossMarketRelationship, calculateGlobalLiquidityModel, calculateMacroRegimeModel, calculateTechnicalSnapshot, calculateUsdStrengthModel, calculateUsLiquidityModel } from './analytics.js';
-import { getStoredFredSeries, getStoredMarketHistory, getStoredMarketSnapshot, isDatabaseConfigured, reserveProviderCredits } from './database.js';
+import { buildLiquidityNarrative, calculateChangeCorrelations, calculateCrossMarketRelationship, calculateGlobalLiquidityModel, calculateMacroRegimeModel, calculateTechnicalSnapshot, calculateUsdStrengthModel, calculateUsLiquidityModel } from './analytics.js';
+import { getStoredFredSeries, getStoredMarketHistory, getStoredMarketSnapshot, getRecentModelOutputs, isDatabaseConfigured, reserveProviderCredits } from './database.js';
 import { getAllEquityHistorySymbols, getCoreEquityHistorySymbols } from './equityCatalog.js';
 import { isCryptoHistoryStale, isDailyCloseStale, isFredSeriesStale } from './freshness.js';
 
@@ -435,6 +435,57 @@ export async function getDxyBitcoinRelationship() {
   });
 }
 
+export const REGIME_CORRELATION_PAIRS = [
+  { key: 'creditEquities', leftKey: 'highYieldSpread', leftName: 'Credit spreads', rightSymbol: 'SPY', rightName: 'Equities (SPY)', note: 'Primary stress-transmission signal; widening against equity strength is a classic warning.' },
+  { key: 'volatilityEquities', leftKey: 'vix', leftName: 'VIX', rightName: 'Equities (SPY)', rightSymbol: 'SPY', note: 'Volatility drag on equity appetite; persistent positive correlation marks stress regimes.' },
+  { key: 'dollarBitcoin', leftKey: 'dxy', leftName: 'Broad dollar', rightSymbol: 'BTC', rightName: 'Bitcoin', note: 'Dollar headwind for crypto; inverse linkage typically tightens in liquidity contractions.' },
+  { key: 'conditionsEquities', leftKey: 'financialConditions', leftName: 'Financial conditions (NFCI)', rightSymbol: 'SPY', rightName: 'Equities (SPY)', note: 'Weekly NFCI impulse versus equities; tightening alongside falling equities confirms restriction.' },
+  { key: 'realYieldsGold', leftKey: 'realYield10y', leftName: '10Y real yields', rightSymbol: 'GLD', rightName: 'Gold proxy (GLD)', note: 'Opportunity-cost channel; strong inverse readings mark duration-hedge behavior.' },
+  { key: 'dollarGold', leftKey: 'dxy', leftName: 'Broad dollar', rightSymbol: 'GLD', rightName: 'Gold proxy (GLD)', note: 'Inverse dollar linkage; a break signals a structural repricing.' },
+];
+
+export async function getRegimeCorrelations() {
+  return withCache('analytics:regime-correlations', 15 * 60_000, async () => {
+    const liquidity = await getLiquiditySnapshot();
+    const fredHistoryByKey = Object.fromEntries(liquidity.series
+      .filter((series) => !series.stale && series.history?.length)
+      .map((series) => [series.key, series.history]));
+    const symbols = [...new Set(REGIME_CORRELATION_PAIRS.map((pair) => pair.rightSymbol))];
+    const marketResults = await Promise.allSettled(symbols.map((symbol) => getMarketHistory(symbol, '1Y')));
+    const marketPointsBySymbol = {};
+    marketResults.forEach((result, index) => {
+      if (result.status === 'fulfilled' && !result.value.stale) marketPointsBySymbol[symbols[index]] = result.value.points ?? [];
+    });
+
+    const pairs = REGIME_CORRELATION_PAIRS.map((pair) => {
+      const leftPoints = fredHistoryByKey[pair.leftKey] ?? [];
+      const rightPoints = marketPointsBySymbol[pair.rightSymbol] ?? [];
+      const result = leftPoints.length && rightPoints.length ? calculateChangeCorrelations(leftPoints, rightPoints) : null;
+      return {
+        key: pair.key,
+        left: pair.leftName,
+        right: pair.rightName,
+        note: pair.note,
+        status: result ? 'calculated' : 'unavailable',
+        correlations: result?.correlations ?? { '20D': null, '60D': null, '1Y': null },
+        observations: result?.observations ?? 0,
+        asOf: result?.asOf ?? null,
+      };
+    });
+    const calculatedCount = pairs.filter((pair) => pair.status === 'calculated').length;
+
+    return {
+      version: 'regime-correlation-v1',
+      asOf: new Date().toISOString(),
+      status: calculatedCount ? 'calculated' : 'unavailable',
+      coverage: Math.round((calculatedCount / pairs.length) * 100),
+      calculatedCount,
+      pairs,
+      missingInputs: pairs.filter((pair) => pair.status === 'unavailable').map((pair) => `${pair.left} / ${pair.right}`),
+    };
+  });
+}
+
 async function getFredSeries(series) {
   const url = new URL('https://api.stlouisfed.org/fred/series/observations');
   url.searchParams.set('series_id', series.id);
@@ -482,6 +533,18 @@ export async function getLiquiditySnapshot(options = {}) {
     const globalLiquidity = calculateGlobalLiquidityModel(modelSeries);
     const usdStrength = calculateUsdStrengthModel(modelSeries, model);
     const macroRegime = calculateMacroRegimeModel(modelSeries, model, usdStrength);
+    let narrative = null;
+    if (isDatabaseConfigured()) {
+      try {
+        const [usOutputs, globalOutputs] = await Promise.all([
+          getRecentModelOutputs('us-liquidity', 2),
+          getRecentModelOutputs('global-liquidity', 2),
+        ]);
+        narrative = buildLiquidityNarrative(usOutputs, globalOutputs);
+      } catch {
+        narrative = null;
+      }
+    }
 
     return {
       asOf: new Date().toISOString(),
@@ -492,6 +555,7 @@ export async function getLiquiditySnapshot(options = {}) {
       globalLiquidity,
       usdStrength,
       macroRegime,
+      narrative,
       errors,
     };
   }, { force: options.refresh === true });

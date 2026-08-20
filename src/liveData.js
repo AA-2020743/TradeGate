@@ -13,6 +13,7 @@ export function usePlatformData() {
     markets: null,
     liquidity: null,
     dxyBtc: null,
+    regimeCorrelations: null,
     error: null,
   });
 
@@ -20,11 +21,12 @@ export function usePlatformData() {
     let active = true;
 
     const load = async () => {
-      const [health, markets, liquidity, dxyBtc] = await Promise.allSettled([
+      const [health, markets, liquidity, dxyBtc, regimeCorrelations] = await Promise.allSettled([
         requestJson('/api/health'),
         requestJson('/api/markets/snapshot'),
         requestJson('/api/macro/liquidity'),
         requestJson('/api/analytics/dxy-btc'),
+        requestJson('/api/analytics/regime-correlations'),
       ]);
       if (!active) return;
 
@@ -32,6 +34,7 @@ export function usePlatformData() {
       const marketData = markets.status === 'fulfilled' ? markets.value : null;
       const liquidityData = liquidity.status === 'fulfilled' ? liquidity.value : null;
       const dxyBtcData = dxyBtc.status === 'fulfilled' ? dxyBtc.value : null;
+      const regimeCorrelationsData = regimeCorrelations.status === 'fulfilled' ? regimeCorrelations.value : null;
       const hasQuotes = Boolean(marketData?.assets?.length);
       const hasUnconfiguredProviders = Object.values(healthData?.providers ?? {}).some((provider) => !provider.configured || (provider.connected === false && provider.mode === 'unavailable') || provider.migrated === false && provider.configured);
       const hasErrors = [health, markets, liquidity, dxyBtc].some((result) => result.status === 'rejected') || Boolean(marketData?.errors?.length) || Boolean(liquidityData?.errors?.length) || hasUnconfiguredProviders;
@@ -42,6 +45,7 @@ export function usePlatformData() {
         markets: marketData,
         liquidity: liquidityData,
         dxyBtc: dxyBtcData,
+        regimeCorrelations: regimeCorrelationsData,
         error: !healthData ? 'The data API is unavailable.' : hasErrors ? 'Some data providers are unavailable.' : null,
       });
     };

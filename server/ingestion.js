@@ -9,7 +9,7 @@ import {
   persistSeries,
   startIngestionRun,
 } from './database.js';
-import { getIngestionHistorySymbols, getLiquiditySnapshot, getMarketHistory, getMarketSnapshot } from './providers.js';
+import { getIngestionHistorySymbols, getLiquiditySnapshot, getMarketHistory, getMarketSnapshot, REGIME_CORRELATION_PAIRS, getRegimeCorrelations } from './providers.js';
 
 function observationTimestamp(value, fallback) {
   const timestamp = value ? new Date(value) : new Date(fallback);
@@ -182,9 +182,25 @@ export async function ingestLiquiditySnapshot() {
       await persistModelOutput('macro-regime', snapshot.macroRegime, lineageFor(macroKeys), runId);
     }
 
+    let regimeCorrelationVersion = null;
+    const persistenceErrors = [];
+    try {
+      const regimeCorrelations = await getRegimeCorrelations();
+      if (regimeCorrelations.status === 'calculated') {
+        regimeCorrelationVersion = regimeCorrelations.version;
+        const correlationFredKeys = [...new Set(regimeCorrelations.pairs
+          .filter((pair) => pair.status === 'calculated')
+          .map((pair) => REGIME_CORRELATION_PAIRS.find((definition) => definition.key === pair.key)?.leftKey)
+          .filter(Boolean))];
+        await persistModelOutput('regime-correlation', regimeCorrelations, lineageFor(correlationFredKeys), runId);
+      }
+    } catch (error) {
+      persistenceErrors.push(`Regime correlations were not persisted: ${error.message}`);
+    }
+
     return {
       status: snapshot.errors.length || !snapshot.model ? 'partial' : 'completed',
-      details: { seriesReceived: snapshot.series.length, modelVersion: snapshot.model?.version ?? null, usdStrengthVersion: snapshot.usdStrength?.version ?? null, macroRegimeVersion: snapshot.macroRegime?.version ?? null, providerErrors: snapshot.errors },
+      details: { seriesReceived: snapshot.series.length, modelVersion: snapshot.model?.version ?? null, usdStrengthVersion: snapshot.usdStrength?.version ?? null, macroRegimeVersion: snapshot.macroRegime?.version ?? null, regimeCorrelationVersion, providerErrors: [...snapshot.errors, ...persistenceErrors] },
     };
   });
 }

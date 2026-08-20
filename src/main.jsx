@@ -26,16 +26,6 @@ const news = [
   ['MARKETWATCH', 'Gold is quietly making its case as rate-cut bets build', '1h ago'],
 ];
 
-const correlationPairs = [
-  { left: 'BTC', right: 'S&P 500', values: { '20D': 0.62, '60D': 0.54, '1Y': 0.43 }, regime: 'Risk-on linkage', note: 'Equity beta is elevated' },
-  { left: 'DXY', right: 'BTC', values: { '20D': -0.57, '60D': -0.62, '1Y': -0.48 }, regime: 'Dollar headwind', note: 'Inverse relationship intact' },
-  { left: 'WTI oil', right: 'CAD', values: { '20D': 0.66, '60D': 0.71, '1Y': 0.58 }, regime: 'Terms-of-trade', note: 'Stable commodity linkage' },
-  { left: 'Gold', right: 'Real yields', values: { '20D': -0.68, '60D': -0.73, '1Y': -0.61 }, regime: 'Duration hedge', note: 'Strong inverse relationship' },
-  { left: 'AUD', right: 'Metals', values: { '20D': 0.51, '60D': 0.69, '1Y': 0.56 }, regime: 'China sensitivity', note: 'Pro-cyclical confirmation' },
-  { left: 'JPY', right: 'Global risk', values: { '20D': -0.48, '60D': -0.64, '1Y': -0.52 }, regime: 'Risk-off hedge', note: 'Hedge behavior persistent' },
-  { left: 'Credit spreads', right: 'Equities', values: { '20D': -0.71, '60D': -0.78, '1Y': -0.66 }, regime: 'Stress transmission', note: 'Primary warning signal' },
-];
-
 const fxOutlook = [
   ['USD', 'Strength', '68', 'positive', 'Growth and carry support'],
   ['EUR', 'Neutral', '49', 'neutral', 'Policy gap stabilizing'],
@@ -221,7 +211,7 @@ function formatLiquidityValue(value) {
   return `${value < 0 ? '-' : ''}$${absolute.toFixed(0)}M`;
 }
 
-function LiquidityHistoryChart({ history, range, onRangeChange, expanded = false }) {
+function LiquidityHistoryChart({ history, range, onRangeChange, expanded = false, label = 'net US liquidity' }) {
   const [hoveredIndex, setHoveredIndex] = React.useState(null);
   const [pinnedIndex, setPinnedIndex] = React.useState(null);
   const latestDate = new Date(history.at(-1)?.date).getTime();
@@ -266,7 +256,7 @@ function LiquidityHistoryChart({ history, range, onRangeChange, expanded = false
       <div className="window-buttons">{['1Y', '3Y', '5Y', 'All'].map((item) => <button className={range === item ? 'selected' : ''} key={item} onClick={() => { onRangeChange(item); setPinnedIndex(null); }}>{item}</button>)}</div>
     </div>
     <div className="liquidity-history-plot" onPointerMove={selectNearest} onPointerLeave={() => setHoveredIndex(null)} onClick={(event) => selectNearest(event, true)}>
-      <svg viewBox={`0 0 ${width} ${height}`} preserveAspectRatio="none" role="img" aria-label={`Calculated net US liquidity from ${points[0].date} through ${points.at(-1).date}`}>
+      <svg viewBox={`0 0 ${width} ${height}`} preserveAspectRatio="none" role="img" aria-label={`Calculated ${label} from ${points[0].date} through ${points.at(-1).date}`}>
         <defs><linearGradient id={expanded ? 'liquidity-fill-expanded' : 'liquidity-fill'} x1="0" x2="0" y1="0" y2="1"><stop offset="0" stopColor="#78c968" stopOpacity=".28"/><stop offset="1" stopColor="#78c968" stopOpacity=".02"/></linearGradient></defs>
         {[0, .25, .5, .75, 1].map((position) => { const y = padding.top + (position * (height - padding.top - padding.bottom)); return <g key={position}><line x1={padding.left} x2={width - padding.right} y1={y} y2={y} className="liquidity-grid-line"/><text x={padding.left - 9} y={y + 4} textAnchor="end" className="liquidity-axis-label">{formatLiquidityValue(high - (position * spread))}</text></g>; })}
         <path d={`M${coordinates[0].x},${height - padding.bottom} L${coordinates.map((point) => `${point.x},${point.y}`).join(' L')} L${coordinates.at(-1).x},${height - padding.bottom} Z`} fill={`url(#${expanded ? 'liquidity-fill-expanded' : 'liquidity-fill'})`}/>
@@ -280,7 +270,7 @@ function LiquidityHistoryChart({ history, range, onRangeChange, expanded = false
   </div>;
 }
 
-function LiquidityChartDialog({ history, onClose }) {
+function LiquidityChartDialog({ history, title, description, label, onClose }) {
   const [range, setRange] = React.useState('All');
   React.useEffect(() => {
     const closeOnEscape = (event) => {
@@ -296,8 +286,8 @@ function LiquidityChartDialog({ history, onClose }) {
   }, [onClose]);
   return <div className="liquidity-dialog-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}>
     <section className="liquidity-dialog panel" role="dialog" aria-modal="true" aria-labelledby="liquidity-dialog-title">
-      <header><div><p className="section-kicker">HISTORICAL MODEL INSPECTOR</p><h2 id="liquidity-dialog-title">Calculated net US liquidity</h2><p>Move across the chart to inspect a date. Click or tap to pin the observation for comparison.</p></div><button className="liquidity-dialog-close" onClick={onClose} aria-label="Close liquidity chart">×</button></header>
-      <LiquidityHistoryChart history={history} range={range} onRangeChange={setRange} expanded />
+      <header><div><p className="section-kicker">HISTORICAL MODEL INSPECTOR</p><h2 id="liquidity-dialog-title">{title}</h2><p>{description}</p></div><button className="liquidity-dialog-close" onClick={onClose} aria-label="Close liquidity chart">×</button></header>
+      <LiquidityHistoryChart history={history} range={range} onRangeChange={setRange} expanded label={label} />
     </section>
   </div>;
 }
@@ -661,6 +651,7 @@ function MacroDashboard({ data }) {
   const [correlationWindow, setCorrelationWindow] = React.useState('60D');
   const [fxHorizon, setFxHorizon] = React.useState('1M');
   const [liquidityChartOpen, setLiquidityChartOpen] = React.useState(false);
+  const [globalChartOpen, setGlobalChartOpen] = React.useState(false);
   const liquidityModel = data.liquidity?.model;
   const globalLiquidity = data.liquidity?.globalLiquidity;
   const usdStrength = data.liquidity?.usdStrength;
@@ -672,6 +663,23 @@ function MacroDashboard({ data }) {
   const dxyBtcCorrelationValue = dxyBtcModel?.correlations?.[correlationWindow];
   const dxyHistory = normalizeSparkline(dxyBtcModel?.history?.left ?? []);
   const bitcoinHistory = normalizeSparkline(dxyBtcModel?.history?.right ?? []);
+  const regimeCorrelations = data.regimeCorrelations;
+  const rcPairs = regimeCorrelations?.pairs ?? [];
+  const rcValue = (pair) => pair?.correlations?.[correlationWindow];
+  const calculatedPairs = rcPairs.filter((pair) => pair.status === 'calculated' && Number.isFinite(rcValue(pair)));
+  const strongestPair = calculatedPairs.length ? calculatedPairs.reduce((best, pair) => Math.abs(rcValue(pair)) > Math.abs(rcValue(best)) ? pair : best) : null;
+  const weakestPair = calculatedPairs.length ? calculatedPairs.reduce((worst, pair) => Math.abs(rcValue(pair)) < Math.abs(rcValue(worst)) ? pair : worst) : null;
+  const rcByKey = Object.fromEntries(rcPairs.map((pair) => [pair.key, pair]));
+  const narrative = data.liquidity?.narrative;
+  const sensitivityTone = (value) => !Number.isFinite(value) ? 'Unavailable' : Math.abs(value) >= 0.5 ? 'High' : Math.abs(value) >= 0.25 ? 'Medium' : 'Low';
+  const sensitivityRows = [
+    { asset: 'BTC', driver: 'Broad dollar', pairKey: 'dollarBitcoin' },
+    { asset: 'Gold', driver: 'Real yields', pairKey: 'realYieldsGold' },
+    { asset: 'Equities', driver: 'Credit spreads', pairKey: 'creditEquities' },
+  ].map(({ asset, driver, pairKey }) => {
+    const value = rcValue(rcByKey[pairKey]);
+    return { asset, driver, value, strength: sensitivityTone(value) };
+  });
 
   return <div className="macro-dashboard">
     <section className="macro-intro">
@@ -691,7 +699,7 @@ function MacroDashboard({ data }) {
 
       <article className={`macro-model panel global-model ${activeModel === 'Global' ? 'model-emphasis' : ''}`}>
         <div className="macro-card-top"><div><p className="section-kicker">GLOBAL LIQUIDITY MODEL</p><h2>{globalLiquidity?.regime ?? 'Awaiting FRED'} <span className="status-dot violet"></span></h2><p>{globalLiquidity ? 'Fed, ECB, and BoJ balance sheets in USD' : 'Configure FRED to calculate the regime'}</p></div><div className="score-orbit violet-orbit"><b>{globalLiquidity?.score ?? '—'}</b><small>/100</small></div></div>
-        <div className="liquidity-chart"><div className="chart-caption"><span>Central-bank liquidity, USD</span><strong>{globalLiquidity ? formatLiquidityValue(globalLiquidity.globalLiquidityUsdMillions) : 'Unavailable'}</strong></div>{globalLiquidityHistory.length ? <Sparkline color="#b08ad6" values={globalLiquidityHistory} /> : <div className="model-chart-empty">No calculated history</div>}<div className="liquidity-axis"><span>Oldest</span><span>Midpoint</span><span>Recent</span><span>Latest</span></div></div>
+        <div className="liquidity-chart"><div className="chart-caption"><span>Central-bank liquidity, USD</span><div><strong>{globalLiquidity ? formatLiquidityValue(globalLiquidity.globalLiquidityUsdMillions) : 'Unavailable'}</strong><button className="chart-expand-button" onClick={() => setGlobalChartOpen(true)} disabled={!globalLiquidity?.history?.length} aria-label="Enlarge global liquidity history chart">↗</button></div></div>{globalLiquidityHistory.length ? <Sparkline color="#b08ad6" values={globalLiquidityHistory} /> : <div className="model-chart-empty">No calculated history</div>}<div className="liquidity-axis"><span>Oldest</span><span>Midpoint</span><span>Recent</span><span>Latest</span></div></div>
         <div className="signal-summary"><span>Momentum <b>{globalLiquidity?.momentum ?? 'Unavailable'}</b></span><span>Cycle percentile <b>{Number.isFinite(globalLiquidity?.cyclePercentile) ? `${globalLiquidity.cyclePercentile}%` : 'Unavailable'}</b></span><span>Confidence <b>{globalLiquidity?.confidence ?? 'Unavailable'}</b></span></div>
         <div className="model-action"><span>{globalLiquidity?.version ?? 'No model output'}</span><button onClick={() => setActiveModel('Global')}>Open model →</button></div>
       </article>
@@ -714,7 +722,7 @@ function MacroDashboard({ data }) {
       </article>
     </section>
 
-    <section className="macro-section-heading"><div><p className="section-kicker">{activeModel === 'Liquidity' ? 'NET US LIQUIDITY' : activeModel === 'Global' ? 'GLOBAL CENTRAL-BANK LIQUIDITY' : activeModel === 'Risk' ? 'CROSS-ASSET CONFIRMATION' : activeModel === 'Correlations' ? 'RELATIONSHIP INTELLIGENCE' : 'FOREX MACRO PREDICTORS'}</p><h2>{activeModel === 'Liquidity' ? 'The calculated drivers behind the impulse' : activeModel === 'Global' ? 'World central-bank liquidity in dollars' : activeModel === 'Risk' ? 'What markets are pricing now' : activeModel === 'Correlations' ? 'Correlations through the current regime' : 'Where macro points for each currency'} {(activeModel === 'Correlations' || activeModel === 'FX') && <PreviewBadge label="Contains previews" />}</h2></div>{activeModel === 'Liquidity' && <span className="data-pill">13W calculated window</span>}{activeModel === 'Global' && <span className="data-pill">13W calculated window</span>}{activeModel === 'Correlations' && <div className="window-buttons">{['20D', '60D', '1Y'].map((item) => <button className={correlationWindow === item ? 'selected' : ''} key={item} onClick={() => setCorrelationWindow(item)}>{item}</button>)}</div>}{activeModel === 'FX' && <div className="window-buttons">{['1W', '1M', '3M'].map((item) => <button className={fxHorizon === item ? 'selected' : ''} key={item} onClick={() => setFxHorizon(item)}>{item}</button>)}</div>}</section>
+    <section className="macro-section-heading"><div><p className="section-kicker">{activeModel === 'Liquidity' ? 'NET US LIQUIDITY' : activeModel === 'Global' ? 'GLOBAL CENTRAL-BANK LIQUIDITY' : activeModel === 'Risk' ? 'CROSS-ASSET CONFIRMATION' : activeModel === 'Correlations' ? 'RELATIONSHIP INTELLIGENCE' : 'FOREX MACRO PREDICTORS'}</p><h2>{activeModel === 'Liquidity' ? 'The calculated drivers behind the impulse' : activeModel === 'Global' ? 'World central-bank liquidity in dollars' : activeModel === 'Risk' ? 'What markets are pricing now' : activeModel === 'Correlations' ? 'Correlations through the current regime' : 'Where macro points for each currency'} {(activeModel === 'FX' || (activeModel === 'Correlations' && regimeCorrelations?.status !== 'calculated')) && <PreviewBadge label="Contains previews" />}</h2></div>{activeModel === 'Liquidity' && <span className="data-pill">13W calculated window</span>}{activeModel === 'Global' && <span className="data-pill">13W calculated window</span>}{activeModel === 'Correlations' && <div className="window-buttons">{['20D', '60D', '1Y'].map((item) => <button className={correlationWindow === item ? 'selected' : ''} key={item} onClick={() => setCorrelationWindow(item)}>{item}</button>)}</div>}{activeModel === 'FX' && <div className="window-buttons">{['1W', '1M', '3M'].map((item) => <button className={fxHorizon === item ? 'selected' : ''} key={item} onClick={() => setFxHorizon(item)}>{item}</button>)}</div>}</section>
 
     {activeModel === 'Liquidity' ? <section className="liquidity-detail-grid">
       <article className="driver-panel panel"><div className="driver-panel-head"><span>Indicator</span><span>Impulse</span><span>13W change</span></div>{liquidityModel?.drivers?.length ? liquidityModel.drivers.map((driver) => { const tone = driver.impulse > 0.05 ? 'positive' : driver.impulse < -0.05 ? 'negative' : 'neutral'; return <div className="driver-row" key={driver.key}><span>{driver.name}</span><b className={tone}>{driver.impulse > 0.05 ? 'Supportive' : driver.impulse < -0.05 ? 'Restrictive' : 'Neutral'}</b><strong>{driver.changePercent >= 0 ? '+' : ''}{driver.changePercent.toFixed(2)}%</strong></div>; }) : <div className="calculation-empty">No calculated FRED drivers are available.</div>}<p className="model-footnote"><code>us-liquidity-v1</code> uses 55% Fed net liquidity, 25% US M2 growth, and 20% inverse dollar transmission. Inputs retain provider dates and units.</p></article>
@@ -726,9 +734,19 @@ function MacroDashboard({ data }) {
       <article className="risk-inputs panel"><div className="panel-title"><div><p className="section-kicker">CALCULATED COMPONENTS</p><h3>Independent macro sleeves</h3></div><span className="data-pill">{macroRegime ? `${macroRegime.coverage}% coverage` : 'Unavailable'}</span></div><div className="risk-input-grid">{(macroRegime?.drivers ?? []).map((driver) => <div className="risk-input" key={driver.key}><span className={scoreTone(driver.score)}></span><b>{driver.name}</b><strong>{driver.score ?? '—'}</strong><small>{driver.score === null ? 'Missing' : driver.score > 60 ? 'Supportive' : driver.score < 40 ? 'Restrictive' : 'Balanced'}</small></div>)}</div>{!macroRegime && <div className="calculation-empty">At least two independent macro histories are required.</div>}<p className="model-footnote"><code>macro-regime-v1</code> uses liquidity, financial conditions, credit, volatility, and inverse dollar pressure. Missing: {macroRegime?.missing?.join(', ') || 'none'}.</p></article>
       <article className="regime-panel panel"><div className="panel-title"><div><p className="section-kicker">DYNAMIC REGIME SETTINGS</p><h3>{macroRegime?.regime ?? 'Regime unavailable'}</h3></div><span className="data-pill">{macroRegime?.status ?? 'unavailable'}</span></div>{macroRegime?.settings ? <div className="regime-settings"><div><span>Risk budget</span><b>{macroRegime.settings.riskBudget}</b></div><div><span>Alert threshold</span><b>{macroRegime.settings.alertThreshold}/100</b></div><div><span>Holding period</span><b>{macroRegime.settings.holdingPeriod}</b></div><div><span>Factor emphasis</span><b>{macroRegime.settings.emphasis}</b></div></div> : <div className="calculation-empty">No dynamic settings are published without a regime.</div>}<p className="model-footnote">Stress requires simultaneous VIX, high-yield spread, and financial-condition confirmation. No panic probability is fabricated.</p></article>
     </section> : activeModel === 'Correlations' ? <section className="correlation-detail-grid">
-      <article className="correlation-map-panel panel preview-section"><div className="panel-title"><div><p className="section-kicker">{correlationWindow} ROLLING CORRELATION</p><h3>Cross-market relationship map</h3></div><span className="data-pill">Risk-on regime</span></div><div className="correlation-legend"><span><i className="correlation-negative"></i>Inverse</span><span><i className="correlation-neutral"></i>Mixed</span><span><i className="correlation-positive"></i>Positive</span><small>r = Pearson correlation</small></div><div className="correlation-rows">{correlationPairs.map((pair) => { const value = pair.values[correlationWindow]; const tone = correlationTone(value); return <div className="correlation-row" key={`${pair.left}-${pair.right}`}><b>{pair.left}</b><div className="correlation-link"><i className={tone}></i><span></span><i className={tone}></i></div><b>{pair.right}</b><strong className={tone}>{value > 0 ? '+' : ''}{value.toFixed(2)}</strong><small>{pair.regime}</small></div>; })}</div></article>
-      <article className="correlation-insight-panel panel preview-section"><p className="section-kicker">REGIME READ</p><h3>Risk links are orderly.</h3><p>Credit and equities retain their usual inverse relationship while BTC remains closely tied to equity appetite. No material correlation breaks are currently flagged.</p><div className="stability-score"><span>Relationship stability</span><div><i><b></b></i><strong>81%</strong></div></div><div className="correlation-watch"><b>Watch for a break</b><span>BTC/SPX below +0.20 or credit/equity above -0.35</span></div></article>
-      <article className="correlation-notes panel preview-section"><p className="section-kicker">HOW TO READ THIS</p><div>{correlationPairs.slice(0, 3).map((pair) => <p key={pair.left}><b>{pair.left} / {pair.right}</b><span>{pair.note}</span></p>)}</div><button>Open historical regime study →</button></article>
+      <article className={`correlation-map-panel panel ${regimeCorrelations?.status === 'calculated' ? '' : 'preview-section'}`}><div className="panel-title"><div><p className="section-kicker">{correlationWindow} ROLLING CORRELATION</p><h3>Cross-market relationship map</h3></div><span className="data-pill">{regimeCorrelations?.status === 'calculated' ? `${regimeCorrelations.calculatedCount} of ${rcPairs.length} calculated` : 'Awaiting inputs'}</span></div><div className="correlation-legend"><span><i className="correlation-negative"></i>Inverse</span><span><i className="correlation-neutral"></i>Mixed</span><span><i className="correlation-positive"></i>Positive</span><small>r = Pearson correlation of daily changes</small></div><div className="correlation-rows">{rcPairs.map((pair) => { const value = rcValue(pair); const tone = pair.status !== 'calculated' || !Number.isFinite(value) ? 'correlation-neutral' : correlationTone(value); return <div className="correlation-row" key={pair.key}><b>{pair.left}</b><div className="correlation-link"><i className={tone}></i><span></span><i className={tone}></i></div><b>{pair.right}</b><strong className={tone}>{Number.isFinite(value) ? `${value > 0 ? '+' : ''}${value.toFixed(2)}` : '—'}</strong><small>{pair.status === 'calculated' ? `${pair.observations} obs` : 'Unavailable'}</small></div>; })}</div><p className="model-footnote"><code>regime-correlation-v1</code> aligns stored FRED and market histories by date and correlates daily changes over 20-day, 60-day, and one-year windows. Pairs without both inputs stay explicitly unavailable.</p></article>
+      <article className={`correlation-insight-panel panel ${regimeCorrelations?.status === 'calculated' ? '' : 'preview-section'}`}>{regimeCorrelations?.status === 'calculated' && strongestPair ? <>
+        <p className="section-kicker">REGIME READ · CALCULATED</p>
+        <h3>Strongest link: {strongestPair.left} ↔ {strongestPair.right} ({rcValue(strongestPair) > 0 ? '+' : ''}{rcValue(strongestPair).toFixed(2)}).</h3>
+        <p>Weakest calculated link is {weakestPair.left} ↔ {weakestPair.right} at {rcValue(weakestPair) > 0 ? '+' : ''}{rcValue(weakestPair).toFixed(2)}. Correlations are recomputed from stored histories on every refresh; no relationship is assumed.</p>
+        <div className="stability-score"><span>Calculated coverage</span><div><i><b style={{ width: `${regimeCorrelations.coverage}%` }}></b></i><strong>{regimeCorrelations.coverage}%</strong></div></div>
+        <div className="correlation-watch"><b>Watch for a break</b><span>{Number.isFinite(rcValue(rcByKey.creditEquities)) ? `Credit/equity at ${rcValue(rcByKey.creditEquities).toFixed(2)} over ${correlationWindow}; stress builds as it moves toward zero or turns positive.` : 'Credit/equity link requires spread history.'}</span></div>
+      </> : <>
+        <p className="section-kicker">REGIME READ</p>
+        <h3>Awaiting synchronized histories.</h3>
+        <p>The relationship map publishes only when both legs of each pair have stored, fresh history. Missing: {regimeCorrelations?.missingInputs?.join(', ') || 'all pairs pending input configuration'}.</p>
+      </>}</article>
+      <article className={`correlation-notes panel ${regimeCorrelations?.status === 'calculated' ? '' : 'preview-section'}`}><p className="section-kicker">HOW TO READ THIS</p><div>{rcPairs.slice(0, 3).map((pair) => <p key={pair.key}><b>{pair.left} / {pair.right}</b><span>{pair.note}</span></p>)}</div><button onClick={() => setActiveModel('Liquidity')}>Open liquidity drivers →</button></article>
       <article className="dxy-btc-panel panel"><div className="panel-title"><div><p className="section-kicker">DXY VS BITCOIN · CALCULATED</p><h3>{dxyBtcModel?.interpretation ?? 'Awaiting synchronized histories'}</h3></div><span className="data-pill">{Number.isFinite(dxyBtcCorrelationValue) ? `${correlationWindow} r ${dxyBtcCorrelationValue.toFixed(2)}` : 'Unavailable'}</span></div><div className="dxy-btc-chart"><div><span><i className="dxy-key"></i>{data.dxyBtc?.source?.left?.startsWith('DXY') ? 'DXY' : 'Broad dollar proxy'}</span>{dxyHistory.length ? <Sparkline color="#d3a454" values={dxyHistory} /> : <div className="model-chart-empty">No dollar history</div>}</div><div><span><i className="btc-key"></i>Bitcoin</span>{bitcoinHistory.length ? <Sparkline color="#70c26b" values={bitcoinHistory} /> : <div className="model-chart-empty">No BTC history</div>}</div></div><div className="dxy-btc-diagnostics"><span>Correlation regime <b>{dxyBtcModel?.regime ?? 'Unavailable'}</b></span><span>Momentum relationship <b>{dxyBtcModel?.divergence ?? 'Unavailable'}</b></span><span>Breakout read <b>{dxyBtcModel?.interpretation ?? 'Unavailable'}</b></span></div><p>{dxyBtcModel ? `${dxyBtcModel.version} · ${dxyBtcModel.observations} aligned daily observations · ${data.dxyBtc.source.left} and ${data.dxyBtc.source.right}` : 'Configure Twelve Data or FRED and retain Bitcoin history to calculate this relationship.'}</p></article>
     </section> : <section className="fx-detail-grid">
       <article className="fx-outlook-panel panel preview-section"><div className="panel-title"><div><p className="section-kicker">{fxHorizon} RELATIVE-VALUE OUTLOOK</p><h3>G10 and CNH directional bias</h3></div><span className="data-pill">Macro composite</span></div><div className="fx-outlook-head"><span>Currency</span><span>Bias</span><span>Score</span><span>Dominant driver</span></div>{fxOutlook.map(([currency, bias, score, tone, driver]) => <div className="fx-outlook-row" key={currency}><b>{currency}</b><span className={tone}>{bias}</span><strong>{score}</strong><small>{driver}</small></div>)}</article>
@@ -740,12 +758,13 @@ function MacroDashboard({ data }) {
     </section>}
 
     <section className="macro-bottom-grid">
-      <article className="change-panel panel preview-section"><p className="section-kicker">NARRATIVE · MODEL PREVIEW</p><h3>Automated change detection pending.</h3><p className="change-copy">This panel will be generated from persisted model changes after global central-bank and credit histories are connected.</p><div className="change-tags"><span>Versioned changes</span><span>Source lineage</span><span>Release-aware</span></div></article>
-      <article className="sensitivity-panel panel preview-section"><div className="panel-title"><div><p className="section-kicker">ASSET SENSITIVITY</p><h3>Current macro exposures</h3></div><button>Details →</button></div><div className="sensitivity-list"><div><b>BTC</b><span>Dollar liquidity <i>High</i></span><small>+0.71</small></div><div><b>Gold</b><span>Real yields <i>High</i></span><small>-0.64</small></div><div><b>Equities</b><span>Credit conditions <i>Medium</i></span><small>+0.48</small></div></div></article>
+      <article className={`change-panel panel ${narrative?.status === 'updated' || narrative?.status === 'stable' ? '' : 'preview-section'}`}><p className="section-kicker">NARRATIVE · {narrative?.status === 'updated' ? 'MODEL CHANGES DETECTED' : narrative?.status === 'stable' ? 'MODEL CHANGES' : 'MODEL PREVIEW'}</p>{narrative?.entries?.length ? <div className="narrative-list">{narrative.entries.map((entry) => <p key={entry.key} className="change-copy">{entry.text}</p>)}</div> : <><h3>Automated change detection pending.</h3><p className="change-copy">{narrative?.status === 'insufficient-history' ? 'At least two persisted ingestion runs are required before model changes can be narrated.' : 'This panel is generated from persisted model changes once ingestion history exists.'}</p></>}<div className="change-tags"><span>Versioned changes</span><span>Source lineage</span><span>Release-aware</span></div></article>
+      <article className={`sensitivity-panel panel ${regimeCorrelations?.status === 'calculated' ? '' : 'preview-section'}`}><div className="panel-title"><div><p className="section-kicker">ASSET SENSITIVITY · CALCULATED</p><h3>Current macro exposures</h3></div><button onClick={() => setActiveModel('Correlations')}>Details →</button></div><div className="sensitivity-list">{sensitivityRows.map((row) => <div key={row.asset}><b>{row.asset}</b><span>{row.driver} <i>{row.strength}</i></span><small>{Number.isFinite(row.value) ? `${row.value > 0 ? '+' : ''}${row.value.toFixed(2)}` : '—'}</small></div>)}</div><p className="model-footnote">Sensitivities are the {correlationWindow} correlations from <code>regime-correlation-v1</code>; strength labels derive from |r| thresholds of 0.25 and 0.50.</p></article>
       <article className="sources-panel panel"><p className="section-kicker">DATA PROVENANCE</p><h3>Connected and target sources.</h3><p>FRED is connected, including ECB and BoJ balance sheets with H.10 FX conversion. BoE, PBoC, BIS, IMF, and institutional market feeds remain planned inputs.</p><button>Explore sources and lags →</button></article>
     </section>
     <p className="independence-note">TradeGate is an independent market research platform and is not affiliated with Tradegate AG.</p>
-    {liquidityChartOpen && <LiquidityChartDialog history={liquidityModel?.history ?? []} onClose={() => setLiquidityChartOpen(false)} />}
+    {liquidityChartOpen && <LiquidityChartDialog history={liquidityModel?.history ?? []} title="Calculated net US liquidity" description="Move across the chart to inspect a date. Click or tap to pin the observation for comparison." onClose={() => setLiquidityChartOpen(false)} />}
+    {globalChartOpen && <LiquidityChartDialog history={globalLiquidity?.history ?? []} title="Calculated global central-bank liquidity" description="US net liquidity plus ECB and BoJ balance sheets in USD. Move across the chart to inspect a date; click to pin." label="global central-bank liquidity" onClose={() => setGlobalChartOpen(false)} />}
   </div>;
 }
 

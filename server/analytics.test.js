@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { calculateCrossMarketRelationship, calculateGlobalLiquidityModel, calculateMacroRegimeModel, calculateRsi, calculateTechnicalSnapshot, calculateUsdStrengthModel, calculateUsLiquidityModel, pearsonCorrelation } from './analytics.js';
+import { buildLiquidityNarrative, calculateChangeCorrelations, calculateCrossMarketRelationship, calculateGlobalLiquidityModel, calculateMacroRegimeModel, calculateRsi, calculateTechnicalSnapshot, calculateUsdStrengthModel, calculateUsLiquidityModel, pearsonCorrelation } from './analytics.js';
 
 test('RSI reaches 100 for an uninterrupted advance', () => {
   const values = Array.from({ length: 30 }, (_, index) => 100 + index);
@@ -93,7 +93,8 @@ test('Global liquidity model aggregates USD-converted central-bank legs', () => 
   const model = calculateGlobalLiquidityModel([
     weekly('fedBalanceSheet', 7_000_000, 20_000),
     weekly('treasuryGeneralAccount', 800_000, -5_000),
-    weekly('reverseRepo', 500, -8),
+    { ...weekly('reverseRepo', 2_000, -15), multiplier: 1000 },
+    { ...weekly('usM2', 20_000, 30), multiplier: 1000 },
     weekly('ecbBalanceSheet', 6_200_000, 15_000),
     weekly('bojBalanceSheet', 7_500_000, 8_000),
     weekly('eurUsd', 1.08, 0.002),
@@ -104,12 +105,14 @@ test('Global liquidity model aggregates USD-converted central-bank legs', () => 
   assert.equal(model.regime, 'Expansion');
   assert.ok(model.score > 50);
   assert.equal(model.centralBanks.length, 3);
-  const fedLeg = model.centralBanks.find((leg) => leg.key === 'fed');
+  const usLeg = model.centralBanks.find((leg) => leg.key === 'us');
   const ecbLeg = model.centralBanks.find((leg) => leg.key === 'ecb');
   const bojLeg = model.centralBanks.find((leg) => leg.key === 'boj');
-  assert.ok(Math.abs(fedLeg.valueUsdMillions - 9_380_000) < 1_000);
+  const expectedNetUs = (7_000_000 + (119 * 20_000)) - (800_000 - (119 * 5_000)) - ((2_000 - (119 * 15)) * 1000);
+  assert.ok(Math.abs(usLeg.valueUsdMillions - expectedNetUs) < 1_000);
   assert.ok(Math.abs(ecbLeg.valueUsdMillions - ((6_200_000 + (119 * 15_000)) * (1.08 + (119 * 0.002)))) < 1_000);
   assert.ok(Math.abs(bojLeg.valueUsdMillions - (((7_500_000 + (119 * 8_000)) * 100) / (150 - (119 * 0.2)))) < 1_000);
+  assert.ok(model.drivers.some((driver) => driver.key === 'usM2'));
   const shareTotal = model.centralBanks.reduce((total, leg) => total + leg.sharePercent, 0);
   assert.ok(Math.abs(shareTotal - 100) <= 1);
   assert.equal(model.history.length, 120);
@@ -128,7 +131,8 @@ test('Global liquidity model refuses to publish without FX conversion rates', ()
   assert.equal(calculateGlobalLiquidityModel([
     weekly('fedBalanceSheet', 7_000_000, 20_000),
     weekly('treasuryGeneralAccount', 800_000, -5_000),
-    weekly('reverseRepo', 500, -8),
+    { ...weekly('reverseRepo', 2_000, -15), multiplier: 1000 },
+    { ...weekly('usM2', 20_000, 30), multiplier: 1000 },
     weekly('ecbBalanceSheet', 6_200_000, 15_000),
     weekly('bojBalanceSheet', 750_000, 2_000),
     weekly('dxy', 110, -0.15),
@@ -225,4 +229,49 @@ test('macro regime leaves panic confirmation unavailable without stress inputs',
   const model = calculateMacroRegimeModel([], { score: 70, version: 'liquidity-test' }, { score: 45, version: 'usd-test', indicators: {} });
   assert.equal(model.status, 'provisional');
   assert.equal(model.panicConfirmed, null);
+});
+test('Change correlations identify aligned and inverse series', () => {
+  const daily = (base, scale) => Array.from({ length: 80 }, (_, index) => ({
+    date: new Date(Date.UTC(2025, 0, index + 1)).toISOString().slice(0, 10),
+    value: base + (scale * (index + Math.sin(index / 3))),
+  }));
+  const direct = calculateChangeCorrelations(daily(100, 1), daily(50, 2));
+  assert.ok(Math.abs(direct.correlations['20D'] - 1) < 1e-9);
+  assert.ok(Math.abs(direct.correlations['60D'] - 1) < 1e-9);
+  assert.equal(direct.observations, 79);
+  const inverse = calculateChangeCorrelations(daily(100, 1), daily(90, -0.5));
+  assert.ok(Math.abs(inverse.correlations['20D'] + 1) < 1e-9);
+});
+
+test('Change correlations refuse short or misaligned histories', () => {
+  const points = (count) => Array.from({ length: count }, (_, index) => ({
+    date: new Date(Date.UTC(2025, 0, index + 1)).toISOString().slice(0, 10),
+    value: 100 + index,
+  }));
+  assert.equal(calculateChangeCorrelations(points(30), points(10)), null);
+  assert.equal(calculateChangeCorrelations(points(15), points(15)), null);
+});
+
+test('Liquidity narrative reports score and regime changes between runs', () => {
+  const narrative = buildLiquidityNarrative(
+    [
+      { output: { score: 72, regime: 'Expansion' } },
+      { output: { score: 64, regime: 'Neutral' } },
+    ],
+    [
+      { output: { score: 58, regime: 'Expansion', globalLiquidityUsdMillions: 25_500_000 } },
+      { output: { score: 55, regime: 'Expansion', globalLiquidityUsdMillions: 25_480_000 } },
+    ],
+  );
+  assert.equal(narrative.status, 'updated');
+  assert.ok(narrative.entries.some((entry) => entry.key === 'usScore'));
+  assert.ok(narrative.entries.some((entry) => entry.key === 'usRegime'));
+  assert.ok(narrative.entries.some((entry) => entry.key === 'globalScore'));
+
+  const stable = buildLiquidityNarrative(
+    [{ output: { score: 70, regime: 'Expansion' } }, { output: { score: 70, regime: 'Expansion' } }],
+    [],
+  );
+  assert.equal(stable.status, 'stable');
+  assert.equal(buildLiquidityNarrative([{ output: { score: 70 } }], []).status, 'insufficient-history');
 });

@@ -130,6 +130,18 @@ export async function persistModelOutput(modelId, model, inputLineage = [], inge
   );
 }
 
+export async function getRecentModelOutputs(modelId, limit = 2) {
+  if (!pool) return [];
+  const result = await pool.query(
+    `SELECT version, effective_at, output FROM model_outputs
+     WHERE model_id = $1
+     ORDER BY effective_at DESC, id DESC
+     LIMIT $2`,
+    [modelId, limit],
+  );
+  return result.rows.map((row) => ({ version: row.version, effectiveAt: row.effective_at, output: row.output }));
+}
+
 export async function reserveProviderCredits(provider, credits, dailyLimit, interactiveLimit, usage, usageDate) {
   if (!pool) return { persisted: false, allowed: true };
   const interactiveCredits = usage === 'interactive' ? credits : 0;

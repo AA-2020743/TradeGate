@@ -13,7 +13,7 @@ The application now has a server-side data layer. It never exposes provider cred
 | FRED | Official U.S. macro and liquidity observations | `FRED_API_KEY` |
 | PostgreSQL | Observations, revisions, ingestion runs, and model lineage | `DATABASE_URL` |
 
-Technical scores are calculated by `technical-v1` from provider history. The US liquidity regime is calculated by `us-liquidity-v1`; `global-liquidity-v1` aggregates Fed, ECB, and BoJ balance sheets in USD; `usd-strength-v1` and `macro-regime-v1` use additional FRED market and financial-condition histories. UI sections explicitly identify the remaining model previews.
+Technical scores are calculated by `technical-v1` from provider history. The US liquidity regime is calculated by `us-liquidity-v1`; `global-liquidity-v1` aggregates US net liquidity with ECB and BoJ balance sheets in USD; `regime-correlation-v1` calculates the cross-market relationship map; `usd-strength-v1` and `macro-regime-v1` use additional FRED market and financial-condition histories. UI sections explicitly identify the remaining model previews.
 
 ## Local Development
 
@@ -176,9 +176,17 @@ The global liquidity model aggregates central-bank balance sheets converted to U
 | ECB + BoJ combined impulse | 15% |
 | Inverse broad-dollar 13-week change | 20% |
 
-Unit conversions use FRED H.10 rates matched to each observation date (`DEXUSEU`, `DEXJPUS`, maximum 35-day gap): Fed assets are used directly in USD millions; ECB assets are EUR millions multiplied by USD/EUR; BoJ assets are reported in units of 100 million yen and are divided by the yen rate after scaling. The pooled history is published in USD millions with a cycle percentile, per-central-bank shares, and 91/365-day changes. The same Expansion/Contraction thresholds as `us-liquidity-v1` apply.
+Unit conversions use FRED H.10 rates matched to each observation date (`DEXUSEU`, `DEXJPUS`, maximum 35-day gap): the US leg is net liquidity (Fed assets minus TGA minus reverse repo) in USD millions; ECB assets are EUR millions multiplied by USD/EUR; BoJ assets are reported in units of 100 million yen and are divided by the yen rate after scaling. The pooled history is published in USD millions with a cycle percentile, per-region shares, and 91/365-day changes. The same Expansion/Contraction thresholds as `us-liquidity-v1` apply.
 
 Documented exclusions: Bank of England assets were discontinued on FRED in 2014, no PBoC balance-sheet series exists on FRED, and all broad-money series (OECD MEI M2/M3, IMF IFS) are frozen at stale dates, so none are used. These legs require national-source ingestion before they can be added.
+
+### `regime-correlation-v1`
+
+The relationship map aligns stored FRED series with stored market histories by calendar date and correlates **daily changes** (not log returns, so weekly levels such as NFCI remain valid) over 20-day, 60-day, and one-year windows. Designed pairs: credit spreads/equities, VIX/equities, broad dollar/BTC, financial conditions/equities, real yields/gold proxy, and broad dollar/gold proxy. A pair publishes only when both legs have at least 22 aligned observations; missing pairs are listed explicitly. Asset-sensitivity labels derive from absolute-correlation thresholds of 0.25 and 0.50.
+
+### Liquidity narrative
+
+The narrative panel compares the two most recent persisted outputs of `us-liquidity` and `global-liquidity` from `model_outputs`. It reports score moves of one point or more, regime shifts, and pooled-liquidity level changes of 0.05% or more. With fewer than two persisted runs it stays explicitly pending.
 
 ### `cross-market-correlation-v1`
 
