@@ -3,7 +3,9 @@ import { existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import { config } from './config.js';
-import { getLiquiditySnapshot, getMarketHistory, getMarketSnapshot, getProviderHealth } from './providers.js';
+import { closeDatabase, getDatabaseHealth, getIngestionStatus } from './database.js';
+import { startIngestionScheduler } from './ingestion.js';
+import { getDxyBitcoinRelationship, getLiquiditySnapshot, getMarketHistory, getMarketSnapshot, getProviderHealth, getTechnicalSnapshot } from './providers.js';
 
 const app = express();
 const rootDirectory = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -46,8 +48,10 @@ const rateLimitCleanup = setInterval(() => {
 }, 60_000);
 rateLimitCleanup.unref();
 
-app.get('/api/health', (_request, response) => {
-  response.json({ status: 'ok', asOf: new Date().toISOString(), providers: getProviderHealth() });
+app.get('/api/health', async (_request, response) => {
+  const database = await getDatabaseHealth();
+  const databaseDegraded = database.configured && (!database.connected || !database.migrated);
+  response.json({ status: databaseDegraded ? 'degraded' : 'ok', asOf: new Date().toISOString(), providers: { ...getProviderHealth(), database } });
 });
 
 app.get('/api/markets/snapshot', async (_request, response, next) => {
@@ -70,9 +74,38 @@ app.get('/api/markets/history/:symbol', async (request, response, next) => {
   }
 });
 
+app.get('/api/analytics/technical/:symbol', async (request, response, next) => {
+  try {
+    response.json(await getTechnicalSnapshot(request.params.symbol));
+  } catch (error) {
+    if (error.message.startsWith('Unsupported history symbol')) {
+      response.status(400).json({ error: error.message });
+      return;
+    }
+    next(error);
+  }
+});
+
+app.get('/api/analytics/dxy-btc', async (_request, response, next) => {
+  try {
+    response.json(await getDxyBitcoinRelationship());
+  } catch (error) {
+    next(error);
+  }
+});
+
 app.get('/api/macro/liquidity', async (_request, response, next) => {
   try {
     response.json(await getLiquiditySnapshot());
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.get('/api/ingestion/status', async (_request, response, next) => {
+  try {
+    const database = await getDatabaseHealth();
+    response.json({ database, jobs: database.migrated ? await getIngestionStatus() : [] });
   } catch (error) {
     next(error);
   }
@@ -92,6 +125,17 @@ app.use((error, _request, response, _next) => {
   response.status(502).json({ error: 'Unable to fetch data from an upstream provider.' });
 });
 
-app.listen(config.port, config.host, () => {
+const server = app.listen(config.port, config.host, () => {
   console.log(`TradeGate API listening on http://${config.host}:${config.port}`);
 });
+const stopIngestion = startIngestionScheduler();
+
+async function shutdown() {
+  await stopIngestion();
+  await new Promise((resolve) => server.close(resolve));
+  await closeDatabase();
+  process.exit(0);
+}
+
+process.on('SIGTERM', shutdown);
+process.on('SIGINT', shutdown);

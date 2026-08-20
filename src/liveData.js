@@ -12,6 +12,7 @@ export function usePlatformData() {
     health: null,
     markets: null,
     liquidity: null,
+    dxyBtc: null,
     error: null,
   });
 
@@ -19,25 +20,28 @@ export function usePlatformData() {
     let active = true;
 
     const load = async () => {
-      const [health, markets, liquidity] = await Promise.allSettled([
+      const [health, markets, liquidity, dxyBtc] = await Promise.allSettled([
         requestJson('/api/health'),
         requestJson('/api/markets/snapshot'),
         requestJson('/api/macro/liquidity'),
+        requestJson('/api/analytics/dxy-btc'),
       ]);
       if (!active) return;
 
       const healthData = health.status === 'fulfilled' ? health.value : null;
       const marketData = markets.status === 'fulfilled' ? markets.value : null;
       const liquidityData = liquidity.status === 'fulfilled' ? liquidity.value : null;
+      const dxyBtcData = dxyBtc.status === 'fulfilled' ? dxyBtc.value : null;
       const hasQuotes = Boolean(marketData?.assets?.length);
-      const hasUnconfiguredProviders = Object.values(healthData?.providers ?? {}).some((provider) => !provider.configured);
-      const hasErrors = [health, markets, liquidity].some((result) => result.status === 'rejected') || Boolean(marketData?.errors?.length) || hasUnconfiguredProviders;
+      const hasUnconfiguredProviders = Object.values(healthData?.providers ?? {}).some((provider) => !provider.configured || (provider.connected === false && provider.mode === 'unavailable') || provider.migrated === false && provider.configured);
+      const hasErrors = [health, markets, liquidity, dxyBtc].some((result) => result.status === 'rejected') || Boolean(marketData?.errors?.length) || hasUnconfiguredProviders;
 
       setState({
         status: !healthData ? 'offline' : hasQuotes && !hasErrors ? 'live' : 'partial',
         health: healthData,
         markets: marketData,
         liquidity: liquidityData,
+        dxyBtc: dxyBtcData,
         error: !healthData ? 'The data API is unavailable.' : hasErrors ? 'Some data providers are unavailable.' : null,
       });
     };
@@ -72,6 +76,28 @@ export function useMarketHistory(symbol, range) {
       active = false;
     };
   }, [range, symbol]);
+
+  return state;
+}
+
+export function useTechnicalAnalytics(symbol) {
+  const [state, setState] = useState({ status: 'loading', data: null, error: null });
+
+  useEffect(() => {
+    let active = true;
+    setState({ status: 'loading', data: null, error: null });
+    requestJson(`/api/analytics/technical/${encodeURIComponent(symbol)}`)
+      .then((data) => {
+        if (active) setState({ status: data.model ? 'live' : 'unavailable', data, error: null });
+      })
+      .catch((error) => {
+        if (active) setState({ status: 'unavailable', data: null, error: error.message });
+      });
+
+    return () => {
+      active = false;
+    };
+  }, [symbol]);
 
   return state;
 }

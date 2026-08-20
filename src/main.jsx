@@ -1,7 +1,7 @@
 import React, { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 import './styles.css';
-import { formatPercent, formatTimestamp, formatUsd, useMarketHistory, usePlatformData } from './liveData.js';
+import { formatPercent, formatTimestamp, formatUsd, useMarketHistory, usePlatformData, useTechnicalAnalytics } from './liveData.js';
 
 const navItems = [
   ['⌘', 'Overview'],
@@ -23,30 +23,6 @@ const news = [
   ['BLOOMBERG', 'Nvidia rallies as AI spending keeps its momentum alive', '12m ago'],
   ['FINANCIAL TIMES', 'The next leg of the market rally will demand broader participation', '36m ago'],
   ['MARKETWATCH', 'Gold is quietly making its case as rate-cut bets build', '1h ago'],
-];
-
-const liquidityDrivers = [
-  ['Fed net liquidity', 'Expansion', '+0.8σ', 'positive'],
-  ['ECB balance sheet', 'Neutral', '+0.1σ', 'neutral'],
-  ['BoJ balance sheet', 'Expansion', '+0.6σ', 'positive'],
-  ['PBoC liquidity', 'Expansion', '+0.7σ', 'positive'],
-  ['BoE balance sheet', 'Contraction', '-0.4σ', 'negative'],
-  ['Global M2', 'Expansion', '+0.5σ', 'positive'],
-  ['US M2', 'Neutral', '+0.1σ', 'neutral'],
-  ['Dollar liquidity', 'Contraction', '-0.3σ', 'negative'],
-  ['Reverse repo', 'Expansion', '+0.4σ', 'positive'],
-  ['Treasury General Account', 'Neutral', '0.0σ', 'neutral'],
-  ['Credit conditions', 'Constructive', '+0.3σ', 'positive'],
-  ['DXY transmission', 'Restrictive', '-0.5σ', 'negative'],
-  ['Cross-currency funding', 'Calm', '+0.2σ', 'positive'],
-];
-
-const regionalLiquidity = [
-  ['United States', '68', 'Net liquidity improving', 'positive'],
-  ['Eurozone', '51', 'Balance sheet stable', 'neutral'],
-  ['Japan', '74', 'Accommodative policy', 'positive'],
-  ['China', '71', 'Credit impulse broadening', 'positive'],
-  ['United Kingdom', '38', 'QT remains a drag', 'negative'],
 ];
 
 const riskInputs = [
@@ -123,12 +99,6 @@ const fxRotationSignals = [
   ['JPY strength', 'Deleveraging', 'No signal', 'Neutral'],
   ['USD strength', 'EM fund flows', 'Outflow risk', 'Risk-off'],
 ];
-
-const dxyBtcCorrelation = {
-  values: { '20D': -0.57, '60D': -0.62, '1Y': -0.48 },
-  dxy: [26, 29, 27, 32, 30, 35, 33, 38, 37, 42, 40, 45, 44, 49, 47, 54],
-  btc: [52, 48, 50, 43, 45, 39, 42, 35, 37, 31, 34, 28, 30, 24, 27, 20],
-};
 
 const heatmapColumns = [
   ['score', 'Score'],
@@ -257,6 +227,14 @@ function formatChartLabel(timestamp, includeTime) {
     : { month: 'short', day: 'numeric' }).format(new Date(timestamp));
 }
 
+function normalizeSparkline(values) {
+  if (!values.length) return [];
+  const minimum = Math.min(...values);
+  const maximum = Math.max(...values);
+  const spread = maximum - minimum || 1;
+  return values.map((value) => 5 + (((value - minimum) / spread) * 30));
+}
+
 function App() {
   const [activeNav, setActiveNav] = React.useState('Overview');
   const [period, setPeriod] = React.useState('1D');
@@ -268,10 +246,12 @@ function App() {
   const searchInputRef = React.useRef(null);
   const platformData = usePlatformData();
   const history = useMarketHistory(selectedTicker, period);
+  const technical = useTechnicalAnalytics(selectedTicker);
   const quotesByKey = Object.fromEntries((platformData.markets?.assets ?? []).map((asset) => [asset.key, asset]));
   const hydratedWatchlist = watchlist.map((asset) => ({ ...asset, quote: quotesByKey[asset.ticker] ?? null }));
   const selectedAsset = hydratedWatchlist.find((asset) => asset.ticker === selectedTicker) ?? hydratedWatchlist[0];
   const selectedQuote = selectedAsset.quote;
+  const technicalModel = technical.data?.model;
   const chartGeometry = buildChartGeometry(history.data?.points ?? []);
   const historyLabels = history.data?.points?.length ? [0, .25, .5, .75, 1].map((position) => {
     const index = Math.min(history.data.points.length - 1, Math.round((history.data.points.length - 1) * position));
@@ -380,7 +360,7 @@ function App() {
               <div className="chart-footer">{chartGeometry ? <><span>Open <b>{formatUsd(chartGeometry.open)}</b></span><span>High <b>{formatUsd(chartGeometry.high)}</b></span><span>Low <b>{formatUsd(chartGeometry.low)}</b></span><span>Latest <b>{formatUsd(chartGeometry.latest)}</b></span><span>Source <b>{history.data.source}</b></span></> : <span>Historical market statistics will appear when the feed is available.</span>}</div>
             </article>
 
-            <article className="thesis-card panel"><div className="thesis-heading"><div><p className="section-kicker">RESEARCH SIGNAL</p><h3>Investment thesis</h3></div><button>View report →</button></div><div className="signal"><span className="signal-icon">↗</span><div><strong>Constructive</strong><p>Strong earnings revisions and persistent AI demand support the setup.</p></div></div><div className="factor"><span>Earnings momentum</span><div className="factor-bar"><i style={{ width: '88%' }}></i></div><b>88</b></div><div className="factor"><span>Valuation</span><div className="factor-bar neutral"><i style={{ width: '56%' }}></i></div><b>56</b></div><div className="factor"><span>Technical setup</span><div className="factor-bar"><i style={{ width: '74%' }}></i></div><b>74</b></div><p className="updated">Last updated today at 10:14 AM</p></article>
+            <article className="thesis-card panel"><div className="thesis-heading"><div><p className="section-kicker">CALCULATED SIGNAL</p><h3>Technical state</h3></div><span className="data-pill">{technicalModel?.version ?? 'Awaiting data'}</span></div><div className={`signal ${technicalModel?.regime === 'Guarded' ? 'guarded' : technicalModel?.regime === 'Neutral' ? 'neutral-signal' : ''}`}><span className="signal-icon">{technicalModel?.regime === 'Guarded' ? '↘' : '↗'}</span><div><strong>{technicalModel?.regime ?? (technical.status === 'loading' ? 'Calculating' : 'Unavailable')}</strong><p>{technicalModel ? `Score ${technicalModel.score}/100 from ${technicalModel.observations} provider observations. RSI ${technicalModel.indicators.rsi14?.toFixed(1) ?? 'n/a'}.` : selectedTicker === 'BTC' ? 'The public history provider did not return enough observations.' : 'Configure Twelve Data history to calculate this signal.'}</p></div></div><div className="factor"><span>Trend alignment</span><div className="factor-bar"><i style={{ width: `${technicalModel?.components.trend ?? 0}%` }}></i></div><b>{technicalModel?.components.trend ?? '—'}</b></div><div className="factor"><span>Momentum</span><div className="factor-bar neutral"><i style={{ width: `${technicalModel?.components.momentum ?? 0}%` }}></i></div><b>{technicalModel?.components.momentum ?? '—'}</b></div><div className="factor"><span>Volatility quality</span><div className="factor-bar"><i style={{ width: `${technicalModel?.components.volatilityQuality ?? 0}%` }}></i></div><b>{technicalModel?.components.volatilityQuality ?? '—'}</b></div><p className="updated">{technicalModel ? `${technical.data.source} · ${formatTimestamp(technicalModel.asOf)}` : 'No model output is being shown as a fallback.'}</p></article>
           </section>
 
           <section className="lower-grid">
@@ -506,59 +486,63 @@ function MetalsDashboard({ data }) {
 }
 
 function MacroDashboard({ data }) {
-  const [window, setWindow] = React.useState('13W');
   const [activeModel, setActiveModel] = React.useState('Liquidity');
   const [correlationWindow, setCorrelationWindow] = React.useState('60D');
   const [fxHorizon, setFxHorizon] = React.useState('1M');
-  const windowLabel = window === '4W' ? 'near-term' : window === '26W' ? 'cyclical' : 'tactical';
+  const liquidityModel = data.liquidity?.model;
+  const liquidityHistory = normalizeSparkline(liquidityModel?.history?.map((point) => point.value) ?? []);
+  const dxyBtcModel = data.dxyBtc?.model;
+  const dxyBtcCorrelationValue = dxyBtcModel?.correlations?.[correlationWindow];
+  const dxyHistory = normalizeSparkline(dxyBtcModel?.history?.left ?? []);
+  const bitcoinHistory = normalizeSparkline(dxyBtcModel?.history?.right ?? []);
 
   return <div className="macro-dashboard">
     <section className="macro-intro">
       <div><p className="eyebrow">MACRO RESEARCH SYSTEM</p><h1>Liquidity leads. Risk confirms.</h1><p className="intro">A cross-asset view of the forces shaping capital availability and market regime.</p></div>
       <div className="model-tabs"><button className={activeModel === 'Liquidity' ? 'active' : ''} onClick={() => setActiveModel('Liquidity')}>Global liquidity</button><button className={activeModel === 'Risk' ? 'active' : ''} onClick={() => setActiveModel('Risk')}>Inter-market risk</button><button className={activeModel === 'Correlations' ? 'active' : ''} onClick={() => setActiveModel('Correlations')}>Correlations</button><button className={activeModel === 'FX' ? 'active' : ''} onClick={() => setActiveModel('FX')}>FX predictive</button></div>
     </section>
-    <DataDisclosure data={data} message="Official U.S. liquidity observations below are live when FRED is configured. Composite scores, regime labels, and non-U.S. series remain model previews." />
+    <DataDisclosure data={data} message="The US liquidity score is calculated from FRED histories using versioned methodology. Global, risk, correlation, and FX model values remain previews until their full input sets are connected." />
     {data.liquidity?.series?.length ? <section className="official-data-strip panel"><div><p className="section-kicker">OFFICIAL FRED OBSERVATIONS</p><b>Latest released data</b></div>{data.liquidity.series.slice(0, 5).map((series) => <div key={series.id}><span>{series.name}</span><strong>{formatMacroValue(series)}</strong><small>{series.date}</small></div>)}</section> : <section className="provider-setup-note"><b>FRED macro feed not configured</b><span>Add `FRED_API_KEY` to the server environment to load official liquidity observations.</span></section>}
 
     <section className="model-overview-grid">
       <article className={`macro-model panel ${activeModel === 'Liquidity' ? 'model-emphasis' : ''}`}>
-        <div className="macro-card-top"><div><p className="section-kicker">GLOBAL LIQUIDITY MODEL</p><h2>Expansion <span className="status-dot"></span></h2><p>Broadening policy and credit impulse</p></div><div className="score-orbit"><b>72</b><small>/100</small></div></div>
-        <div className="liquidity-chart"><div className="chart-caption"><span>Composite liquidity impulse</span><strong>+0.48σ</strong></div><Sparkline color="#75c966" values={[10, 15, 14, 20, 17, 23, 21, 29, 27, 35, 31, 39, 37, 44, 41, 49, 47, 54, 52, 58, 60]} /><div className="liquidity-axis"><span>Oct</span><span>Jan</span><span>Apr</span><span>Today</span></div></div>
-        <div className="signal-summary"><span>Momentum <b>Accelerating</b></span><span>Breadth <b>8 of 13 positive</b></span><span>Confidence <b>High</b></span></div>
-        <div className="model-action"><span>View all liquidity inputs</span><button onClick={() => setActiveModel('Liquidity')}>Open model →</button></div>
+        <div className="macro-card-top"><div><p className="section-kicker">US LIQUIDITY MODEL</p><h2>{liquidityModel?.regime ?? 'Awaiting FRED'} <span className="status-dot"></span></h2><p>{liquidityModel ? 'Fed net liquidity, M2, and dollar transmission' : 'Configure FRED to calculate the regime'}</p></div><div className="score-orbit"><b>{liquidityModel?.score ?? '—'}</b><small>/100</small></div></div>
+        <div className="liquidity-chart"><div className="chart-caption"><span>Calculated net liquidity</span><strong>{liquidityModel ? `${liquidityModel.composite >= 0 ? '+' : ''}${liquidityModel.composite.toFixed(2)}` : 'Unavailable'}</strong></div>{liquidityHistory.length ? <Sparkline color="#75c966" values={liquidityHistory} /> : <div className="model-chart-empty">No calculated history</div>}<div className="liquidity-axis"><span>52W</span><span>26W</span><span>13W</span><span>Latest</span></div></div>
+        <div className="signal-summary"><span>Momentum <b>{liquidityModel?.momentum ?? 'Unavailable'}</b></span><span>Breadth <b>{liquidityModel ? `${liquidityModel.breadth.positive} of ${liquidityModel.breadth.total} positive` : 'Unavailable'}</b></span><span>Confidence <b>{liquidityModel?.confidence ?? 'Unavailable'}</b></span></div>
+        <div className="model-action"><span>{liquidityModel?.version ?? 'No model output'}</span><button onClick={() => setActiveModel('Liquidity')}>Open model →</button></div>
       </article>
 
       <article className={`macro-model panel risk-model ${activeModel === 'Risk' ? 'model-emphasis' : ''}`}>
-        <div className="macro-card-top"><div><p className="section-kicker">INTER-MARKET RISK MODEL</p><h2>Risk-on <span className="status-dot blue"></span></h2><p>Credit and volatility confirm the advance</p></div><div className="score-orbit blue-orbit"><b>76</b><small>/100</small></div></div>
+        <div className="macro-card-top"><div><p className="section-kicker">INTER-MARKET RISK · PREVIEW</p><h2>Risk-on <span className="status-dot blue"></span></h2><p>Illustrative until all sleeves are connected</p></div><div className="score-orbit blue-orbit"><b>76</b><small>/100</small></div></div>
         <div className="risk-lanes"><div><span>Risk appetite</span><i><b style={{ width: '76%' }}></b></i><strong>76</strong></div><div><span>Funding stress</span><i><b style={{ width: '31%' }}></b></i><strong>31</strong></div><div><span>Volatility pressure</span><i><b style={{ width: '37%' }}></b></i><strong>37</strong></div></div>
         <div className="signal-summary"><span>1-week <b>Risk-on</b></span><span>1-month <b>Risk-on</b></span><span>Panic odds <b>6%</b></span></div>
         <div className="model-action"><span>10 independent market inputs</span><button onClick={() => setActiveModel('Risk')}>Open model →</button></div>
       </article>
       <article className={`macro-model panel correlation-model ${activeModel === 'Correlations' ? 'model-emphasis' : ''}`}>
-        <div className="macro-card-top"><div><p className="section-kicker">REGIME CORRELATION MAP</p><h2>7 active links <span className="status-dot violet"></span></h2><p>Relationships ranked by stability</p></div><div className="correlation-glyph"><span></span><i></i><b></b><em></em></div></div>
+        <div className="macro-card-top"><div><p className="section-kicker">REGIME CORRELATIONS · PREVIEW</p><h2>7 designed links <span className="status-dot violet"></span></h2><p>Awaiting synchronized stored histories</p></div><div className="correlation-glyph"><span></span><i></i><b></b><em></em></div></div>
         <div className="correlation-preview"><span>Strongest</span><b>Credit spreads <i>↔</i> Equities</b><strong>-0.78</strong><span>Most unstable</span><b>BTC <i>↔</i> S&P 500</b><strong>+0.54</strong></div>
         <div className="model-action"><span>Rolling and regime-adjusted</span><button onClick={() => setActiveModel('Correlations')}>Open map →</button></div>
       </article>
       <article className={`macro-model panel fx-model ${activeModel === 'FX' ? 'model-emphasis' : ''}`}>
-        <div className="macro-card-top"><div><p className="section-kicker">FOREX PREDICTIVE MODEL</p><h2>USD strength <span className="status-dot amber"></span></h2><p>Rate differentials and growth lead</p></div><div className="fx-pair-tile"><b>DXY</b><strong>106.4</strong><small>+0.41%</small></div></div>
+        <div className="macro-card-top"><div><p className="section-kicker">FOREX PREDICTIVE · PREVIEW</p><h2>USD strength <span className="status-dot amber"></span></h2><p>Illustrative until rate and FX histories align</p></div><div className="fx-pair-tile"><b>DXY</b><strong>Preview</strong><small>Not live</small></div></div>
         <div className="fx-preview"><span>Macro bias</span><b>USD / CHF <i>↑</i></b><span>Vulnerable</span><b>JPY / CNH <i>↓</i></b><span>Dollar smile</span><b>Active</b></div>
         <div className="model-action"><span>Rates, flows, and volatility</span><button onClick={() => setActiveModel('FX')}>Open model →</button></div>
       </article>
     </section>
 
-    <section className="macro-section-heading"><div><p className="section-kicker">{activeModel === 'Liquidity' ? 'NET GLOBAL LIQUIDITY' : activeModel === 'Risk' ? 'CROSS-ASSET CONFIRMATION' : activeModel === 'Correlations' ? 'RELATIONSHIP INTELLIGENCE' : 'FOREX MACRO PREDICTORS'}</p><h2>{activeModel === 'Liquidity' ? 'The drivers behind the impulse' : activeModel === 'Risk' ? 'What markets are pricing now' : activeModel === 'Correlations' ? 'Correlations through the current regime' : 'Where macro points for each currency'}</h2></div>{activeModel === 'Liquidity' && <div className="window-buttons">{['4W', '13W', '26W'].map((item) => <button className={window === item ? 'selected' : ''} key={item} onClick={() => setWindow(item)}>{item}</button>)}</div>}{activeModel === 'Correlations' && <div className="window-buttons">{['20D', '60D', '1Y'].map((item) => <button className={correlationWindow === item ? 'selected' : ''} key={item} onClick={() => setCorrelationWindow(item)}>{item}</button>)}</div>}{activeModel === 'FX' && <div className="window-buttons">{['1W', '1M', '3M'].map((item) => <button className={fxHorizon === item ? 'selected' : ''} key={item} onClick={() => setFxHorizon(item)}>{item}</button>)}</div>}</section>
+    <section className="macro-section-heading"><div><p className="section-kicker">{activeModel === 'Liquidity' ? 'NET US LIQUIDITY' : activeModel === 'Risk' ? 'CROSS-ASSET CONFIRMATION' : activeModel === 'Correlations' ? 'RELATIONSHIP INTELLIGENCE' : 'FOREX MACRO PREDICTORS'}</p><h2>{activeModel === 'Liquidity' ? 'The calculated drivers behind the impulse' : activeModel === 'Risk' ? 'What markets are pricing now' : activeModel === 'Correlations' ? 'Correlations through the current regime' : 'Where macro points for each currency'}</h2></div>{activeModel === 'Liquidity' && <span className="data-pill">13W calculated window</span>}{activeModel === 'Correlations' && <div className="window-buttons">{['20D', '60D', '1Y'].map((item) => <button className={correlationWindow === item ? 'selected' : ''} key={item} onClick={() => setCorrelationWindow(item)}>{item}</button>)}</div>}{activeModel === 'FX' && <div className="window-buttons">{['1W', '1M', '3M'].map((item) => <button className={fxHorizon === item ? 'selected' : ''} key={item} onClick={() => setFxHorizon(item)}>{item}</button>)}</div>}</section>
 
     {activeModel === 'Liquidity' ? <section className="liquidity-detail-grid">
-      <article className="driver-panel panel"><div className="driver-panel-head"><span>Indicator</span><span>State</span><span>{window} z-score</span></div>{liquidityDrivers.map(([name, state, score, tone]) => <div className="driver-row" key={name}><span>{name}</span><b className={tone}>{state}</b><strong>{score}</strong></div>)}<p className="model-footnote">Scores use rolling history and latest available releases. {windowLabel[0].toUpperCase() + windowLabel.slice(1)} impulse window selected.</p></article>
-      <article className="regional-panel panel"><div className="panel-title"><div><p className="section-kicker">REGIONAL CONTRIBUTION</p><h3>Liquidity breadth</h3></div><span className="data-pill">5 regions</span></div>{regionalLiquidity.map(([name, score, description, tone]) => <div className="region-row" key={name}><div><b>{name}</b><small>{description}</small></div><div className="region-score"><i><b className={tone} style={{ width: `${score}%` }}></b></i><strong>{score}</strong></div></div>)}<button className="source-link">See source methodology →</button></article>
+      <article className="driver-panel panel"><div className="driver-panel-head"><span>Indicator</span><span>Impulse</span><span>13W change</span></div>{liquidityModel?.drivers?.length ? liquidityModel.drivers.map((driver) => { const tone = driver.impulse > 0.05 ? 'positive' : driver.impulse < -0.05 ? 'negative' : 'neutral'; return <div className="driver-row" key={driver.key}><span>{driver.name}</span><b className={tone}>{driver.impulse > 0.05 ? 'Supportive' : driver.impulse < -0.05 ? 'Restrictive' : 'Neutral'}</b><strong>{driver.changePercent >= 0 ? '+' : ''}{driver.changePercent.toFixed(2)}%</strong></div>; }) : <div className="calculation-empty">No calculated FRED drivers are available.</div>}<p className="model-footnote"><code>us-liquidity-v1</code> uses 55% Fed net liquidity, 25% US M2 growth, and 20% inverse dollar transmission. Inputs retain provider dates and units.</p></article>
+      <article className="regional-panel panel"><div className="panel-title"><div><p className="section-kicker">GLOBAL EXTENSION</p><h3>Additional regions pending</h3></div><span className="data-pill">Not calculated</span></div><div className="calculation-empty regional-empty">ECB, BoJ, PBoC, and BoE histories must be ingested and normalized before a global score can be published.</div><button className="source-link">See source methodology →</button></article>
     </section> : activeModel === 'Risk' ? <section className="risk-detail-grid">
-      <article className="risk-inputs panel"><div className="panel-title"><div><p className="section-kicker">MODEL COMPONENTS</p><h3>Ten independent sleeves</h3></div><span className="data-pill">Live regime</span></div><div className="risk-input-grid">{riskInputs.map(([name, score, tone]) => <div className="risk-input" key={name}><span className={tone}></span><b>{name}</b><strong>{score}</strong><small>{Number(score) > 60 ? 'Supportive' : Number(score) < 45 ? 'Caution' : 'Balanced'}</small></div>)}</div></article>
+      <article className="risk-inputs panel"><div className="panel-title"><div><p className="section-kicker">MODEL COMPONENTS</p><h3>Ten independent sleeves</h3></div><span className="data-pill">Model preview</span></div><div className="risk-input-grid">{riskInputs.map(([name, score, tone]) => <div className="risk-input" key={name}><span className={tone}></span><b>{name}</b><strong>{score}</strong><small>{Number(score) > 60 ? 'Supportive' : Number(score) < 45 ? 'Caution' : 'Balanced'}</small></div>)}</div></article>
       <article className="regime-panel panel"><div className="panel-title"><div><p className="section-kicker">REGIME HEATMAP</p><h3>Horizon agreement</h3></div><span className="data-pill">Updated 14m ago</span></div><div className="regime-table"><div className="regime-head"><span></span><span>Equities</span><span>Credit</span><span>Macro</span></div>{riskMatrix.map(([horizon, equity, credit, macro]) => <div className="regime-table-row" key={horizon}><b>{horizon}</b><span className={equity.toLowerCase().replace('-', '')}>{equity}</span><span className={credit.toLowerCase().replace('-', '')}>{credit}</span><span className={macro.toLowerCase().replace('-', '')}>{macro}</span></div>)}</div><p className="model-footnote">Panic requires simultaneous volatility, credit, funding, and drawdown deterioration.</p></article>
     </section> : activeModel === 'Correlations' ? <section className="correlation-detail-grid">
       <article className="correlation-map-panel panel"><div className="panel-title"><div><p className="section-kicker">{correlationWindow} ROLLING CORRELATION</p><h3>Cross-market relationship map</h3></div><span className="data-pill">Risk-on regime</span></div><div className="correlation-legend"><span><i className="correlation-negative"></i>Inverse</span><span><i className="correlation-neutral"></i>Mixed</span><span><i className="correlation-positive"></i>Positive</span><small>r = Pearson correlation</small></div><div className="correlation-rows">{correlationPairs.map((pair) => { const value = pair.values[correlationWindow]; const tone = correlationTone(value); return <div className="correlation-row" key={`${pair.left}-${pair.right}`}><b>{pair.left}</b><div className="correlation-link"><i className={tone}></i><span></span><i className={tone}></i></div><b>{pair.right}</b><strong className={tone}>{value > 0 ? '+' : ''}{value.toFixed(2)}</strong><small>{pair.regime}</small></div>; })}</div></article>
       <article className="correlation-insight-panel panel"><p className="section-kicker">REGIME READ</p><h3>Risk links are orderly.</h3><p>Credit and equities retain their usual inverse relationship while BTC remains closely tied to equity appetite. No material correlation breaks are currently flagged.</p><div className="stability-score"><span>Relationship stability</span><div><i><b></b></i><strong>81%</strong></div></div><div className="correlation-watch"><b>Watch for a break</b><span>BTC/SPX below +0.20 or credit/equity above -0.35</span></div></article>
       <article className="correlation-notes panel"><p className="section-kicker">HOW TO READ THIS</p><div>{correlationPairs.slice(0, 3).map((pair) => <p key={pair.left}><b>{pair.left} / {pair.right}</b><span>{pair.note}</span></p>)}</div><button>Open historical regime study →</button></article>
-      <article className="dxy-btc-panel panel"><div className="panel-title"><div><p className="section-kicker">DXY VS BITCOIN</p><h3>Dollar strength is a BTC headwind.</h3></div><span className="data-pill">{correlationWindow} r {dxyBtcCorrelation.values[correlationWindow].toFixed(2)}</span></div><div className="dxy-btc-chart"><div><span><i className="dxy-key"></i>DXY momentum</span><Sparkline color="#d3a454" values={dxyBtcCorrelation.dxy} /></div><div><span><i className="btc-key"></i>BTC momentum</span><Sparkline color="#70c26b" values={dxyBtcCorrelation.btc} /></div></div><div className="dxy-btc-diagnostics"><span>Correlation regime <b>Inverse</b></span><span>Momentum divergence <b>DXY leading</b></span><span>Breakout read <b>BTC headwind</b></span></div><p>DXY weakness would reverse the current pressure and become a tailwind for BTC.</p></article>
+      <article className="dxy-btc-panel panel"><div className="panel-title"><div><p className="section-kicker">DXY VS BITCOIN · CALCULATED</p><h3>{dxyBtcModel?.interpretation ?? 'Awaiting synchronized histories'}</h3></div><span className="data-pill">{Number.isFinite(dxyBtcCorrelationValue) ? `${correlationWindow} r ${dxyBtcCorrelationValue.toFixed(2)}` : 'Unavailable'}</span></div><div className="dxy-btc-chart"><div><span><i className="dxy-key"></i>{data.dxyBtc?.source?.left?.startsWith('DXY') ? 'DXY' : 'Broad dollar proxy'}</span>{dxyHistory.length ? <Sparkline color="#d3a454" values={dxyHistory} /> : <div className="model-chart-empty">No dollar history</div>}</div><div><span><i className="btc-key"></i>Bitcoin</span>{bitcoinHistory.length ? <Sparkline color="#70c26b" values={bitcoinHistory} /> : <div className="model-chart-empty">No BTC history</div>}</div></div><div className="dxy-btc-diagnostics"><span>Correlation regime <b>{dxyBtcModel?.regime ?? 'Unavailable'}</b></span><span>Momentum relationship <b>{dxyBtcModel?.divergence ?? 'Unavailable'}</b></span><span>Breakout read <b>{dxyBtcModel?.interpretation ?? 'Unavailable'}</b></span></div><p>{dxyBtcModel ? `${dxyBtcModel.version} · ${dxyBtcModel.observations} aligned daily observations · ${data.dxyBtc.source.left} and ${data.dxyBtc.source.right}` : 'Configure Twelve Data or FRED and retain Bitcoin history to calculate this relationship.'}</p></article>
     </section> : <section className="fx-detail-grid">
       <article className="fx-outlook-panel panel"><div className="panel-title"><div><p className="section-kicker">{fxHorizon} RELATIVE-VALUE OUTLOOK</p><h3>G10 and CNH directional bias</h3></div><span className="data-pill">Macro composite</span></div><div className="fx-outlook-head"><span>Currency</span><span>Bias</span><span>Score</span><span>Dominant driver</span></div>{fxOutlook.map(([currency, bias, score, tone, driver]) => <div className="fx-outlook-row" key={currency}><b>{currency}</b><span className={tone}>{bias}</span><strong>{score}</strong><small>{driver}</small></div>)}</article>
       <article className="fx-predictor-panel panel"><div className="panel-title"><div><p className="section-kicker">USD STRENGTH ENGINE</p><h3>Macro predictor stack</h3></div><span className="data-pill">Score 68</span></div>{fxPredictors.map(([name, direction, detail, tone]) => <div className="fx-predictor-row" key={name}><div><b>{name}</b><small>{detail}</small></div><span className={tone}>{direction}</span></div>)}<div className="central-bank-grid"><p>Central-bank stance</p><div>{centralBankStances.map(([bank, stance]) => <span key={bank}><b>{bank}</b>{stance}</span>)}</div></div><div className="dollar-smile"><b>Dollar Smile <span>Active</span></b><p>USD benefits if U.S. growth outperforms or global stress rises.</p><div><span>Global stress</span><i></i><span>Weak global growth</span></div></div></article>
@@ -569,9 +553,9 @@ function MacroDashboard({ data }) {
     </section>}
 
     <section className="macro-bottom-grid">
-      <article className="change-panel panel"><p className="section-kicker">WHAT CHANGED THIS WEEK</p><h3>Liquidity improved, with one caveat.</h3><p className="change-copy">PBoC funding and declining reverse-repo balances added to the impulse. A firmer dollar remains the primary restraint on global risk-taking.</p><div className="change-tags"><span>↑ China credit impulse</span><span>↑ U.S. net liquidity</span><span>↓ Dollar liquidity</span></div></article>
+      <article className="change-panel panel"><p className="section-kicker">NARRATIVE · MODEL PREVIEW</p><h3>Automated change detection pending.</h3><p className="change-copy">This panel will be generated from persisted model changes after global central-bank and credit histories are connected.</p><div className="change-tags"><span>Versioned changes</span><span>Source lineage</span><span>Release-aware</span></div></article>
       <article className="sensitivity-panel panel"><div className="panel-title"><div><p className="section-kicker">ASSET SENSITIVITY</p><h3>Current macro exposures</h3></div><button>Details →</button></div><div className="sensitivity-list"><div><b>BTC</b><span>Dollar liquidity <i>High</i></span><small>+0.71</small></div><div><b>Gold</b><span>Real yields <i>High</i></span><small>-0.64</small></div><div><b>Equities</b><span>Credit conditions <i>Medium</i></span><small>+0.48</small></div></div></article>
-      <article className="sources-panel panel"><p className="section-kicker">DATA PROVENANCE</p><h3>Built from official releases.</h3><p>Federal Reserve, U.S. Treasury, ECB, BoJ, BoE, PBoC, BIS, IMF, and market-based funding indicators.</p><button>Explore sources and lags →</button></article>
+      <article className="sources-panel panel"><p className="section-kicker">DATA PROVENANCE</p><h3>Connected and target sources.</h3><p>FRED is connected. ECB, BoJ, BoE, PBoC, BIS, IMF, and institutional market feeds remain planned inputs.</p><button>Explore sources and lags →</button></article>
     </section>
     <p className="independence-note">TradeGate is an independent market research platform and is not affiliated with Tradegate AG.</p>
   </div>;

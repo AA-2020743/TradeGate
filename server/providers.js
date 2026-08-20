@@ -1,10 +1,13 @@
 import { config } from './config.js';
 import { withCache } from './cache.js';
+import { calculateCrossMarketRelationship, calculateTechnicalSnapshot, calculateUsLiquidityModel } from './analytics.js';
+import { getStoredMarketHistory, getStoredMarketSnapshot } from './database.js';
 
 const TWELVE_SYMBOLS = [
   { symbol: 'SPY', key: 'SPY', name: 'S&P 500 proxy', kind: 'ETF' },
   { symbol: 'QQQ', key: 'QQQ', name: 'Nasdaq 100 proxy', kind: 'ETF' },
   { symbol: 'GLD', key: 'GLD', name: 'Gold proxy', kind: 'ETF' },
+  { symbol: 'DXY', key: 'DXY', name: 'U.S. Dollar Index', kind: 'Index' },
   { symbol: 'NVDA', key: 'NVDA', name: 'NVIDIA Corp.', kind: 'Equity' },
   { symbol: 'AAPL', key: 'AAPL', name: 'Apple Inc.', kind: 'Equity' },
 ];
@@ -17,14 +20,37 @@ const FRED_SERIES = [
   { id: 'DTWEXBGS', key: 'dxy', name: 'Broad dollar index', unit: 'Index', multiplier: 1 },
 ];
 
-async function fetchJson(url) {
+let twelveQueue = Promise.resolve();
+let lastTwelveRequestAt = 0;
+
+function wait(milliseconds) {
+  return new Promise((resolve) => setTimeout(resolve, milliseconds));
+}
+
+async function fetchJson(url, attempt = 0) {
   const response = await fetch(url, {
     headers: { Accept: 'application/json', 'User-Agent': 'TradeGateResearch/0.1' },
     signal: AbortSignal.timeout(12_000),
   });
 
+  if (response.status === 429 && attempt < 2) {
+    const retryAfter = Number(response.headers.get('retry-after'));
+    await wait(Number.isFinite(retryAfter) ? Math.min(retryAfter * 1000, 30_000) : 5_000 * (attempt + 1));
+    return fetchJson(url, attempt + 1);
+  }
   if (!response.ok) throw new Error(`Upstream request failed with ${response.status}`);
   return response.json();
+}
+
+function fetchTwelveJson(url) {
+  const scheduled = twelveQueue.then(async () => {
+    const waitFor = Math.max(0, config.twelveMinIntervalMs - (Date.now() - lastTwelveRequestAt));
+    if (waitFor) await wait(waitFor);
+    lastTwelveRequestAt = Date.now();
+    return fetchJson(url);
+  });
+  twelveQueue = scheduled.catch(() => undefined);
+  return scheduled;
 }
 
 const HISTORY_RANGES = {
@@ -44,6 +70,23 @@ function asNumber(value) {
   return Number.isFinite(parsed) ? parsed : null;
 }
 
+function normalizeTimestamp(value) {
+  if (!value) return null;
+  if (/^\d+$/.test(String(value))) return new Date(Number(value) * 1000).toISOString();
+  const text = String(value);
+  const hasTimeZone = /(?:Z|[+-]\d{2}:\d{2})$/i.test(text);
+  const normalized = text.includes('T') ? text : text.includes(' ') ? text.replace(' ', 'T') : `${text}T00:00:00`;
+  const timestamp = new Date(hasTimeZone ? normalized : `${normalized}Z`);
+  return Number.isNaN(timestamp.getTime()) ? null : timestamp.toISOString();
+}
+
+function filterHistoryRange(points, range) {
+  if (range !== 'YTD') return points;
+  const now = new Date();
+  const start = Date.UTC(now.getUTCFullYear(), 0, 1);
+  return points.filter((point) => new Date(point.timestamp).getTime() >= start);
+}
+
 function parseTwelveQuote(payload, symbol) {
   const quote = payload[symbol] ?? payload.data?.[symbol] ?? payload.data?.find?.((item) => item.symbol === symbol);
   if (!quote || quote.code) return null;
@@ -52,7 +95,7 @@ function parseTwelveQuote(payload, symbol) {
   const changePercent = asNumber(quote.percent_change ?? quote.change_percent);
   if (price === null) return null;
 
-  return { price, changePercent, asOf: quote.datetime ?? quote.timestamp ?? null };
+  return { price, changePercent, asOf: normalizeTimestamp(quote.datetime ?? quote.timestamp) };
 }
 
 async function getBitcoin() {
@@ -73,18 +116,30 @@ async function getBitcoin() {
 }
 
 async function getTwelveQuotes() {
-  if (!config.twelveDataApiKey) return [];
+  if (!config.twelveDataApiKey) return { assets: [], errors: [] };
 
   const symbols = TWELVE_SYMBOLS.map((asset) => asset.symbol).join(',');
   const url = new URL('https://api.twelvedata.com/quote');
   url.searchParams.set('symbol', symbols);
+  url.searchParams.set('timezone', 'UTC');
   url.searchParams.set('apikey', config.twelveDataApiKey);
-  const payload = await fetchJson(url);
+  const payload = await fetchTwelveJson(url);
+  if (payload.status === 'error' || payload.code) throw new Error(payload.message ?? 'Twelve Data quote request failed');
 
-  return TWELVE_SYMBOLS.flatMap((asset) => {
+  const assets = [];
+  const errors = [];
+  for (const asset of TWELVE_SYMBOLS) {
+    const rawQuote = payload[asset.symbol] ?? payload.data?.[asset.symbol];
+    if (rawQuote?.status === 'error' || rawQuote?.code) {
+      errors.push({ provider: 'Twelve Data', symbol: asset.symbol, message: rawQuote.message ?? 'Quote unavailable' });
+      continue;
+    }
     const quote = parseTwelveQuote(payload, asset.symbol);
-    return quote ? [{ ...asset, ...quote, source: 'Twelve Data' }] : [];
-  });
+    if (quote) assets.push({ ...asset, ...quote, source: 'Twelve Data' });
+    else errors.push({ provider: 'Twelve Data', symbol: asset.symbol, message: 'Quote missing from provider response' });
+  }
+
+  return { assets, errors };
 }
 
 export async function getMarketSnapshot() {
@@ -96,11 +151,20 @@ export async function getMarketSnapshot() {
     if (results[0].status === 'fulfilled') assets.push(results[0].value);
     else errors.push({ provider: 'CoinGecko', message: results[0].reason.message });
 
-    if (results[1].status === 'fulfilled') assets.push(...results[1].value);
+    if (results[1].status === 'fulfilled') {
+      assets.push(...results[1].value.assets);
+      errors.push(...results[1].value.errors);
+    }
     else errors.push({ provider: 'Twelve Data', message: results[1].reason.message });
 
+    const storedAssets = await getStoredMarketSnapshot().catch(() => []);
+    const liveKeys = new Set(assets.map((asset) => asset.key));
+    assets.push(...storedAssets.filter((asset) => !liveKeys.has(asset.key)));
+
+    const sourceTimes = assets.map((asset) => new Date(asset.asOf).getTime()).filter(Number.isFinite);
     return {
-      asOf: new Date().toISOString(),
+      generatedAt: new Date().toISOString(),
+      asOf: sourceTimes.length ? new Date(Math.max(...sourceTimes)).toISOString() : null,
       assets,
       errors,
       providers: {
@@ -133,8 +197,9 @@ async function getTwelveHistory(symbol, range) {
   url.searchParams.set('interval', settings.interval);
   url.searchParams.set('outputsize', settings.outputsize);
   url.searchParams.set('order', 'ASC');
+  url.searchParams.set('timezone', 'UTC');
   url.searchParams.set('apikey', config.twelveDataApiKey);
-  const payload = await fetchJson(url);
+  const payload = await fetchTwelveJson(url);
 
   if (payload.status === 'error') throw new Error(payload.message ?? 'Twelve Data history request failed');
   return (payload.values ?? []).flatMap((item) => {
@@ -146,23 +211,103 @@ async function getTwelveHistory(symbol, range) {
   });
 }
 
-export async function getMarketHistory(symbol, requestedRange) {
+export function getSupportedHistorySymbols() {
+  return [...HISTORY_SYMBOLS];
+}
+
+export async function getMarketHistory(symbol, requestedRange, options = {}) {
   const normalizedSymbol = symbol.toUpperCase();
   const range = HISTORY_RANGES[requestedRange] ? requestedRange : '1M';
   if (!HISTORY_SYMBOLS.has(normalizedSymbol)) throw new Error(`Unsupported history symbol: ${normalizedSymbol}`);
 
-  return withCache(`history:${normalizedSymbol}:${range}`, 60_000, async () => {
-    const points = normalizedSymbol === 'BTC'
-      ? await getBitcoinHistory(range)
-      : await getTwelveHistory(normalizedSymbol, range);
+  const cacheMode = options.preferStored === false ? 'provider' : 'default';
+  return withCache(`history:${normalizedSymbol}:${range}:${cacheMode}`, 60_000, async () => {
+    let storedPoints = [];
+    if (options.preferStored !== false) {
+      storedPoints = await getStoredMarketHistory(normalizedSymbol, range).catch(() => []);
+      const latestStoredTime = new Date(storedPoints.at(-1)?.timestamp).getTime();
+      const storedHistoryIsFresh = Number.isFinite(latestStoredTime) && Date.now() - latestStoredTime < 4 * 86_400_000;
+      if (storedPoints.length >= 2 && storedHistoryIsFresh) {
+        return {
+          symbol: normalizedSymbol,
+          range,
+          asOf: storedPoints.at(-1).timestamp,
+          source: 'PostgreSQL (stored provider history)',
+          configured: true,
+          stored: true,
+          points: storedPoints,
+        };
+      }
+    }
+
+    let points;
+    let providerError = null;
+    try {
+      points = normalizedSymbol === 'BTC'
+        ? await getBitcoinHistory(range)
+        : await getTwelveHistory(normalizedSymbol, range);
+      points = filterHistoryRange(points, range);
+    } catch (error) {
+      if (options.preferStored === false) throw error;
+      providerError = error;
+      points = storedPoints.length ? storedPoints : await getStoredMarketHistory(normalizedSymbol, range).catch(() => []);
+    }
+
+    if (!points.length && providerError) throw providerError;
 
     return {
       symbol: normalizedSymbol,
       range,
-      asOf: new Date().toISOString(),
-      source: normalizedSymbol === 'BTC' ? 'CoinGecko' : 'Twelve Data',
+      asOf: providerError ? points.at(-1)?.timestamp ?? new Date().toISOString() : new Date().toISOString(),
+      source: providerError ? 'PostgreSQL (last known good)' : normalizedSymbol === 'BTC' ? 'CoinGecko' : 'Twelve Data',
       configured: normalizedSymbol === 'BTC' || Boolean(config.twelveDataApiKey),
+      stored: Boolean(providerError),
+      stale: Boolean(providerError),
       points,
+    };
+  });
+}
+
+export async function getTechnicalSnapshot(symbol) {
+  const history = await getMarketHistory(symbol, '1Y');
+  const model = calculateTechnicalSnapshot(history.points, { annualizationDays: history.symbol === 'BTC' ? 365 : 252 });
+  return {
+    symbol: history.symbol,
+    source: history.source,
+    configured: history.configured,
+    asOf: model?.asOf ?? history.asOf,
+    model,
+  };
+}
+
+export async function getDxyBitcoinRelationship() {
+  return withCache('analytics:dxy-btc', 15 * 60_000, async () => {
+    const bitcoinPromise = getMarketHistory('BTC', '1Y');
+    let dollarPoints = [];
+    let dollarSource = null;
+
+    if (config.twelveDataApiKey) {
+      try {
+        const dxy = await getMarketHistory('DXY', '1Y');
+        dollarPoints = dxy.points;
+        dollarSource = dxy.points.length ? `DXY · ${dxy.source}` : null;
+      } catch {
+        dollarPoints = [];
+      }
+    }
+    if (!dollarPoints.length) {
+      const liquidity = await getLiquiditySnapshot();
+      const dollarSeries = liquidity.series.find((series) => series.key === 'dxy');
+      dollarPoints = dollarSeries?.history ?? [];
+      dollarSource = dollarPoints.length ? 'FRED DTWEXBGS broad-dollar proxy' : null;
+    }
+
+    const bitcoin = await bitcoinPromise;
+    const model = dollarPoints.length ? calculateCrossMarketRelationship(dollarPoints, bitcoin.points) : null;
+    return {
+      source: { left: dollarSource, right: bitcoin.source },
+      asOf: model?.asOf ?? null,
+      model,
     };
   });
 }
@@ -173,13 +318,24 @@ async function getFredSeries(series) {
   url.searchParams.set('api_key', config.fredApiKey);
   url.searchParams.set('file_type', 'json');
   url.searchParams.set('sort_order', 'desc');
-  url.searchParams.set('limit', '12');
+  url.searchParams.set('limit', '400');
   const payload = await fetchJson(url);
-  const observation = payload.observations?.find((item) => item.value !== '.');
+  const observations = (payload.observations ?? []).filter((item) => item.value !== '.');
+  const observation = observations[0];
   const value = asNumber(observation?.value);
 
   if (!observation || value === null) throw new Error(`FRED returned no usable observation for ${series.id}`);
-  return { ...series, value, date: observation.date };
+  return {
+    ...series,
+    value,
+    date: observation.date,
+    history: observations.map((item) => ({
+      date: item.date,
+      value: Number(item.value),
+      realtimeStart: item.realtime_start ?? null,
+      realtimeEnd: item.realtime_end ?? null,
+    })).reverse(),
+  };
 }
 
 export async function getLiquiditySnapshot() {
@@ -198,12 +354,14 @@ export async function getLiquiditySnapshot() {
     const errors = results.flatMap((result) => result.status === 'rejected' ? [result.reason.message] : []);
     const values = Object.fromEntries(series.map((item) => [item.key, item.value * item.multiplier]));
     const hasNetLiquidityInputs = ['fedBalanceSheet', 'treasuryGeneralAccount', 'reverseRepo'].every((key) => values[key] !== undefined);
+    const model = calculateUsLiquidityModel(series);
 
     return {
       asOf: new Date().toISOString(),
       provider: { configured: true, name: 'FRED' },
       series,
       netLiquidity: hasNetLiquidityInputs ? values.fedBalanceSheet - values.treasuryGeneralAccount - values.reverseRepo : null,
+      model,
       errors,
     };
   });

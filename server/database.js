@@ -1,0 +1,216 @@
+import pg from 'pg';
+import { config } from './config.js';
+
+const { Pool } = pg;
+const pool = config.databaseUrl
+  ? new Pool({
+      connectionString: config.databaseUrl,
+      ssl: config.databaseSsl ? { rejectUnauthorized: false } : false,
+      max: 5,
+      idleTimeoutMillis: 30_000,
+      connectionTimeoutMillis: 5_000,
+    })
+  : null;
+
+export function isDatabaseConfigured() {
+  return Boolean(pool);
+}
+
+export async function getDatabaseHealth() {
+  if (!pool) return { configured: false, connected: false, migrated: false, mode: 'not-configured', purpose: 'Time-series persistence and revision history' };
+  try {
+    const result = await pool.query(
+      `SELECT
+         to_regclass('public.observations') AS observations,
+         to_regclass('public.schema_migrations') AS migrations`,
+    );
+    const latestMigration = result.rows[0].migrations
+      ? await pool.query("SELECT EXISTS (SELECT 1 FROM schema_migrations WHERE filename = '002_ingestion_lineage.sql') AS applied")
+      : null;
+    const migrated = Boolean(result.rows[0].observations && latestMigration?.rows[0].applied);
+    return { configured: true, connected: true, migrated, mode: migrated ? 'postgresql' : 'migration-required', purpose: 'Time-series persistence and revision history' };
+  } catch (error) {
+    return { configured: true, connected: false, migrated: false, mode: 'unavailable', purpose: 'Time-series persistence and revision history', error: error.message };
+  }
+}
+
+export async function closeDatabase() {
+  if (pool) await pool.end();
+}
+
+export async function runQuery(text, parameters = []) {
+  if (!pool) throw new Error('DATABASE_URL is not configured');
+  return pool.query(text, parameters);
+}
+
+export async function withDatabaseClient(callback) {
+  if (!pool) throw new Error('DATABASE_URL is not configured');
+  const client = await pool.connect();
+  try {
+    return await callback(client);
+  } finally {
+    client.release();
+  }
+}
+
+export async function persistSeries(series, ingestionRunId = null) {
+  if (!pool) return 0;
+  const client = await pool.connect();
+  let written = 0;
+  try {
+    await client.query('BEGIN');
+    await client.query(
+      `INSERT INTO data_series (
+         id, provider, provider_series_id, name, asset_class, frequency, unit, currency, metadata, updated_at
+       ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb, NOW())
+       ON CONFLICT (id) DO UPDATE SET
+         name = EXCLUDED.name,
+         asset_class = EXCLUDED.asset_class,
+         frequency = EXCLUDED.frequency,
+         unit = EXCLUDED.unit,
+         currency = EXCLUDED.currency,
+         metadata = EXCLUDED.metadata,
+         updated_at = NOW()`,
+      [series.id, series.provider, series.providerSeriesId, series.name, series.assetClass, series.frequency ?? null, series.unit ?? null, series.currency ?? null, JSON.stringify(series.metadata ?? {})],
+    );
+
+    for (const observation of series.observations) {
+      const result = await client.query(
+        `INSERT INTO observations (series_id, observed_at, value, provider_as_of, metadata, ingestion_run_id)
+         VALUES ($1, $2, $3, $4, $5::jsonb, $6)
+         ON CONFLICT (series_id, observed_at) DO UPDATE SET
+           value = EXCLUDED.value,
+           provider_as_of = EXCLUDED.provider_as_of,
+           metadata = EXCLUDED.metadata,
+           ingestion_run_id = EXCLUDED.ingestion_run_id,
+           ingested_at = NOW()
+         WHERE observations.value IS DISTINCT FROM EXCLUDED.value
+            OR observations.provider_as_of IS DISTINCT FROM EXCLUDED.provider_as_of
+            OR observations.metadata IS DISTINCT FROM EXCLUDED.metadata`,
+        [series.id, observation.observedAt, observation.value, observation.providerAsOf ?? null, JSON.stringify(observation.metadata ?? {}), ingestionRunId],
+      );
+      written += result.rowCount;
+    }
+    await client.query('COMMIT');
+    return written;
+  } catch (error) {
+    await client.query('ROLLBACK');
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
+export async function startIngestionRun(jobName) {
+  if (!pool) return null;
+  const result = await pool.query(
+    `INSERT INTO ingestion_runs (job_name, status) VALUES ($1, 'running') RETURNING id`,
+    [jobName],
+  );
+  return result.rows[0].id;
+}
+
+export async function finishIngestionRun(id, status, observationsWritten, details = {}, errorMessage = null) {
+  if (!pool || id === null) return;
+  await pool.query(
+    `UPDATE ingestion_runs
+     SET status = $2, finished_at = NOW(), observations_written = $3, details = $4::jsonb, error_message = $5
+     WHERE id = $1`,
+    [id, status, observationsWritten, JSON.stringify(details), errorMessage],
+  );
+}
+
+export async function persistModelOutput(modelId, model, inputLineage = [], ingestionRunId = null) {
+  if (!pool || !model) return;
+  await pool.query(
+    `INSERT INTO model_outputs (model_id, version, calculated_at, effective_at, output, input_lineage, ingestion_run_id)
+     VALUES ($1, $2, NOW(), $3, $4::jsonb, $5::jsonb, $6)`,
+    [modelId, model.version, model.asOf, JSON.stringify(model), JSON.stringify(inputLineage), ingestionRunId],
+  );
+}
+
+export async function acquireIngestionLock(jobName) {
+  if (!pool) return { acquired: false, release: async () => {} };
+  const client = await pool.connect();
+  const result = await client.query('SELECT pg_try_advisory_lock(hashtext($1)) AS acquired', [`tradegate:${jobName}`]);
+  if (!result.rows[0].acquired) {
+    client.release();
+    return { acquired: false, release: async () => {} };
+  }
+  return {
+    acquired: true,
+    release: async () => {
+      try {
+        await client.query('SELECT pg_advisory_unlock(hashtext($1))', [`tradegate:${jobName}`]);
+      } finally {
+        client.release();
+      }
+    },
+  };
+}
+
+export async function getIngestionStatus() {
+  if (!pool) return [];
+  const result = await pool.query(
+    `SELECT DISTINCT ON (job_name)
+       job_name, status, started_at, finished_at, observations_written, details, error_message
+     FROM ingestion_runs
+     ORDER BY job_name, started_at DESC`,
+  );
+  return result.rows;
+}
+
+export async function getStoredMarketSnapshot() {
+  if (!pool) return [];
+  const result = await pool.query(
+    `SELECT DISTINCT ON (series.id)
+       series.provider_series_id AS key,
+       series.provider_series_id AS symbol,
+       series.name,
+       series.asset_class AS kind,
+       series.provider,
+       observations.value AS price,
+       observations.observed_at,
+       observations.metadata
+     FROM data_series AS series
+     JOIN observations ON observations.series_id = series.id
+     WHERE series.id LIKE 'market:%:quote:usd'
+     ORDER BY series.id, observations.observed_at DESC`,
+  );
+  return result.rows.map((row) => ({
+    key: row.key,
+    symbol: row.symbol,
+    name: row.name,
+    kind: row.kind,
+    price: row.price,
+    changePercent: row.metadata?.changePercent ?? null,
+    asOf: row.observed_at,
+    source: `${row.provider} (stored)`,
+    stored: true,
+  }));
+}
+
+const HISTORY_DAYS = {
+  '1D': 1,
+  '5D': 5,
+  '1M': 31,
+  '6M': 183,
+  '1Y': 366,
+};
+
+export async function getStoredMarketHistory(symbol, range) {
+  if (!pool || range === 'All' || range === '1D' || range === '5D') return [];
+  const now = new Date();
+  const start = range === 'YTD'
+    ? new Date(Date.UTC(now.getUTCFullYear(), 0, 1))
+    : new Date(now.getTime() - ((HISTORY_DAYS[range] ?? HISTORY_DAYS['1M']) * 86_400_000));
+  const result = await pool.query(
+    `SELECT observed_at, value
+     FROM observations
+     WHERE series_id = $1
+       AND observed_at >= $2
+     ORDER BY observed_at ASC`,
+    [`market:${symbol}:close:usd`, start.toISOString()],
+  );
+  return result.rows.map((row) => ({ timestamp: row.observed_at.toISOString(), value: row.value }));
+}
