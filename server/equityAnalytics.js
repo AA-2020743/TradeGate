@@ -378,6 +378,79 @@ export function calculateMacroSensitivities(points, macroSeries) {
   };
 }
 
+export function calculateBasketRotation(pairs, historiesBySymbol) {
+  const normalizedBySymbol = new Map([...historiesBySymbol.entries()].map(([symbol, points]) => {
+    const normalized = normalizeHistory(points ?? []);
+    return [symbol, new Map(normalized.map((point) => [point.date, point.value]))];
+  }));
+
+  const calculated = pairs.map((pair) => {
+    const collectDates = (symbols) => {
+      const maps = symbols.map((symbol) => normalizedBySymbol.get(symbol)).filter(Boolean);
+      if (maps.length !== symbols.length) return null;
+      const first = maps[0];
+      const rest = maps.slice(1);
+      return [...first.keys()].filter((date) => rest.every((map) => map.has(date))).sort();
+    };
+    const leftDates = collectDates(pair.leftSymbols);
+    const rightDates = collectDates(pair.rightSymbols);
+    if (!leftDates || !rightDates) {
+      return { key: pair.key, left: pair.leftName, right: pair.rightName, status: 'unavailable', missing: [...pair.leftSymbols, ...pair.rightSymbols].filter((symbol) => !normalizedBySymbol.get(symbol)?.size) };
+    }
+    const sharedDates = new Set(leftDates.filter((date) => rightDates.includes(date)));
+    const dates = [...sharedDates].sort();
+    if (dates.length < 65) {
+      return { key: pair.key, left: pair.leftName, right: pair.rightName, status: 'unavailable', missing: ['At least 65 synchronized sessions'] };
+    }
+
+    const basketReturn = (symbols, periods) => {
+      const memberReturns = symbols.map((symbol) => {
+        const map = normalizedBySymbol.get(symbol);
+        const start = map.get(dates.at(-(periods + 1)));
+        const end = map.get(dates.at(-1));
+        return start > 0 ? ((end / start) - 1) * 100 : null;
+      });
+      const usable = memberReturns.filter(Number.isFinite);
+      return usable.length === symbols.length ? mean(usable) : null;
+    };
+
+    const buildSide = (symbols) => ({
+      return20: basketReturn(symbols, 20),
+      return60: basketReturn(symbols, 60),
+    });
+    const left = buildSide(pair.leftSymbols);
+    const right = buildSide(pair.rightSymbols);
+    const spread20 = Number.isFinite(left.return20) && Number.isFinite(right.return20) ? left.return20 - right.return20 : null;
+    const spread60 = Number.isFinite(left.return60) && Number.isFinite(right.return60) ? left.return60 - right.return60 : null;
+    if (!Number.isFinite(spread20) || !Number.isFinite(spread60)) {
+      return { key: pair.key, left: pair.leftName, right: pair.rightName, status: 'unavailable', missing: ['Synchronized price history for every basket member'] };
+    }
+    const leader = spread60 >= 0 ? pair.leftLeader : pair.rightLeader;
+    const regime = Math.abs(spread60) < 1 && Math.abs(spread20) < 1 ? 'Balanced' : `${leader} leading`;
+    return {
+      key: pair.key,
+      left: pair.leftName,
+      right: pair.rightName,
+      status: 'calculated',
+      asOf: dates.at(-1),
+      observations: dates.length,
+      spread20,
+      spread60,
+      leader,
+      regime,
+    };
+  });
+
+  const calculatedCount = calculated.filter((pair) => pair.status === 'calculated').length;
+  return {
+    version: 'style-rotation-v1',
+    status: calculatedCount ? 'calculated' : 'unavailable',
+    asOf: calculated.map((pair) => pair.asOf).filter(Boolean).sort().at(-1) ?? null,
+    pairs: calculated,
+    methodology: 'Equal-weight basket returns over 20 and 60 synchronized sessions; the spread is left-basket minus right-basket return.',
+  };
+}
+
 export function calculateSectorRotation(sectors, benchmarkPoints) {
   const benchmark = normalizeHistory(benchmarkPoints ?? []);
   if (benchmark.length < 65) return { version: 'sector-rotation-v1', status: 'unavailable', asOf: null, sectors: [], missing: ['Benchmark history'] };

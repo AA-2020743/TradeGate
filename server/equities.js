@@ -1,6 +1,6 @@
 import { getStoredMarketHistories, getStoredSeriesCoverage, isDatabaseConfigured } from './database.js';
 import { calculateTechnicalSnapshot } from './analytics.js';
-import { calculateBottomSignal, calculateEquityRegime, calculateSectorRotation, calculateTopRisk } from './equityAnalytics.js';
+import { calculateBottomSignal, calculateBasketRotation, calculateEquityRegime, calculateMacroSensitivities, calculateSectorRotation, calculateTopRisk } from './equityAnalytics.js';
 import {
   attachSeriesCoverage,
   breadthRequirements,
@@ -164,11 +164,21 @@ export async function getSectorDashboard() {
   const sectors = withSensitivities.filter((row) => row.group === null);
   const subsectors = withSensitivities.filter((row) => row.group !== null);
 
+  const stylePairs = [
+    { key: 'growthValue', leftName: 'Growth (QQQ)', rightName: 'Value tilt (DIA)', leftSymbols: ['QQQ'], rightSymbols: ['DIA'], leftLeader: 'Growth', rightLeader: 'Value' },
+    { key: 'cyclicalDefensive', leftName: 'Cyclicals (XLY/XLI/XLE/XLB)', rightName: 'Defensives (XLP/XLU/XLV)', leftSymbols: ['XLY', 'XLI', 'XLE', 'XLB'], rightSymbols: ['XLP', 'XLU', 'XLV'], leftLeader: 'Cyclicals', rightLeader: 'Defensives' },
+    { key: 'usInternational', leftName: 'US (SPY)', rightName: 'Developed intl (EWG/EWU/EWQ/EWJ)', leftSymbols: ['SPY'], rightSymbols: ['EWG', 'EWU', 'EWQ', 'EWJ'], leftLeader: 'US', rightLeader: 'International DM' },
+    { key: 'dmEmerging', leftName: 'Emerging markets (EEM)', rightName: 'US (SPY)', leftSymbols: ['EEM'], rightSymbols: ['SPY'], leftLeader: 'EM', rightLeader: 'DM/US' },
+    { key: 'smallLarge', leftName: 'Small caps (IWM)', rightName: 'Large caps (SPY)', leftSymbols: ['IWM'], rightSymbols: ['SPY'], leftLeader: 'Small caps', rightLeader: 'Large caps' },
+  ];
+  const styles = calculateBasketRotation(stylePairs, histories);
+
   return {
     version: 'equity-sector-dashboard-v1',
     asOf: rotation.asOf,
     storage: { configured: isDatabaseConfigured(), available: storageAvailable, coverageAvailable },
     rotation: { ...rotation, sectors, subsectors },
+    styles,
     macroSensitivity: { sources: macroSources, window: '60D changes' },
     sectors: attachSeriesCoverage(sectorCatalog, coverage),
     subsectors: attachSeriesCoverage(subsectorCatalog, coverage),

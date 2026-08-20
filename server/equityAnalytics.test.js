@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { calculateBottomSignal, calculateBreadth, calculateEquityRegime, calculateMacroSensitivities, calculateSectorRotation, calculateTopRisk } from './equityAnalytics.js';
+import { calculateBasketRotation, calculateBottomSignal, calculateBreadth, calculateEquityRegime, calculateMacroSensitivities, calculateSectorRotation, calculateTopRisk } from './equityAnalytics.js';
 
 function technicalFixture(overrides = {}) {
   return {
@@ -226,4 +226,29 @@ test('macro sensitivities correlate ETF changes against FRED histories', () => {
   assert.equal(empty.realYield, null);
   assert.equal(empty.vix, null);
   assert.equal(empty.credit, null);
+});
+test('basket rotation computes synchronized basket spreads', () => {
+  const points = (step, drift = 0) => Array.from({ length: 120 }, (_, index) => ({
+    timestamp: new Date(Date.UTC(2025, 0, index + 1)).toISOString(),
+    value: 100 + (index * step) + (drift * Math.sin(index / 6)),
+  }));
+  const histories = new Map([
+    ['QQQ', points(0.5)],
+    ['DIA', points(0.1)],
+    ['XLY', points(0.4)],
+    ['XLP', points(0.05)],
+  ]);
+  const styles = calculateBasketRotation([
+    { key: 'growthValue', leftName: 'Growth', rightName: 'Value', leftSymbols: ['QQQ'], rightSymbols: ['DIA'], leftLeader: 'Growth', rightLeader: 'Value' },
+    { key: 'cyclicalDefensive', leftName: 'Cyclicals', rightName: 'Defensives', leftSymbols: ['XLY', 'MISSING'], rightSymbols: ['XLP'], leftLeader: 'Cyclicals', rightLeader: 'Defensives' },
+  ], histories);
+  assert.equal(styles.version, 'style-rotation-v1');
+  assert.equal(styles.status, 'calculated');
+  const growthValue = styles.pairs.find((pair) => pair.key === 'growthValue');
+  assert.equal(growthValue.status, 'calculated');
+  assert.ok(growthValue.spread60 > 15);
+  assert.equal(growthValue.leader, 'Growth');
+  const cyclical = styles.pairs.find((pair) => pair.key === 'cyclicalDefensive');
+  assert.equal(cyclical.status, 'unavailable');
+  assert.deepEqual(cyclical.missing, ['MISSING']);
 });
