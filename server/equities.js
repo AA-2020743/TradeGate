@@ -1,4 +1,5 @@
 import { getStoredMarketHistories, getStoredSeriesCoverage, isDatabaseConfigured } from './database.js';
+import { calculateTechnicalSnapshot } from './analytics.js';
 import { calculateBottomSignal, calculateEquityRegime, calculateSectorRotation, calculateTopRisk } from './equityAnalytics.js';
 import {
   attachSeriesCoverage,
@@ -9,7 +10,7 @@ import {
   sentimentRequirements,
   subsectorCatalog,
 } from './equityCatalog.js';
-import { getLiquiditySnapshot, getTechnicalSnapshot } from './providers.js';
+import { getLiquiditySnapshot } from './providers.js';
 
 const unavailableBreadth = {
   version: 'equity-breadth-v1',
@@ -32,13 +33,31 @@ function unavailableDataset(name, requirements) {
   };
 }
 
+async function getStoredTechnicalSnapshot(symbol) {
+  if (!isDatabaseConfigured()) return { symbol, source: null, configured: false, stored: false, stale: false, asOf: null, model: null };
+  const histories = await getStoredMarketHistories([symbol]);
+  const points = histories.get(symbol) ?? [];
+  const model = calculateTechnicalSnapshot(points);
+  const asOf = model?.asOf ?? points.at(-1)?.timestamp ?? null;
+  const latestTimestamp = new Date(asOf).getTime();
+  return {
+    symbol,
+    source: points.length ? 'PostgreSQL (stored Twelve Data history)' : null,
+    configured: true,
+    stored: Boolean(points.length),
+    stale: Boolean(points.length) && Number.isFinite(latestTimestamp) && Date.now() - latestTimestamp > 4 * 86_400_000,
+    asOf,
+    model,
+  };
+}
+
 export async function getEquityDashboard(requestedSymbol = 'SPY') {
   const symbol = requestedSymbol.toUpperCase();
   const index = indexCatalog.find((item) => item.symbol === symbol);
   if (!index) throw new Error(`Unsupported equity index proxy: ${symbol}`);
 
   const [technicalResult, liquidityResult] = await Promise.allSettled([
-    getTechnicalSnapshot(symbol),
+    getStoredTechnicalSnapshot(symbol),
     getLiquiditySnapshot(),
   ]);
   const technical = technicalResult.status === 'fulfilled' ? technicalResult.value : null;

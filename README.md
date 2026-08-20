@@ -139,6 +139,8 @@ Provider caches, scheduled intervals, and the serialized Twelve Data history bac
 
 The core equity backfill covers priority global-index proxies and the 11 U.S. sector ETFs. Less-liquid secondary index and subsector proxies remain queryable but are not scheduled by default. Every proxy is labeled; the application does not substitute an ETF price while presenting it as an exact local index level.
 
+The Equities workspace reads stored histories only. Selecting an index never triggers an on-demand provider request; Twelve Data access remains serialized inside scheduled ingestion to protect free-plan quotas.
+
 ## Calculation Methodology
 
 All calculated outputs include a version, effective date, observation count, source, and input lineage.

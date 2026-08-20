@@ -102,6 +102,39 @@ export function useTechnicalAnalytics(symbol) {
   return state;
 }
 
+export function useEquityResearch(symbol) {
+  const [state, setState] = useState({ status: 'loading', catalog: null, dashboard: null, sectors: null, error: null });
+
+  useEffect(() => {
+    let active = true;
+    const load = async () => {
+      setState((current) => ({ ...current, status: 'loading', dashboard: null, error: null }));
+      const [catalog, dashboard, sectors] = await Promise.allSettled([
+        requestJson('/api/equities/catalog'),
+        requestJson(`/api/equities/dashboard/${encodeURIComponent(symbol)}`),
+        requestJson('/api/equities/sectors'),
+      ]);
+      if (!active) return;
+      const failed = [catalog, dashboard, sectors].filter((result) => result.status === 'rejected');
+      setState({
+        status: failed.length ? failed.length === 3 ? 'unavailable' : 'partial' : 'live',
+        catalog: catalog.status === 'fulfilled' ? catalog.value : null,
+        dashboard: dashboard.status === 'fulfilled' ? dashboard.value : null,
+        sectors: sectors.status === 'fulfilled' ? sectors.value : null,
+        error: failed.length ? failed.map((result) => result.reason.message).join('; ') : null,
+      });
+    };
+    load();
+    const interval = window.setInterval(load, 5 * 60_000);
+    return () => {
+      active = false;
+      window.clearInterval(interval);
+    };
+  }, [symbol]);
+
+  return state;
+}
+
 export function formatUsd(value) {
   if (!Number.isFinite(value)) return 'Unavailable';
   return new Intl.NumberFormat('en-US', {

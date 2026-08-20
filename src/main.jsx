@@ -1,11 +1,12 @@
 import React, { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 import './styles.css';
-import { formatPercent, formatTimestamp, formatUsd, useMarketHistory, usePlatformData, useTechnicalAnalytics } from './liveData.js';
+import { formatPercent, formatTimestamp, formatUsd, useEquityResearch, useMarketHistory, usePlatformData, useTechnicalAnalytics } from './liveData.js';
 
 const navItems = [
   ['⌘', 'Overview'],
   ['◌', 'Markets', 'Preview'],
+  ['▥', 'Equities'],
   ['◇', 'Metals', 'Preview'],
   ['▦', 'Screener', 'Preview'],
   ['◫', 'Watchlists', 'Preview'],
@@ -326,6 +327,7 @@ function App() {
   const commands = [
     { label: 'Overview', detail: 'Workspace', action: () => setActiveNav('Overview') },
     { label: 'Multi-asset heatmap', detail: 'Markets', action: () => setActiveNav('Markets') },
+    { label: 'Equities research', detail: 'Global indices and sectors', action: () => setActiveNav('Equities') },
     { label: 'Precious metals research', detail: 'Metals', action: () => setActiveNav('Metals') },
     { label: 'Macro research', detail: 'Workspace', action: () => setActiveNav('Macro') },
     ...watchlist.map((asset) => ({ label: asset.ticker, detail: asset.name, action: () => { setSelectedTicker(asset.ticker); setActiveNav('Overview'); } })),
@@ -400,7 +402,7 @@ function App() {
         </header>
 
         <div className="dashboard">
-          {activeNav === 'Macro' ? <MacroDashboard data={platformData} /> : activeNav === 'Markets' ? <MarketsDashboard data={platformData} /> : activeNav === 'Metals' ? <MetalsDashboard data={platformData} /> : ['Screener', 'Watchlists'].includes(activeNav) ? <PreviewWorkspace name={activeNav} /> : <>
+          {activeNav === 'Macro' ? <MacroDashboard data={platformData} /> : activeNav === 'Markets' ? <MarketsDashboard data={platformData} /> : activeNav === 'Equities' ? <EquitiesDashboard /> : activeNav === 'Metals' ? <MetalsDashboard data={platformData} /> : ['Screener', 'Watchlists'].includes(activeNav) ? <PreviewWorkspace name={activeNav} /> : <>
           <section className="welcome-row">
             <div><p className="eyebrow">{new Intl.DateTimeFormat('en-US', { weekday: 'long', month: 'long', day: 'numeric' }).format(new Date()).toUpperCase()}</p><h1>Good morning, Alex.</h1><p className="intro">Here is your market pulse for today.</p></div>
             <div className={`market-status ${platformData.status}`}><span className="live-dot"></span><span>{platformData.status === 'live' ? 'Data feeds connected' : platformData.status === 'partial' ? 'Partial data coverage' : 'Data API unavailable'}</span><strong>{formatTimestamp(platformData.markets?.asOf)}</strong></div>
@@ -465,6 +467,101 @@ function PreviewBadge({ label = 'Preview' }) {
 
 function PreviewWorkspace({ name }) {
   return <div className="preview-workspace"><section className="markets-intro"><div><p className="eyebrow">DESIGNED WORKSPACE</p><h1>{name}</h1><p className="intro">This workspace is visible for product review but does not publish research outputs yet.</p></div><PreviewBadge /></section><article className="preview-placeholder panel"><PreviewBadge /><span>◌</span><h2>{name} is a preview.</h2><p>Provider inputs, calculations, source lineage, and tests must be connected before values appear here.</p></article><p className="independence-note">TradeGate is an independent market research platform and is not affiliated with Tradegate AG.</p></div>;
+}
+
+function EquityStatus({ status = 'unavailable', label }) {
+  const tone = ['ready', 'calculated', 'available', 'live'].includes(status)
+    ? 'available'
+    : ['partial', 'provisional', 'stale', 'loading'].includes(status) ? 'partial' : 'unavailable';
+  return <span className={`equity-status ${tone}`}><i></i>{label ?? status}</span>;
+}
+
+function formatResearchDate(value) {
+  if (!value) return 'No provider date';
+  return new Intl.DateTimeFormat('en-US', { month: 'short', day: 'numeric', year: 'numeric', timeZone: 'UTC' }).format(new Date(value));
+}
+
+function EquitySignalCard({ kicker, title, model, empty }) {
+  return <article className="equity-signal-card panel">
+    <div className="equity-signal-head"><div><p className="section-kicker">{kicker}</p><h3>{model?.risk ?? model?.signal ?? model?.regime ?? title}</h3></div><EquityStatus status={model?.status} /></div>
+    <div className="equity-signal-score"><b>{Number.isFinite(model?.score) ? model.score : '—'}</b><span>/100</span><i><b style={{ width: `${model?.score ?? 0}%` }}></b></i></div>
+    <p>{model?.status === 'unavailable' || !model ? empty : `${model.version} · ${model.coverage}% driver coverage`}</p>
+    {model?.missing?.length ? <small>Missing: {model.missing.slice(0, 3).join(', ')}{model.missing.length > 3 ? ` +${model.missing.length - 3}` : ''}</small> : null}
+  </article>;
+}
+
+function RequirementPanel({ title, dataset, requirements }) {
+  return <article className="equity-requirement-panel panel"><div className="panel-title"><div><p className="section-kicker">REQUIRED DATASET</p><h3>{title}</h3></div><EquityStatus status={dataset?.status} /></div><p>{dataset?.reason ?? 'This dataset is not connected, so no score or directional claim is published.'}</p><div>{(dataset?.requirements ?? requirements ?? []).map((item) => <span key={item}>{item}</span>)}</div></article>;
+}
+
+function EquitiesDashboard() {
+  const [selectedSymbol, setSelectedSymbol] = React.useState('SPY');
+  const research = useEquityResearch(selectedSymbol);
+  const catalog = research.catalog;
+  const dashboard = research.dashboard;
+  const sectorData = research.sectors;
+  const technical = dashboard?.technical?.model;
+  const regime = dashboard?.regime;
+  const rotation = sectorData?.rotation;
+  const groupedIndices = Object.entries((catalog?.indices ?? []).reduce((groups, index) => {
+    groups[index.region] = [...(groups[index.region] ?? []), index];
+    return groups;
+  }, {}));
+  const selectedIndex = dashboard?.index ?? catalog?.indices?.find((index) => index.symbol === selectedSymbol);
+
+  return <div className="equities-dashboard">
+    <section className="equities-intro">
+      <div><p className="eyebrow">GLOBAL EQUITY RESEARCH</p><h1>Participation before prediction.</h1><p className="intro">Global index proxies, regime-aware signals, breadth readiness, and sector rotation with explicit source coverage.</p></div>
+      <div className="equities-pulse"><EquityStatus status={research.status} label={research.status === 'live' ? 'API connected' : research.status} /><div><b>{selectedIndex?.name ?? 'Loading index'}</b><small>{selectedIndex ? `${selectedIndex.symbol} · ${selectedIndex.instrument}` : 'Awaiting catalog'}</small></div></div>
+    </section>
+    <section className="equity-disclosure"><span>i</span><div><b>Coverage-aware research</b><p>ETF prices are labeled as proxies. Unavailable breadth, positioning, sentiment, flow, and historical-vintage inputs remain blank rather than being replaced with designed values.</p></div></section>
+
+    <section className="equity-index-layout">
+      <article className="equity-index-panel panel">
+        <div className="panel-title"><div><p className="section-kicker">GLOBAL INDEX COVERAGE</p><h3>Choose a market lens</h3></div><span className="data-pill">{catalog?.indices?.length ?? 0} tracked proxies</span></div>
+        <div className="equity-region-list">{groupedIndices.length ? groupedIndices.map(([region, indices]) => <div className="equity-region" key={region}><p>{region}</p>{indices.map((index) => <button className={selectedSymbol === index.symbol ? 'selected' : ''} key={index.id} onClick={() => setSelectedSymbol(index.symbol)}><span><b>{index.name}</b><small>{index.symbol} · {index.instrument}</small></span><EquityStatus status={index.coverage.status} label={index.coverage.observations ? `${index.coverage.observations} obs.` : index.coverage.status} /></button>)}</div>) : <div className="equity-empty">{research.status === 'loading' ? 'Loading coverage catalog…' : 'Coverage catalog unavailable.'}</div>}</div>
+      </article>
+
+      <article className="equity-focus-panel panel">
+        <div className="panel-title"><div><p className="section-kicker">SELECTED INDEX PROXY</p><h3>{selectedIndex?.name ?? 'Awaiting selection'}</h3></div><EquityStatus status={dashboard?.technical?.model ? dashboard.technical.stale ? 'stale' : 'available' : 'unavailable'} /></div>
+        <div className="equity-focus-price"><b>{formatUsd(technical?.latest)}</b><span>{selectedIndex?.symbol ?? '—'}</span><small>{selectedIndex?.instrument ?? 'Provider history unavailable'}</small></div>
+        <div className="equity-technical-grid"><div><span>Technical score</span><b>{technical?.score ?? '—'}</b></div><div><span>20D momentum</span><b>{formatPercent(technical?.indicators?.momentum20d)}</b></div><div><span>RSI 14</span><b>{technical?.indicators?.rsi14?.toFixed(1) ?? '—'}</b></div><div><span>20D volatility</span><b>{Number.isFinite(technical?.indicators?.annualizedVolatility20d) ? `${technical.indicators.annualizedVolatility20d.toFixed(1)}%` : '—'}</b></div></div>
+        <p className="equity-source-line">{dashboard?.technical?.source ?? 'No market history source'} · {formatResearchDate(dashboard?.technical?.asOf)}</p>
+      </article>
+    </section>
+
+    <section className="equity-section-heading"><div><p className="section-kicker">INDEX SIGNAL STACK</p><h2>What can be calculated now</h2></div><span className="data-pill">No synthetic fallbacks</span></section>
+    <section className="equity-signal-grid">
+      <EquitySignalCard kicker="DYNAMIC REGIME" title="Regime unavailable" model={regime} empty="Price trend, momentum, and volatility are mandatory before a regime can be classified." />
+      <EquitySignalCard kicker="TOP-RISK DETECTION" title="Top risk unavailable" model={dashboard?.topRisk} empty="Top risk requires technical deterioration plus constituent breadth and independent confirmation." />
+      <EquitySignalCard kicker="BOTTOM / RALLY DETECTION" title="Bottom signal unavailable" model={dashboard?.bottomSignal} empty="Bottom detection requires a breadth washout/thrust plus technical and macro confirmation." />
+      <EquitySignalCard kicker="CONSTITUENT BREADTH" title="Breadth unavailable" model={dashboard?.breadth} empty={dashboard?.breadth?.reason ?? 'Constituent histories are not connected.'} />
+    </section>
+
+    <section className="equity-regime-layout">
+      <article className="equity-driver-panel panel"><div className="panel-title"><div><p className="section-kicker">REGIME INPUTS</p><h3>{regime?.regime ?? 'Waiting for minimum coverage'}</h3></div><EquityStatus status={regime?.status} label={regime ? `${regime.coverage}% coverage` : 'unavailable'} /></div><div className="equity-driver-list">{(regime?.drivers ?? []).map((driver) => <div key={driver.key}><span><b>{driver.name}</b><small>{driver.source ?? 'Source unavailable'}</small></span><i><b style={{ width: `${driver.score ?? 0}%` }}></b></i><strong>{driver.score ?? '—'}</strong></div>)}</div></article>
+      <article className="equity-settings-panel panel"><div className="panel-title"><div><p className="section-kicker">DYNAMIC PLAYBOOK</p><h3>Regime-dependent settings</h3></div><span className="data-pill">{regime?.version ?? 'No model'}</span></div>{regime?.settings ? <div className="equity-settings"><div><span>Alert threshold</span><b>{regime.settings.alertThreshold}/100</b></div><div><span>Holding period</span><b>{regime.settings.holdingPeriod}</b></div><div><span>Trend / momentum</span><b>{regime.settings.trend}% / {regime.settings.momentum}%</b></div><div><span>Mean reversion</span><b>{regime.settings.meanReversion}%</b></div><div><span>Defensive / macro</span><b>{regime.settings.defensive}% / {regime.settings.macro}%</b></div></div> : <div className="equity-empty">Settings are not published without a regime.</div>}<p>Weights, thresholds, and expected holding periods change with the classified regime; one static model is not applied across all conditions.</p></article>
+    </section>
+
+    <section className="equity-section-heading"><div><p className="section-kicker">SECTOR AND SUBSECTOR ROTATION</p><h2>Relative strength with stored history</h2></div><EquityStatus status={rotation?.status} /></section>
+    <section className="equity-sector-layout">
+      <article className="equity-rotation-panel panel"><div className="equity-rotation-head"><span>Rank</span><span>Sector</span><span>Quadrant</span><span>20D vs SPY</span><span>60D vs SPY</span><span>Score</span></div>{rotation?.sectors?.length ? rotation.sectors.map((sector) => <div className="equity-rotation-row" key={sector.symbol}><b>{sector.rank}</b><span><strong>{sector.name}</strong><small>{sector.symbol} · {sector.sensitivity}</small></span><i className={sector.quadrant.toLowerCase()}>{sector.quadrant}</i><span className={sector.relative20 >= 0 ? 'positive' : 'negative'}>{formatPercent(sector.relative20)}</span><span className={sector.relative60 >= 0 ? 'positive' : 'negative'}>{formatPercent(sector.relative60)}</span><b>{sector.score}</b></div>) : <div className="equity-empty">{sectorData?.storage?.configured ? 'Run the daily history ingestion to calculate sector rotation.' : 'PostgreSQL history is required for sector rotation.'}</div>}<p className="equity-source-line">{sectorData?.methodology ?? 'Awaiting sector API.'}</p></article>
+      <article className="equity-sector-coverage panel"><div className="panel-title"><div><p className="section-kicker">HISTORY READINESS</p><h3>Sectors and subsectors</h3></div><span className="data-pill">Twelve Data</span></div><div className="equity-coverage-list">{(sectorData?.sectors ?? []).map((sector) => <div key={sector.symbol}><span><b>{sector.symbol}</b><small>{sector.name}</small></span><EquityStatus status={sector.coverage.status} label={`${sector.coverage.observations} obs.`} /></div>)}</div><details><summary>Subsector coverage ({sectorData?.subsectors?.length ?? 0})</summary><div className="equity-subsector-list">{(sectorData?.subsectors ?? []).map((sector) => <div key={sector.symbol}><span>{sector.symbol}</span><b>{sector.name}</b><small>{sector.coverage.status}</small></div>)}</div></details></article>
+    </section>
+
+    <section className="equity-section-heading"><div><p className="section-kicker">PARTICIPATION AND POSITIONING</p><h2>Inputs required for reliable extremes</h2></div><EquityStatus status="unavailable" label="Feeds pending" /></section>
+    <section className="equity-requirement-grid">
+      <RequirementPanel title="Market breadth" dataset={dashboard?.breadth} requirements={catalog?.requiredFeeds?.breadth} />
+      <RequirementPanel title="Sentiment" dataset={dashboard?.sentiment} requirements={catalog?.requiredFeeds?.sentiment} />
+      <RequirementPanel title="Positioning" dataset={dashboard?.positioning} requirements={catalog?.requiredFeeds?.positioning} />
+    </section>
+
+    <section className="equity-bottom-layout">
+      <article className="equity-history-panel panel"><div className="panel-title"><div><p className="section-kicker">HISTORICAL TOP STUDY</p><h3>Point-in-time warning review</h3></div><EquityStatus status={dashboard?.historicalTopStudy?.status} /></div><p>{dashboard?.historicalTopStudy?.reason ?? 'Historical study status is unavailable.'}</p><div><span>Price-only backtest</span><b>Rejected</b></div><div><span>Point-in-time vintages</span><b>Required</b></div><div><span>Constituent breadth history</span><b>Required</b></div></article>
+      <article className="equity-source-panel panel"><div className="panel-title"><div><p className="section-kicker">SOURCE LEDGER</p><h3>What supports this view</h3></div><span className="data-pill">{dashboard?.version ?? 'Awaiting API'}</span></div>{(dashboard?.sources ?? []).map((source) => <div className="equity-source-row" key={source.name}><span><b>{source.name}</b><small>{source.source ?? source.disclosure ?? 'No connected source'}</small></span><EquityStatus status={source.status} /></div>)}</article>
+    </section>
+    <p className="independence-note">TradeGate is an independent market research platform and is not affiliated with Tradegate AG.</p>
+  </div>;
 }
 
 function MarketCell({ name, quote }) {
