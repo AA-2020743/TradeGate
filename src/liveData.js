@@ -34,7 +34,7 @@ export function usePlatformData() {
       const dxyBtcData = dxyBtc.status === 'fulfilled' ? dxyBtc.value : null;
       const hasQuotes = Boolean(marketData?.assets?.length);
       const hasUnconfiguredProviders = Object.values(healthData?.providers ?? {}).some((provider) => !provider.configured || (provider.connected === false && provider.mode === 'unavailable') || provider.migrated === false && provider.configured);
-      const hasErrors = [health, markets, liquidity, dxyBtc].some((result) => result.status === 'rejected') || Boolean(marketData?.errors?.length) || hasUnconfiguredProviders;
+      const hasErrors = [health, markets, liquidity, dxyBtc].some((result) => result.status === 'rejected') || Boolean(marketData?.errors?.length) || Boolean(liquidityData?.errors?.length) || hasUnconfiguredProviders;
 
       setState({
         status: !healthData ? 'offline' : hasQuotes && !hasErrors ? 'live' : 'partial',
@@ -66,7 +66,7 @@ export function useMarketHistory(symbol, range) {
 
     requestJson(`/api/markets/history/${encodeURIComponent(symbol)}?range=${encodeURIComponent(range)}`)
       .then((data) => {
-        if (active) setState({ status: data.points?.length ? 'live' : 'unavailable', data, error: null });
+        if (active) setState({ status: data.points?.length ? data.stale ? 'stale' : 'live' : 'unavailable', data, error: null });
       })
       .catch((error) => {
         if (active) setState({ status: 'unavailable', data: null, error: error.message });
@@ -88,7 +88,7 @@ export function useTechnicalAnalytics(symbol) {
     setState({ status: 'loading', data: null, error: null });
     requestJson(`/api/analytics/technical/${encodeURIComponent(symbol)}`)
       .then((data) => {
-        if (active) setState({ status: data.model ? 'live' : 'unavailable', data, error: null });
+        if (active) setState({ status: data.model ? data.stale ? 'stale' : 'live' : 'unavailable', data, error: null });
       })
       .catch((error) => {
         if (active) setState({ status: 'unavailable', data: null, error: error.message });

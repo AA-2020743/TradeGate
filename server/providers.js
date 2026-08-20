@@ -1,7 +1,7 @@
 import { config } from './config.js';
 import { withCache } from './cache.js';
 import { calculateCrossMarketRelationship, calculateTechnicalSnapshot, calculateUsLiquidityModel } from './analytics.js';
-import { getStoredMarketHistory, getStoredMarketSnapshot } from './database.js';
+import { getStoredFredSeries, getStoredMarketHistory, getStoredMarketSnapshot } from './database.js';
 
 const TWELVE_SYMBOLS = [
   { symbol: 'SPY', key: 'SPY', name: 'S&P 500 proxy', kind: 'ETF' },
@@ -275,6 +275,8 @@ export async function getTechnicalSnapshot(symbol) {
     symbol: history.symbol,
     source: history.source,
     configured: history.configured,
+    stored: history.stored ?? false,
+    stale: history.stale ?? false,
     asOf: model?.asOf ?? history.asOf,
     model,
   };
@@ -339,26 +341,21 @@ async function getFredSeries(series) {
 }
 
 export async function getLiquiditySnapshot() {
-  if (!config.fredApiKey) {
-    return {
-      asOf: new Date().toISOString(),
-      provider: { configured: false, name: 'FRED' },
-      series: [],
-      netLiquidity: null,
-    };
-  }
-
   return withCache('liquidity-snapshot', 15 * 60_000, async () => {
-    const results = await Promise.allSettled(FRED_SERIES.map(getFredSeries));
-    const series = results.flatMap((result) => result.status === 'fulfilled' ? [result.value] : []);
+    const storedSeries = await getStoredFredSeries().catch(() => []);
+    const results = config.fredApiKey ? await Promise.allSettled(FRED_SERIES.map(getFredSeries)) : [];
+    const liveSeries = results.flatMap((result) => result.status === 'fulfilled' ? [result.value] : []);
+    const liveKeys = new Set(liveSeries.map((series) => series.key));
+    const series = [...liveSeries, ...storedSeries.filter((stored) => !liveKeys.has(stored.key))];
     const errors = results.flatMap((result) => result.status === 'rejected' ? [result.reason.message] : []);
+    if (!config.fredApiKey && !storedSeries.length) errors.push('FRED_API_KEY is not configured and no stored observations are available');
     const values = Object.fromEntries(series.map((item) => [item.key, item.value * item.multiplier]));
     const hasNetLiquidityInputs = ['fedBalanceSheet', 'treasuryGeneralAccount', 'reverseRepo'].every((key) => values[key] !== undefined);
     const model = calculateUsLiquidityModel(series);
 
     return {
       asOf: new Date().toISOString(),
-      provider: { configured: true, name: 'FRED' },
+      provider: { configured: Boolean(config.fredApiKey), name: 'FRED', storedFallbacks: series.filter((item) => item.stored).length },
       series,
       netLiquidity: hasNetLiquidityInputs ? values.fedBalanceSheet - values.treasuryGeneralAccount - values.reverseRepo : null,
       model,

@@ -187,6 +187,51 @@ export async function getStoredMarketSnapshot() {
     asOf: row.observed_at,
     source: `${row.provider} (stored)`,
     stored: true,
+    stale: Date.now() - new Date(row.observed_at).getTime() > (row.key === 'BTC' ? 5 * 60_000 : 4 * 86_400_000),
+  }));
+}
+
+export async function getStoredFredSeries() {
+  if (!pool) return [];
+  const result = await pool.query(
+    `SELECT
+       series.provider_series_id AS id,
+       series.name,
+       series.unit,
+       series.metadata AS series_metadata,
+       observations.observed_at,
+       observations.value,
+       observations.provider_as_of,
+       observations.metadata AS observation_metadata
+     FROM data_series AS series
+     JOIN observations ON observations.series_id = series.id
+     WHERE series.provider = 'FRED'
+     ORDER BY series.provider_series_id, observations.observed_at ASC`,
+  );
+  const grouped = new Map();
+  for (const row of result.rows) {
+    if (!grouped.has(row.id)) {
+      grouped.set(row.id, {
+        id: row.id,
+        key: row.series_metadata.key,
+        name: row.name,
+        unit: row.unit,
+        multiplier: row.series_metadata.multiplier ?? 1,
+        history: [],
+        stored: true,
+      });
+    }
+    grouped.get(row.id).history.push({
+      date: row.observed_at.toISOString().slice(0, 10),
+      value: row.value,
+      realtimeStart: row.provider_as_of?.toISOString().slice(0, 10) ?? null,
+      realtimeEnd: row.observation_metadata?.realtimeEnd ?? null,
+    });
+  }
+  return [...grouped.values()].map((series) => ({
+    ...series,
+    value: series.history.at(-1)?.value ?? null,
+    date: series.history.at(-1)?.date ?? null,
   }));
 }
 
