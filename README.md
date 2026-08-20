@@ -183,7 +183,8 @@ The macro regime combines US liquidity, Chicago Fed financial conditions, US hig
 - FRED revisions are preserved in `observation_revisions` rather than overwritten without an audit trail.
 - Ingestion runs record status, write count, provider errors, and completion time.
 - Model outputs store their version, effective date, JSON output, and input-series lineage.
-- Remaining preview modules are visibly labeled until their real input sets and calculation tests exist.
+- Remaining preview modules are visibly labeled at the navigation, tab, and individual-section level until their real input sets and calculation tests exist.
+- Calculated sections show their model version or coverage status instead of a Preview badge.
 
 ### 3. Install the systemd service
 
