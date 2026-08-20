@@ -161,6 +161,12 @@ The output is Expansion above `+0.15`, Contraction below `-0.15`, and Neutral be
 
 DXY/BTC uses aligned daily log returns rather than price levels. It calculates 20-day, 60-day, and one-year Pearson correlations, momentum alignment, and a 20-session dollar breakout state. Twelve Data DXY is preferred; FRED's broad-dollar index is explicitly labeled as a proxy when used.
 
+### Equity calculation engines
+
+`equity-regime-v1` dynamically changes factor weights, alert thresholds, and expected holding periods. It requires price trend, momentum, and volatility, and remains provisional below 75% driver coverage. `equity-top-risk-v1` and `equity-bottom-signal-v1` require both technical and constituent-breadth confirmation and do not publish from price and liquidity alone.
+
+`equity-breadth-v1` calculates advance/decline participation, McClellan measures, moving-average participation, new highs/lows, and breadth thrusts from constituent histories. `sector-rotation-v1` ranks aligned 20- and 60-session performance relative to SPY together with `technical-v1`. Missing constituent, volume, flow, sentiment, positioning, or credit inputs remain explicitly unavailable.
+
 ## Reliability Rules
 
 - Missing provider data returns unavailable; it is never silently replaced with a sample value.
