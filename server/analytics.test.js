@@ -26,6 +26,11 @@ test('Technical snapshot derives a constructive regime from persistent strength'
   assert.equal(snapshot.regime, 'Constructive');
   assert.ok(snapshot.score >= 65);
   assert.ok(snapshot.indicators.sma200 < snapshot.latest);
+  assert.ok(Math.abs(snapshot.indicators.pctFrom52wHigh) < 1);
+
+  const drawnPoints = points.map((point, index) => ({ ...point, value: index > 250 ? point.value * 0.9 : point.value }));
+  const drawn = calculateTechnicalSnapshot(drawnPoints);
+  assert.ok(drawn.indicators.pctFrom52wHigh <= -5);
 });
 
 test('Cross-market relationship calculates inverse return correlation', () => {
