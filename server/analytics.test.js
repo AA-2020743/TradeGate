@@ -350,6 +350,26 @@ test('Liquidity states vitals raise alerts on regime and stablecoin transitions'
   });
   assert.equal(unchanged.status, 'stable');
 });
+
+test('Dollar transmission vitals raise alerts on backdrop flips', () => {
+  const narrative = buildWorkspaceNarrative({
+    'dollar-transmission': [
+      { output: { tailwindLabel: 'Dollar headwind', tailwindScore: -2, corr60: -0.52, linkRegime: 'Inverse' } },
+      { output: { tailwindLabel: 'Dollar tailwind', tailwindScore: 1, corr60: -0.31, linkRegime: 'Inverse' } },
+    ],
+  });
+  assert.equal(narrative.status, 'updated');
+  assert.ok(narrative.entries.some((entry) => entry.key === 'dollar-transmission:tailwindLabel' && entry.text.includes('headwind') && entry.text.includes('tailwind')));
+  assert.ok(narrative.entries.some((entry) => entry.key === 'dollar-transmission:corr60'));
+
+  const unchanged = buildWorkspaceNarrative({
+    'dollar-transmission': [
+      { output: { tailwindLabel: 'Neutral dollar', tailwindScore: 0, corr60: -0.4 } },
+      { output: { tailwindLabel: 'Neutral dollar', tailwindScore: 0, corr60: -0.38 } },
+    ],
+  });
+  assert.equal(unchanged.status, 'stable');
+});
 test('COT positioning ranks net speculative exposure', () => {
   const history = Array.from({ length: 60 }, (_, index) => ({
     date: new Date(Date.UTC(2025, 0, 1 + (index * 7))).toISOString().slice(0, 10),

@@ -687,6 +687,10 @@ const WORKSPACE_VITALS = {
     ...(workspace.stablecoinState ? [{ key: 'stablecoinState', label: 'Stablecoin supply regime', string: workspace.stablecoinState }] : []),
     ...(Number.isFinite(workspace.stablecoinChange30dPct) ? [{ key: 'stablecoinChange30d', label: 'Stablecoin 30-day growth %', value: workspace.stablecoinChange30dPct, threshold: 0.1 }] : []),
   ],
+  'dollar-transmission': (workspace) => [
+    ...(workspace.tailwindLabel ? [{ key: 'tailwindLabel', label: 'Bitcoin dollar backdrop', string: workspace.tailwindLabel }] : []),
+    ...(Number.isFinite(workspace.corr60) ? [{ key: 'corr60', label: 'DXY/BTC 60-day correlation', value: workspace.corr60, threshold: 0.15 }] : []),
+  ],
 };
 
 export function buildWorkspaceNarrative(outputsByKey = {}) {
