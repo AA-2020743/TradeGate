@@ -13,7 +13,7 @@ The application now has a server-side data layer. It never exposes provider cred
 | FRED | Official U.S. macro and liquidity observations | `FRED_API_KEY` |
 | PostgreSQL | Observations, revisions, ingestion runs, and model lineage | `DATABASE_URL` |
 
-Technical scores are calculated by `technical-v1` from provider history. The US liquidity regime is calculated by `us-liquidity-v1`; `global-liquidity-v1` aggregates US net liquidity with ECB and BoJ balance sheets in USD; `regime-correlation-v1` calculates the cross-market relationship map; `usd-strength-v1` and `macro-regime-v1` use additional FRED market and financial-condition histories. UI sections explicitly identify the remaining model previews.
+Technical scores are calculated by `technical-v1` from provider history. The US liquidity regime is calculated by `us-liquidity-v1`; `global-liquidity-v1` aggregates US net liquidity with ECB, BoJ, and PBoC (BIS) balance sheets in USD; `regime-correlation-v1` calculates the cross-market relationship map; `usd-strength-v1` and `macro-regime-v1` use additional FRED market and financial-condition histories. UI sections explicitly identify the remaining model previews.
 
 ## Local Development
 
@@ -171,14 +171,15 @@ The global liquidity model aggregates central-bank balance sheets converted to U
 
 | Driver | Weight |
 | --- | ---: |
-| Global central-bank impulse (pooled USD total, 13-week change) | 40% |
-| Fed net liquidity impulse | 25% |
+| Global central-bank impulse (pooled USD total, 13-week change) | 30% |
+| US M2 growth | 20% |
 | ECB + BoJ combined impulse | 15% |
+| PBoC impulse (when BIS history is available) | 15% |
 | Inverse broad-dollar 13-week change | 20% |
 
-Unit conversions use FRED H.10 rates matched to each observation date (`DEXUSEU`, `DEXJPUS`, maximum 35-day gap): the US leg is net liquidity (Fed assets minus TGA minus reverse repo) in USD millions; ECB assets are EUR millions multiplied by USD/EUR; BoJ assets are reported in units of 100 million yen and are divided by the yen rate after scaling. The pooled history is published in USD millions with a cycle percentile, per-region shares, and 91/365-day changes. The same Expansion/Contraction thresholds as `us-liquidity-v1` apply.
+Unit conversions use FRED H.10 rates matched to each observation date (`DEXUSEU`, `DEXJPUS`, `DEXCHUS`, maximum 35-day gap): the US leg is net liquidity (Fed assets minus TGA minus reverse repo) in USD millions; ECB assets are EUR millions multiplied by USD/EUR; BoJ assets are reported in units of 100 million yen and are divided by the yen rate after scaling; PBoC assets arrive in CNY billions from BIS `WS_CBTA` (via DBnomics, series `M.CN.B.XDC.CNY.N`) and are divided by the yuan rate after scaling. The pool is summed with gap-tolerant alignment so monthly legs no longer create partial-sum artifacts. The pooled history is published in USD millions with a cycle percentile, per-region shares, and 91/365-day changes. The same Expansion/Contraction thresholds as `us-liquidity-v1` apply.
 
-Documented exclusions: Bank of England assets were discontinued on FRED in 2014, no PBoC balance-sheet series exists on FRED, and all broad-money series (OECD MEI M2/M3, IMF IFS) are frozen at stale dates, so none are used. These legs require national-source ingestion before they can be added.
+PBoC data carries a structural publication lag (BIS splices national submissions); observations older than roughly 18 months are treated as stale and excluded, and within that window the leg is labeled with its source and lag in the UI. When PBoC history is insufficient the remaining drivers renormalize and the model stays publishable. Documented exclusions: Bank of England assets were discontinued on FRED in 2014, and all broad-money series (OECD MEI M2/M3, IMF IFS) are frozen at stale dates, so none are used.
 
 ### `regime-correlation-v1`
 
@@ -198,7 +199,9 @@ USD strength combines FRED's broad trade-weighted dollar trend and momentum with
 
 ### `macro-regime-v1`
 
-The macro regime combines US liquidity, Chicago Fed financial conditions, US high-yield spreads, VIX, and inverse dollar pressure. It changes risk budget, alert threshold, preferred factor emphasis, and expected holding period by regime. At least two independent sleeves and 40% coverage are required; full calculated status requires 75% coverage. A stress regime requires simultaneous VIX, credit-spread, and financial-condition confirmation.
+The macro regime combines US liquidity, global liquidity, Chicago Fed financial conditions, US high-yield spreads, VIX, and inverse dollar pressure (weights 25/15/20/18/12/10). It changes risk budget, alert threshold, preferred factor emphasis, and expected holding period by regime. At least two independent sleeves and 40% coverage are required; full calculated status requires 75% coverage. A stress regime requires simultaneous VIX, credit-spread, and financial-condition confirmation.
+
+FRED histories are ingested with up to 2,500 observations per series, so weekly balance-sheet and rate series reach back well beyond five years in the liquidity inspector's `All` range; daily series remain bounded by FRED's own history (for example the broad dollar starts in 2006).
 
 ### Equity calculation engines
 

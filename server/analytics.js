@@ -338,6 +338,28 @@ function sumSeries(basePoints, overlayPoints) {
   return [...merged.entries()].map(([date, value]) => ({ date, value })).sort((left, right) => new Date(left.date) - new Date(right.date));
 }
 
+function sumAlignedSeries(legs) {
+  const usableLegs = legs.filter((leg) => leg.length);
+  if (usableLegs.length !== legs.length) return [];
+  const dates = [...new Set(usableLegs.flat().map((point) => point.date))].sort((left, right) => new Date(left) - new Date(right));
+  const output = [];
+  for (const date of dates) {
+    let total = 0;
+    let complete = true;
+    for (const leg of usableLegs) {
+      const point = latestAtOrBefore(leg, date);
+      const gapDays = point ? (new Date(date) - new Date(point.date)) / DAY_MS : Number.POSITIVE_INFINITY;
+      if (!point || gapDays > GLOBAL_LIQUIDITY_MAX_GAP_DAYS) {
+        complete = false;
+        break;
+      }
+      total += point.value;
+    }
+    if (complete) output.push({ date, value: total });
+  }
+  return output;
+}
+
 export function calculateGlobalLiquidityModel(seriesList) {
   const series = Object.fromEntries(seriesList.map((item) => [item.key, item]));
   const fed = pointsForSeries(series.fedBalanceSheet);
@@ -346,8 +368,10 @@ export function calculateGlobalLiquidityModel(seriesList) {
   const m2 = pointsForSeries(series.usM2);
   const ecb = pointsForSeries(series.ecbBalanceSheet);
   const boj = pointsForSeries(series.bojBalanceSheet);
+  const pboc = pointsForSeries(series.pbocBalanceSheet);
   const eurUsd = pointsForSeries(series.eurUsd);
   const yenPerUsd = pointsForSeries(series.yenPerUsd);
+  const yuanPerUsd = pointsForSeries(series.yuanPerUsd);
   const dollar = pointsForSeries(series.dxy);
 
   const usLeg = fed.flatMap((point) => {
@@ -359,22 +383,26 @@ export function calculateGlobalLiquidityModel(seriesList) {
   });
   const ecbLeg = alignedUsdLeg(ecb, eurUsd, (value, rate) => value * rate);
   const bojLeg = alignedUsdLeg(boj, yenPerUsd, (value, rate) => (value * 100) / rate);
+  const pbocLeg = alignedUsdLeg(pboc, yuanPerUsd, (value, rate) => (value * 1000) / rate);
   if (!usLeg.length || !ecbLeg.length || !bojLeg.length) return null;
 
-  const globalLiquidity = sumSeries(sumSeries(usLeg, ecbLeg), bojLeg);
+  const globalLiquidity = sumAlignedSeries([usLeg, ecbLeg, bojLeg, ...(pbocLeg.length ? [pbocLeg] : [])]);
+  if (!globalLiquidity.length) return null;
 
-  const exUs = sumSeries(ecbLeg, bojLeg);
+  const exUs = sumAlignedSeries([ecbLeg, bojLeg]);
   const driverDefinitions = [
-    { key: 'globalCentralBank', name: 'Global central-bank impulse', change: changeOverDays(globalLiquidity, 91), scale: 3, weight: 0.4 },
-    { key: 'usM2', name: 'US M2 growth', change: changeOverDays(m2, 91), scale: 2, weight: 0.25 },
+    { key: 'globalCentralBank', name: 'Global central-bank impulse', change: changeOverDays(globalLiquidity, 91), scale: 3, weight: 0.3 },
+    { key: 'usM2', name: 'US M2 growth', change: changeOverDays(m2, 91), scale: 2, weight: 0.2 },
     { key: 'exUsCentralBank', name: 'ECB + BoJ impulse', change: changeOverDays(exUs, 91), scale: 3, weight: 0.15 },
     { key: 'dollar', name: 'Dollar transmission', change: changeOverDays(dollar, 91), scale: 3, weight: 0.2, inverse: true },
+    ...(pbocLeg.length >= 13 ? [{ key: 'pbocCentralBank', name: 'PBoC impulse', change: changeOverDays(pbocLeg, 91), scale: 3, weight: 0.15 }] : []),
   ];
+  const coreDriverKeys = ['globalCentralBank', 'usM2', 'exUsCentralBank', 'dollar'];
   const drivers = driverDefinitions.map((driver) => ({
     ...driver,
     impulse: boundedImpulse(driver.change, driver.scale, driver.inverse),
   })).filter((driver) => driver.impulse !== null);
-  if (drivers.length !== driverDefinitions.length) return null;
+  if (!coreDriverKeys.every((key) => drivers.some((driver) => driver.key === key))) return null;
 
   const availableWeight = drivers.reduce((total, driver) => total + driver.weight, 0);
   const composite = drivers.reduce((total, driver) => total + (driver.impulse * driver.weight), 0) / availableWeight;
@@ -399,11 +427,13 @@ export function calculateGlobalLiquidityModel(seriesList) {
     { key: 'us', name: 'United States (net liquidity)', points: usLeg },
     { key: 'ecb', name: 'European Central Bank', points: ecbLeg },
     { key: 'boj', name: 'Bank of Japan', points: bojLeg },
+    ...(pbocLeg.length ? [{ key: 'pboc', name: "People's Bank of China", points: pbocLeg, source: 'BIS WS_CBTA (publication lag)' }] : []),
   ].map((leg) => {
     const latest = leg.points.at(-1)?.value ?? null;
     return {
       key: leg.key,
       name: leg.name,
+      ...(leg.source ? { source: leg.source } : {}),
       valueUsdMillions: latest,
       sharePercent: latest !== null && latestTotal ? Math.round((latest / latestTotal) * 100) : null,
       change91d: changeOverDays(leg.points, 91),
@@ -552,7 +582,7 @@ const MACRO_REGIME_SETTINGS = {
   'Stress / deleveraging': { riskBudget: 'Minimal', alertThreshold: 80, holdingPeriod: '1-10 sessions', emphasis: 'Capital preservation and convexity' },
 };
 
-export function calculateMacroRegimeModel(seriesList, liquidityModel = null, usdStrengthModel = null) {
+export function calculateMacroRegimeModel(seriesList, liquidityModel = null, usdStrengthModel = null, globalLiquidityModel = null) {
   const series = Object.fromEntries(seriesList.map((item) => [item.key, item]));
   const financialConditions = pointsForSeries(series.financialConditions);
   const credit = pointsForSeries(series.highYieldSpread);
@@ -563,10 +593,11 @@ export function calculateMacroRegimeModel(seriesList, liquidityModel = null, usd
   const financialChange = absoluteChangeOverDays(financialConditions, 91);
   const creditChange = absoluteChangeOverDays(credit, 91);
   const drivers = [
-    { key: 'liquidity', name: 'US liquidity impulse', score: liquidityModel?.score, weight: 0.3, value: liquidityModel?.score, change: liquidityModel?.composite, source: liquidityModel?.version },
-    { key: 'financialConditions', name: 'Financial conditions', score: Number.isFinite(financialLatest) ? clamp(50 - (financialLatest * 40) - ((financialChange ?? 0) * 30)) : null, weight: 0.25, value: financialLatest, change: financialChange, source: 'FRED NFCI' },
-    { key: 'credit', name: 'High-yield credit', score: Number.isFinite(creditLatest) ? clamp(80 - ((creditLatest - 3) * 15) - ((creditChange ?? 0) * 20)) : null, weight: 0.2, value: creditLatest, change: creditChange, source: 'FRED BAMLH0A0HYM2' },
-    { key: 'volatility', name: 'Equity volatility', score: Number.isFinite(vixLatest) ? clamp(100 - ((vixLatest - 12) * 3.5)) : null, weight: 0.15, value: vixLatest, change: absoluteChangeOverDays(volatility, 28), source: 'FRED VIXCLS' },
+    { key: 'liquidity', name: 'US liquidity impulse', score: liquidityModel?.score, weight: 0.25, value: liquidityModel?.score, change: liquidityModel?.composite, source: liquidityModel?.version },
+    { key: 'globalLiquidity', name: 'Global liquidity impulse', score: globalLiquidityModel?.score, weight: 0.15, value: globalLiquidityModel?.score, change: globalLiquidityModel?.composite, source: globalLiquidityModel?.version },
+    { key: 'financialConditions', name: 'Financial conditions', score: Number.isFinite(financialLatest) ? clamp(50 - (financialLatest * 40) - ((financialChange ?? 0) * 30)) : null, weight: 0.2, value: financialLatest, change: financialChange, source: 'FRED NFCI' },
+    { key: 'credit', name: 'High-yield credit', score: Number.isFinite(creditLatest) ? clamp(80 - ((creditLatest - 3) * 15) - ((creditChange ?? 0) * 20)) : null, weight: 0.18, value: creditLatest, change: creditChange, source: 'FRED BAMLH0A0HYM2' },
+    { key: 'volatility', name: 'Equity volatility', score: Number.isFinite(vixLatest) ? clamp(100 - ((vixLatest - 12) * 3.5)) : null, weight: 0.12, value: vixLatest, change: absoluteChangeOverDays(volatility, 28), source: 'FRED VIXCLS' },
     { key: 'dollar', name: 'Inverse dollar pressure', score: Number.isFinite(usdStrengthModel?.score) ? 100 - usdStrengthModel.score : null, weight: 0.1, value: usdStrengthModel?.score, change: usdStrengthModel?.indicators?.momentum20d, source: usdStrengthModel?.version },
   ];
   const model = driverComposite(drivers, 0.4, 2);

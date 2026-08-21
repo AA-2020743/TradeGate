@@ -132,9 +132,10 @@ export async function ingestLiquiditySnapshot() {
     if (!snapshot.series.length) throw new Error('No FRED series were returned');
 
     for (const series of snapshot.series) {
+      const provider = series.provider ?? 'FRED';
       const written = await persistSeries({
-        id: `fred:${series.id}`,
-        provider: 'FRED',
+        id: `${provider.toLowerCase()}:${series.id}`,
+        provider,
         providerSeriesId: series.id,
         name: series.name,
         assetClass: 'Macro',
@@ -154,11 +155,11 @@ export async function ingestLiquiditySnapshot() {
     const usableSeries = snapshot.series.filter((series) => !series.stale);
     const lineageFor = (keys) => {
       const requested = new Set(keys);
-      return usableSeries.filter((series) => requested.has(series.key)).map((series) => ({ seriesId: `fred:${series.id}`, asOf: series.date }));
+      return usableSeries.filter((series) => requested.has(series.key)).map((series) => ({ seriesId: `${(series.provider ?? 'FRED').toLowerCase()}:${series.id}`, asOf: series.date }));
     };
     const contributingDrivers = (model) => new Set((model?.drivers ?? []).filter((driver) => Number.isFinite(driver.score)).map((driver) => driver.key));
     const liquidityKeys = ['fedBalanceSheet', 'treasuryGeneralAccount', 'reverseRepo', 'usM2', 'dxy'];
-    const globalKeys = [...new Set([...liquidityKeys, 'ecbBalanceSheet', 'bojBalanceSheet', 'eurUsd', 'yenPerUsd'])];
+    const globalKeys = [...new Set([...liquidityKeys, 'ecbBalanceSheet', 'bojBalanceSheet', 'pbocBalanceSheet', 'eurUsd', 'yenPerUsd', 'yuanPerUsd'])];
     const usdDrivers = contributingDrivers(snapshot.usdStrength);
     const usdKeys = [
       ...(usdDrivers.has('dollarTrend') || usdDrivers.has('dollarMomentum') ? ['dxy'] : []),
@@ -174,6 +175,7 @@ export async function ingestLiquiditySnapshot() {
       ...(macroDrivers.has('credit') ? ['highYieldSpread'] : []),
       ...(macroDrivers.has('volatility') ? ['vix'] : []),
       ...(macroDrivers.has('dollar') ? usdKeys : []),
+      ...(macroDrivers.has('globalLiquidity') ? globalKeys : []),
     ];
     await persistModelOutput('us-liquidity', snapshot.model, lineageFor(liquidityKeys), runId);
     await persistModelOutput('global-liquidity', snapshot.globalLiquidity, lineageFor(globalKeys), runId);

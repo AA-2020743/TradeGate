@@ -15,7 +15,23 @@ const FRED_MAX_OBSERVATION_AGE_DAYS = {
   JPNASSETS: 60,
   DEXUSEU: 7,
   DEXJPUS: 7,
+  DEXCHUS: 7,
 };
+
+export const PBOC_MAX_OBSERVATION_AGE_DAYS = 560;
+
+export function isPbocObservationStale(date, now = Date.now()) {
+  if (!date) return true;
+  const timestamp = new Date(`${date}T00:00:00.000Z`).getTime();
+  return !Number.isFinite(timestamp) || now - timestamp > (PBOC_MAX_OBSERVATION_AGE_DAYS * DAY_MS);
+}
+
+export function monthsBetween(date, now = Date.now()) {
+  if (!date) return null;
+  const timestamp = new Date(`${date}T00:00:00.000Z`).getTime();
+  if (!Number.isFinite(timestamp)) return null;
+  return Math.max(0, Math.round((now - timestamp) / (30.44 * DAY_MS)));
+}
 
 export function isFredSeriesStale(id, date, now = Date.now()) {
   if (!date) return true;

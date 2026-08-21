@@ -3,7 +3,7 @@ import { withCache } from './cache.js';
 import { buildLiquidityNarrative, calculateChangeCorrelations, calculateCrossMarketRelationship, calculateGlobalLiquidityModel, calculateMacroRegimeModel, calculateTechnicalSnapshot, calculateUsdStrengthModel, calculateUsLiquidityModel } from './analytics.js';
 import { getStoredFredSeries, getStoredMarketHistory, getStoredMarketSnapshot, getRecentModelOutputs, isDatabaseConfigured, reserveProviderCredits } from './database.js';
 import { getAllEquityHistorySymbols, getCoreEquityHistorySymbols } from './equityCatalog.js';
-import { isCryptoHistoryStale, isDailyCloseStale, isFredSeriesStale } from './freshness.js';
+import { isCryptoHistoryStale, isDailyCloseStale, isFredSeriesStale, isPbocObservationStale, monthsBetween } from './freshness.js';
 
 const TWELVE_SYMBOLS = [
   { symbol: 'SPY', key: 'SPY', name: 'S&P 500 proxy', kind: 'ETF' },
@@ -29,7 +29,42 @@ const FRED_SERIES = [
   { id: 'JPNASSETS', key: 'bojBalanceSheet', name: 'Bank of Japan total assets', unit: '100M yen', multiplier: 1 },
   { id: 'DEXUSEU', key: 'eurUsd', name: 'US dollars per euro', unit: 'USD per EUR', multiplier: 1 },
   { id: 'DEXJPUS', key: 'yenPerUsd', name: 'Yen per US dollar', unit: 'JPY per USD', multiplier: 1 },
+  { id: 'DEXCHUS', key: 'yuanPerUsd', name: 'Yuan per US dollar', unit: 'CNY per USD', multiplier: 1 },
 ];
+
+const PBOC_SERIES_CODE = 'M.CN.B.XDC.CNY.N';
+const PBOC_SERIES_ID = 'BIS_WS_CBTA_CN';
+
+async function getPbocAssets() {
+  const url = new URL(`https://api.db.nomics.world/v22/series/BIS/WS_CBTA/${PBOC_SERIES_CODE}`);
+  url.searchParams.set('observations', '1');
+  const payload = await fetchJson(url);
+  const doc = payload?.series?.docs?.[0];
+  const periods = doc?.period ?? [];
+  const values = doc?.value ?? [];
+  if (!periods.length) throw new Error('DBnomics returned no observations for BIS WS_CBTA China');
+  const history = periods
+    .map((period, index) => ({ date: `${period}-01`, value: Number(values[index]), realtimeStart: null, realtimeEnd: null }))
+    .filter((item) => Number.isFinite(item.value))
+    .reverse();
+  const observation = history[0];
+  const value = observation?.value;
+  if (!observation || !Number.isFinite(value)) throw new Error('DBnomics returned no usable observation for BIS WS_CBTA China');
+  return {
+    id: PBOC_SERIES_ID,
+    key: 'pbocBalanceSheet',
+    name: 'PBoC total assets',
+    unit: 'CNY billions',
+    multiplier: 1,
+    provider: 'BIS',
+    value,
+    date: observation.date,
+    stored: false,
+    stale: isPbocObservationStale(observation.date),
+    laggedMonths: monthsBetween(observation.date),
+    history,
+  };
+}
 
 let twelveLimiterQueue = Promise.resolve();
 let twelveCreditReservations = [];
@@ -492,7 +527,7 @@ async function getFredSeries(series) {
   url.searchParams.set('api_key', config.fredApiKey);
   url.searchParams.set('file_type', 'json');
   url.searchParams.set('sort_order', 'desc');
-  url.searchParams.set('limit', '400');
+  url.searchParams.set('limit', '2500');
   const payload = await fetchJson(url);
   const observations = (payload.observations ?? []).filter((item) => item.value !== '.');
   const observation = observations[0];
@@ -517,7 +552,7 @@ async function getFredSeries(series) {
 export async function getLiquiditySnapshot(options = {}) {
   return withCache('liquidity-snapshot', 15 * 60_000, async () => {
     const storedSeries = await getStoredFredSeries().catch(() => []);
-    const results = config.fredApiKey ? await Promise.allSettled(FRED_SERIES.map(getFredSeries)) : [];
+    const results = config.fredApiKey ? await Promise.allSettled([...FRED_SERIES.map(getFredSeries), getPbocAssets()]) : await Promise.allSettled([getPbocAssets()]);
     const liveSeries = results.flatMap((result) => result.status === 'fulfilled' ? [result.value] : []);
     const series = mergeFredSeries(liveSeries, storedSeries);
     const modelSeries = series.filter((item) => !item.stale);
@@ -532,7 +567,7 @@ export async function getLiquiditySnapshot(options = {}) {
     const model = calculateUsLiquidityModel(modelSeries);
     const globalLiquidity = calculateGlobalLiquidityModel(modelSeries);
     const usdStrength = calculateUsdStrengthModel(modelSeries, model);
-    const macroRegime = calculateMacroRegimeModel(modelSeries, model, usdStrength);
+    const macroRegime = calculateMacroRegimeModel(modelSeries, model, usdStrength, globalLiquidity);
     let narrative = null;
     if (isDatabaseConfigured()) {
       try {

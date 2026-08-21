@@ -258,7 +258,7 @@ export async function getStoredFredSeries() {
        observations.metadata AS observation_metadata
      FROM data_series AS series
      JOIN observations ON observations.series_id = series.id
-     WHERE series.provider = 'FRED'
+     WHERE series.provider IN ('FRED', 'BIS')
      ORDER BY series.provider_series_id, observations.observed_at ASC`,
   );
   const grouped = new Map();

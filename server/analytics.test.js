@@ -97,22 +97,28 @@ test('Global liquidity model aggregates USD-converted central-bank legs', () => 
     { ...weekly('usM2', 20_000, 30), multiplier: 1000 },
     weekly('ecbBalanceSheet', 6_200_000, 15_000),
     weekly('bojBalanceSheet', 7_500_000, 8_000),
+    weekly('pbocBalanceSheet', 45_000, 50),
     weekly('eurUsd', 1.08, 0.002),
     weekly('yenPerUsd', 150, -0.2),
+    weekly('yuanPerUsd', 7.2, -0.01),
     weekly('dxy', 110, -0.15),
   ]);
   assert.equal(model.version, 'global-liquidity-v1');
   assert.equal(model.regime, 'Expansion');
   assert.ok(model.score > 50);
-  assert.equal(model.centralBanks.length, 3);
+  assert.equal(model.centralBanks.length, 4);
   const usLeg = model.centralBanks.find((leg) => leg.key === 'us');
   const ecbLeg = model.centralBanks.find((leg) => leg.key === 'ecb');
   const bojLeg = model.centralBanks.find((leg) => leg.key === 'boj');
+  const pbocLeg = model.centralBanks.find((leg) => leg.key === 'pboc');
   const expectedNetUs = (7_000_000 + (119 * 20_000)) - (800_000 - (119 * 5_000)) - ((2_000 - (119 * 15)) * 1000);
   assert.ok(Math.abs(usLeg.valueUsdMillions - expectedNetUs) < 1_000);
   assert.ok(Math.abs(ecbLeg.valueUsdMillions - ((6_200_000 + (119 * 15_000)) * (1.08 + (119 * 0.002)))) < 1_000);
   assert.ok(Math.abs(bojLeg.valueUsdMillions - (((7_500_000 + (119 * 8_000)) * 100) / (150 - (119 * 0.2)))) < 1_000);
+  assert.ok(Math.abs(pbocLeg.valueUsdMillions - (((45_000 + (119 * 50)) * 1000) / (7.2 - (119 * 0.01)))) < 1_000);
+  assert.match(pbocLeg.source, /BIS/);
   assert.ok(model.drivers.some((driver) => driver.key === 'usM2'));
+  assert.ok(model.drivers.some((driver) => driver.key === 'pbocCentralBank'));
   const shareTotal = model.centralBanks.reduce((total, leg) => total + leg.sharePercent, 0);
   assert.ok(Math.abs(shareTotal - 100) <= 1);
   assert.equal(model.history.length, 120);
@@ -212,7 +218,7 @@ test('macro regime uses independent liquidity, conditions, credit, volatility, a
   ], { score: 75, composite: 0.3, version: 'liquidity-test', asOf: '2026-01-01' }, { score: 40, version: 'usd-test', asOf: '2026-01-01', indicators: { momentum20d: -1 } });
   assert.equal(model.version, 'macro-regime-v1');
   assert.equal(model.status, 'calculated');
-  assert.equal(model.coverage, 100);
+  assert.equal(model.coverage, 85);
   assert.equal(model.regime, 'Expansion / risk-on');
   assert.equal(model.settings.riskBudget, 'High');
   assert.equal(model.panicConfirmed, false);
@@ -226,9 +232,23 @@ test('macro regime refuses a single-sleeve classification', () => {
 });
 
 test('macro regime leaves panic confirmation unavailable without stress inputs', () => {
-  const model = calculateMacroRegimeModel([], { score: 70, version: 'liquidity-test' }, { score: 45, version: 'usd-test', indicators: {} });
+  const model = calculateMacroRegimeModel([], { score: 70, version: 'liquidity-test' }, { score: 45, version: 'usd-test', indicators: {} }, { score: 60, version: 'global-test' });
   assert.equal(model.status, 'provisional');
   assert.equal(model.panicConfirmed, null);
+});
+
+test('macro regime folds in the global liquidity sleeve', () => {
+  const model = calculateMacroRegimeModel(
+    [],
+    { score: 70, version: 'liquidity-test' },
+    { score: 45, version: 'usd-test', indicators: {} },
+    { score: 80, composite: 0.2, version: 'global-liquidity-v1' },
+  );
+  const globalDriver = model.drivers.find((driver) => driver.key === 'globalLiquidity');
+  assert.ok(globalDriver);
+  assert.equal(globalDriver.score, 80);
+  assert.equal(globalDriver.weight, 0.15);
+  assert.equal(model.coverage, 50);
 });
 test('Change correlations identify aligned and inverse series', () => {
   const daily = (base, scale) => Array.from({ length: 80 }, (_, index) => ({
