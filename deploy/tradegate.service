@@ -9,10 +9,9 @@ User=tradegate
 Group=tradegate
 WorkingDirectory=/home/tradegate/TradeGate
 EnvironmentFile=/home/tradegate/TradeGate/.env
-ExecStart=/usr/bin/npm start
-Restart=on-failure
+ExecStart=/usr/bin/node server/index.js
+Restart=always
 RestartSec=5
-
 NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=full
