@@ -1588,6 +1588,54 @@ async function getFredCsvSeries(series) {
   };
 }
 
+export async function getStablecoinIssuance() {
+  return withCache('analytics:stablecoin-issuance', 6 * 3_600_000, async () => {
+    const chart = await fetchJson('https://stablecoins.llama.fi/stablecoincharts/all');
+    if (!Array.isArray(chart) || chart.length < 40) throw new Error('DefiLlama stablecoin history unavailable');
+    const totalAt = (index) => asNumber(chart.at(index)?.totalCirculatingUSD?.peggedUSD);
+    const latest = totalAt(-1);
+    if (!Number.isFinite(latest)) throw new Error('DefiLlama stablecoin totals unavailable');
+    const changeOver = (days) => {
+      const then = totalAt(-1 - days);
+      return Number.isFinite(then) && then > 0 ? ((latest / then) - 1) * 100 : null;
+    };
+    const change30dPct = changeOver(30);
+    return {
+      asOf: new Date().toISOString(),
+      version: 'stablecoin-issuance-v1',
+      status: 'calculated',
+      totalUsd: latest,
+      change1dPct: changeOver(1),
+      change7dPct: changeOver(7),
+      change30dPct,
+      state: !Number.isFinite(change30dPct) ? null : change30dPct >= 0.5 ? 'Expanding' : change30dPct <= -0.5 ? 'Contracting' : 'Flat',
+      observations: chart.length,
+      methodology: 'Aggregate circulating supply of all tracked stablecoins from DefiLlama; net issuance growth is read as a real-time dollar-liquidity proxy.',
+    };
+  });
+}
+
+export async function getCryptoGlobal() {
+  return withCache('analytics:crypto-global', 30 * 60_000, async () => {
+    const payload = await fetchJson('https://api.coingecko.com/api/v3/global');
+    const data = payload?.data ?? {};
+    const dominance = data.market_cap_percentage ?? {};
+    const totalMcap = asNumber(data.total_market_cap?.usd);
+    if (!Number.isFinite(totalMcap)) throw new Error('CoinGecko global market data unavailable');
+    return {
+      asOf: new Date().toISOString(),
+      version: 'crypto-global-v1',
+      status: 'calculated',
+      totalMcapUsd: totalMcap,
+      mcapChange24hPct: asNumber(data.market_cap_change_percentage_24h_usd),
+      btcDominance: asNumber(dominance.btc),
+      ethDominance: asNumber(dominance.eth),
+      totalVolumeUsd: asNumber(data.total_volume?.usd),
+      methodology: 'CoinGecko global aggregates: total crypto market capitalization, its 24-hour change, and BTC/ETH dominance shares.',
+    };
+  });
+}
+
 export async function getLiquiditySnapshot(options = {}) {
   return withCache('liquidity-snapshot', 15 * 60_000, async () => {
     const storedSeries = await getStoredFredSeries().catch(() => []);
@@ -1607,6 +1655,7 @@ export async function getLiquiditySnapshot(options = {}) {
     const globalLiquidity = calculateGlobalLiquidityModel(modelSeries);
     const usdStrength = calculateUsdStrengthModel(modelSeries, model);
     const macroRegime = calculateMacroRegimeModel(modelSeries, model, usdStrength, globalLiquidity);
+    const stablecoins = await getStablecoinIssuance().catch(() => null);
     let narrative = null;
     if (isDatabaseConfigured()) {
       try {
@@ -1649,6 +1698,7 @@ export async function getLiquiditySnapshot(options = {}) {
       globalLiquidity,
       usdStrength,
       macroRegime,
+      stablecoins,
       narrative,
       errors,
     };
