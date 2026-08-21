@@ -221,6 +221,8 @@ Market close histories work without any API key: Twelve Data is preferred when c
 
 `fx-workspace-v1` covers six currencies (EUR, JPY, GBP, CAD, AUD, CHF). Currency strength uses Yahoo FX crosses oriented so positive momentum always means currency strength; each pair carries a `technical-v1` score plus CFTC COT net-speculative percentile from verified contract codes (099741 EUR, 097741 JPY, 096742 GBP, 090741 CAD, 232741 AUD, 092741 CHF). Commodity links correlate 60-day daily changes (CAD/WTI, AUD/copper, AUD/gold, CHF/S&P 500), and rotation signals compare 20-session momenta by sign: commodity-FX versus crude, broad USD versus EEM, and yen versus S&P 500. The USD scenario map remains an explicitly labeled qualitative framework.
 
+The metals COT panel also publishes the disaggregated report (dataset `72hh-3qpy`): three-year percentile ranks of net managed-money, producer/merchant, and swap-dealer gold positions with weekly changes, alongside the legacy net-non-commercial percentile.
+
 ## Reliability Rules
 
 - Missing provider data returns unavailable; it is never silently replaced with a sample value.

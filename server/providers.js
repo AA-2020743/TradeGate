@@ -557,11 +557,56 @@ function summarizeMetalHistory(name, points) {
   };
 }
 
+const COT_DISAGGREGATED_DATASET = '72hh-3qpy';
+
+async function getCotDisaggregatedGold() {
+  const url = new URL(`https://publicreporting.cftc.gov/resource/${COT_DISAGGREGATED_DATASET}.json`);
+  url.searchParams.set('$select', 'report_date_as_yyyy_mm_dd,m_money_positions_long_all,m_money_positions_short_all,prod_merc_positions_long,prod_merc_positions_short,swap_positions_long_all,swap__positions_short_all');
+  url.searchParams.set('$where', "cftc_contract_market_code='088691'");
+  url.searchParams.set('$order', 'report_date_as_yyyy_mm_dd DESC');
+  url.searchParams.set('$limit', '160');
+  const rows = await fetchJson(url);
+  const history = (Array.isArray(rows) ? rows : []).map((row) => {
+    const long = asNumber(row.m_money_positions_long_all);
+    const short = asNumber(row.m_money_positions_short_all);
+    const prodLong = asNumber(row.prod_merc_positions_long);
+    const prodShort = asNumber(row.prod_merc_positions_short);
+    const swapLong = asNumber(row.swap_positions_long_all);
+    const swapShort = asNumber(row.swap__positions_short_all);
+    return {
+      date: String(row.report_date_as_yyyy_mm_dd ?? '').slice(0, 10),
+      managedMoneyNet: Number.isFinite(long) && Number.isFinite(short) ? long - short : null,
+      producerNet: Number.isFinite(prodLong) && Number.isFinite(prodShort) ? prodLong - prodShort : null,
+      swapNet: Number.isFinite(swapLong) && Number.isFinite(swapShort) ? swapLong - swapShort : null,
+    };
+  }).filter((row) => row.date && Number.isFinite(row.managedMoneyNet));
+  if (!history.length) throw new Error('CFTC disaggregated report returned no usable gold rows');
+  const percentileOf = (values, value) => Math.round((values.filter((item) => item <= value).length / values.length) * 100);
+  const buildLeg = (field) => {
+    const series = history.map((row) => row[field]);
+    const latest = series[0];
+    const weekAgo = series[1];
+    return {
+      net: latest,
+      weeklyChange: Number.isFinite(weekAgo) ? latest - weekAgo : null,
+      percentile: percentileOf(series, latest),
+    };
+  };
+  return {
+    asOf: history[0].date,
+    stale: isCotReportStale(history[0].date),
+    managedMoney: buildLeg('managedMoneyNet'),
+    producers: buildLeg('producerNet'),
+    swapDealers: buildLeg('swapNet'),
+  };
+}
+
 export async function getMetalsWorkspace() {
   return withCache('analytics:metals-workspace', 15 * 60_000, async () => {
-    const [positioningResult, liquidityResult] = await Promise.allSettled([getMarketPositioning(), getLiquiditySnapshot()]);
+    const [positioningResult, liquidityResult, cotDetailResult] = await Promise.allSettled([getMarketPositioning(), getLiquiditySnapshot(), getCotDisaggregatedGold()]);
     const positioning = positioningResult.status === 'fulfilled' ? positioningResult.value.model : null;
     const liquidity = liquidityResult.status === 'fulfilled' ? liquidityResult.value : null;
+    const cotDetail = cotDetailResult.status === 'fulfilled' ? cotDetailResult.value : null;
     const goldContract = positioning?.contracts?.find((contract) => contract.key === 'gold') ?? null;
     const fetchSeries = async (yahooSymbol) => {
       const points = await getYahooHistory(yahooSymbol);
@@ -580,6 +625,7 @@ export async function getMetalsWorkspace() {
       assets,
       miners,
       cot: goldContract ? { percentile: goldContract.percentile, netNoncomm: goldContract.netNoncomm, weeklyChange: goldContract.weeklyChange, crowd: goldContract.crowd, stance: goldContract.stance, asOf: goldContract.asOf } : null,
+      cotDetail,
       macro: liquidity?.usdStrength && liquidity?.globalLiquidity ? { dollar: { score: liquidity.usdStrength.score, regime: liquidity.usdStrength.regime }, globalLiquidity: { score: liquidity.globalLiquidity.score, regime: liquidity.globalLiquidity.regime } } : null,
       methodology: 'Spot metals use front CME/COMEX futures (GC, SI, PL, PA) and miners use ETF close histories from Yahoo Finance; scores are technical-v1 with 20-day annualized volatility and 20-session momentum. COT figures reuse the platform gold contract percentile.',
     };
