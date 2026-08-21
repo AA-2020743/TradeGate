@@ -2,6 +2,7 @@ import React, { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 import './styles.css';
 import { formatPercent, formatTimestamp, formatUsd, useEquityResearch, useMarketHistory, usePlatformData, useTechnicalAnalytics } from './liveData.js';
+import { buildRoute, parseRoute } from './routing.js';
 
 const navItems = [
   ['⌘', 'Overview'],
@@ -21,6 +22,8 @@ const watchlist = [
   { ticker: 'GLD', name: 'SPDR Gold Shares', color: '#c4a7ff' },
   { ticker: 'BTC', name: 'Bitcoin', color: '#ff7c4d' },
 ];
+
+const watchlistSymbols = watchlist.map((asset) => asset.ticker);
 
 const newsWireItems = (platformData) => {
   const decode = (text) => text.replace(/&apos;/g, "'").replace(/&#39;/g, "'").replace(/&quot;/g, '"').replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>');
@@ -217,14 +220,16 @@ function LiquidityChartDialog({ history, title, description, label, onClose }) {
 }
 
 function App() {
-  const [activeNav, setActiveNav] = React.useState('Overview');
+  const initialRoute = React.useRef(parseRoute(window.location.hash, watchlistSymbols)).current;
+  const [activeNav, setActiveNav] = React.useState(initialRoute.nav);
   const [period, setPeriod] = React.useState('1D');
-  const [selectedTicker, setSelectedTicker] = React.useState('NVDA');
+  const [selectedTicker, setSelectedTicker] = React.useState(initialRoute.symbol ?? 'NVDA');
   const [theme, setTheme] = React.useState(() => window.localStorage.getItem('tradegate-theme') ?? (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'));
   const [searchOpen, setSearchOpen] = React.useState(false);
   const [searchQuery, setSearchQuery] = React.useState('');
   const [commandIndex, setCommandIndex] = React.useState(0);
   const searchInputRef = React.useRef(null);
+  const routeSynced = React.useRef(false);
   const platformData = usePlatformData();
   const history = useMarketHistory(selectedTicker, period);
   const technical = useTechnicalAnalytics(selectedTicker);
@@ -262,6 +267,27 @@ function App() {
     document.documentElement.style.colorScheme = theme;
     window.localStorage.setItem('tradegate-theme', theme);
   }, [theme]);
+
+  React.useEffect(() => {
+    const onHashChange = () => {
+      const route = parseRoute(window.location.hash, watchlistSymbols);
+      setActiveNav(route.nav);
+      if (route.symbol) setSelectedTicker(route.symbol);
+    };
+    window.addEventListener('hashchange', onHashChange);
+    return () => window.removeEventListener('hashchange', onHashChange);
+  }, []);
+
+  React.useEffect(() => {
+    const next = buildRoute(activeNav, activeNav === 'Overview' ? selectedTicker : null);
+    if (window.location.hash !== next) {
+      // The first render adopts whatever the address bar already held, so it
+      // must not push a duplicate entry the user has to press Back through.
+      if (routeSynced.current) window.location.hash = next;
+      else window.history.replaceState(null, '', next);
+    }
+    routeSynced.current = true;
+  }, [activeNav, selectedTicker]);
 
   React.useEffect(() => {
     const onKeyDown = (event) => {

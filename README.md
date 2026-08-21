@@ -48,6 +48,21 @@ curl http://127.0.0.1:8787/api/equities/sectors
 curl http://127.0.0.1:8787/api/ingestion/status
 ```
 
+Run the test suite with `npm test`; it covers the server calculation modules and the browser-side refresh and routing logic (`node --test server/*.test.js src/*.test.js`).
+
+### Workspace routes
+
+Every workspace is addressable from the URL hash, so a tab can be bookmarked, shared, or reloaded in place, and the browser's back and forward buttons walk the workspaces visited:
+
+| Route | Workspace |
+| --- | --- |
+| `#/overview/NVDA` | Overview, focused on a tracked symbol (`NVDA`, `AAPL`, `GLD`, `BTC`) |
+| `#/markets` · `#/equities` · `#/metals` | Multi-asset heatmap, equities research, metals |
+| `#/screener` · `#/watchlists` | S&P 500 screener, watchlists |
+| `#/macro` · `#/forex` · `#/crypto` | Macro, FX, and bitcoin-cycle research |
+
+An unrecognized route or symbol falls back to the overview and rewrites the address bar rather than rendering an empty workspace.
+
 ## Provider Keys
 
 Create `.env` from `.env.example` and set the server-side keys:
