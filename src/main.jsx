@@ -228,6 +228,11 @@ function App() {
   const platformData = usePlatformData();
   const history = useMarketHistory(selectedTicker, period);
   const technical = useTechnicalAnalytics(selectedTicker);
+  const nvdaSpark = useMarketHistory('NVDA', '1M');
+  const aaplSpark = useMarketHistory('AAPL', '1M');
+  const gldSpark = useMarketHistory('GLD', '1M');
+  const btcSpark = useMarketHistory('BTC', '1M');
+  const sparkByTicker = { NVDA: nvdaSpark, AAPL: aaplSpark, GLD: gldSpark, BTC: btcSpark };
   const quotesByKey = Object.fromEntries((platformData.markets?.assets ?? []).map((asset) => [asset.key, asset]));
   const hydratedWatchlist = watchlist.map((asset) => ({ ...asset, quote: quotesByKey[asset.ticker] ?? null }));
   const selectedAsset = hydratedWatchlist.find((asset) => asset.ticker === selectedTicker) ?? hydratedWatchlist[0];
@@ -346,7 +351,7 @@ function App() {
           </section>
 
           <section className="lower-grid">
-            <article className="watchlist-card panel preview-section"><div className="card-heading"><div><p className="section-kicker">LIVE PRICES · PREVIEW SPARKLINES</p><h3>Watchlist</h3></div><button>View all <span>→</span></button></div><div className="watchlist-table">{hydratedWatchlist.map((item, index) => <button className={`watch-row ${selectedTicker === item.ticker ? 'watch-selected' : ''}`} onClick={() => setSelectedTicker(item.ticker)} key={item.ticker}><span className="asset-badge" style={{ backgroundColor: item.color }}>{item.ticker.charAt(0)}</span><span className="asset-name"><b>{item.ticker}</b><small>{item.name}</small></span><span className="mini-chart"><Sparkline color={item.color} values={[8 + index, 18, 13, 26, 21, 32, 27, 37, 34, 42]} /></span><span className="asset-price"><b>{formatUsd(item.quote?.price)}</b><small className={item.quote?.changePercent < 0 ? 'negative' : ''}>{formatPercent(item.quote?.changePercent)}{item.quote?.stored ? ' · stored' : ''}</small></span></button>)}</div></article>
+            <article className={`watchlist-card panel ${watchlist.every((item) => (sparkByTicker[item.ticker]?.data?.points?.length ?? 0) > 0) ? '' : 'preview-section'}`}><div className="card-heading"><div><p className="section-kicker">LIVE PRICES · CALCULATED SPARKLINES</p><h3>Watchlist</h3></div><button>View all <span>→</span></button></div><div className="watchlist-table">{hydratedWatchlist.map((item) => <button className={`watch-row ${selectedTicker === item.ticker ? 'watch-selected' : ''}`} onClick={() => setSelectedTicker(item.ticker)} key={item.ticker}><span className="asset-badge" style={{ backgroundColor: item.color }}>{item.ticker.charAt(0)}</span><span className="asset-name"><b>{item.ticker}</b><small>{item.name}</small></span><span className="mini-chart">{(sparkByTicker[item.ticker]?.data?.points?.length ?? 0) > 0 ? <Sparkline color={item.color} values={normalizeSparkline(sparkByTicker[item.ticker].data.points.map((point) => point.value))} /> : <Sparkline color={item.color} values={[0, 0]} />}</span><span className="asset-price"><b>{formatUsd(item.quote?.price)}</b><small className={item.quote?.changePercent < 0 ? 'negative' : ''}>{formatPercent(item.quote?.changePercent)}{item.quote?.stored ? ' · stored' : ''}</small></span></button>)}</div></article>
             <article className="news-card panel preview-section"><div className="card-heading"><div><p className="section-kicker">WHAT MATTERS</p><h3>Market intelligence</h3></div><button>All news <span>→</span></button></div><div className="news-list">{news.map(([source, title, time]) => <article className="news-item" key={title}><div><p><span>{source}</span> <small>{time}</small></p><h4>{title}</h4></div><span className="news-arrow">↗</span></article>)}</div></article>
           </section>
           <p className="independence-note">TradeGate is an independent market research platform and is not affiliated with Tradegate AG.</p>

@@ -178,7 +178,7 @@ const HISTORY_RANGES = {
   All: { days: 'max', interval: '1week', outputsize: '520' },
 };
 
-const HISTORY_SYMBOLS = new Set(['BTC', ...TWELVE_SYMBOLS.map((asset) => asset.symbol), ...getAllEquityHistorySymbols()]);
+const HISTORY_SYMBOLS = new Set(['BTC', 'NVDA', 'AAPL', ...TWELVE_SYMBOLS.map((asset) => asset.symbol), ...getAllEquityHistorySymbols()]);
 const INGESTION_HISTORY_SYMBOLS = new Set(['BTC', ...TWELVE_SYMBOLS.map((asset) => asset.symbol), ...getCoreEquityHistorySymbols()]);
 
 function asNumber(value) {
