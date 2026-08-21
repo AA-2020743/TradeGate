@@ -16,6 +16,7 @@ import {
 } from './equityCatalog.js';
 import { getEquityDashboard, getSectorDashboard } from './equities.js';
 import { startIngestionScheduler } from './ingestion.js';
+import { createRateLimiter } from './rateLimit.js';
 import { getBitcoinCycleWorkspace, getBlockedSources, getCryptoGlobal, getDxyBitcoinRelationship, getEquityRiskAppetite, getEquityScreener, getEthereumRotation, getFxWorkspace, getIntradayRotation, getLiquiditySnapshot, getMarketHeatmap, getMarketHistory, getMarketPositioning, getMarketSnapshot, getMetalsWorkspace, getNewsWire, getProviderHealth, getRegimeCorrelations, getSentimentSnapshot, getTechnicalSnapshot } from './providers.js';
 import { buildAtomFeed } from './analytics.js';
 
@@ -24,7 +25,7 @@ const rootDirectory = path.resolve(path.dirname(fileURLToPath(import.meta.url)),
 const distDirectory = path.join(rootDirectory, 'dist');
 const distIndexFile = path.join(distDirectory, 'index.html');
 const distAssetsPrefix = path.join(distDirectory, 'assets') + path.sep;
-const apiRateLimits = new Map();
+const rateLimiter = createRateLimiter({ limit: config.apiRateLimit, windowMs: config.apiRateWindowMs });
 
 app.disable('x-powered-by');
 app.set('trust proxy', 'loopback');
@@ -35,36 +36,13 @@ app.use((_request, response, next) => {
   response.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
   next();
 });
-app.use('/api', (request, response, next) => {
+app.use('/api', (_request, response, next) => {
   // Market data must never come back from a heuristic browser cache. no-cache
   // still permits a conditional revalidation rather than forbidding storage.
   response.setHeader('Cache-Control', 'no-cache');
-  const now = Date.now();
-  const key = request.ip;
-  const current = apiRateLimits.get(key);
-  const entry = !current || current.resetAt <= now
-    ? { count: 0, resetAt: now + 60_000 }
-    : current;
-  entry.count += 1;
-  apiRateLimits.set(key, entry);
-  response.setHeader('RateLimit-Limit', '120');
-  response.setHeader('RateLimit-Remaining', String(Math.max(0, 120 - entry.count)));
-  response.setHeader('RateLimit-Reset', String(Math.ceil(entry.resetAt / 1000)));
-
-  if (entry.count > 120) {
-    response.status(429).json({ error: 'API rate limit exceeded. Try again shortly.' });
-    return;
-  }
   next();
 });
-
-const rateLimitCleanup = setInterval(() => {
-  const now = Date.now();
-  for (const [key, entry] of apiRateLimits) {
-    if (entry.resetAt <= now) apiRateLimits.delete(key);
-  }
-}, 60_000);
-rateLimitCleanup.unref();
+app.use('/api', rateLimiter.middleware);
 
 app.get('/api/health', async (_request, response) => {
   const database = await getDatabaseHealth();
@@ -450,27 +428,37 @@ app.use((error, _request, response, _next) => {
   response.status(502).json({ error: 'Unable to fetch data from an upstream provider.' });
 });
 
-const server = app.listen(config.port, config.host, () => {
-  console.log(`TradeGate API listening on http://${config.host}:${config.port}`);
-});
-const stopIngestion = startIngestionScheduler();
-let shutdownStarted = false;
+export { app };
 
-async function shutdown() {
-  if (shutdownStarted) return;
-  shutdownStarted = true;
-  await stopIngestion();
-  await new Promise((resolve) => server.close(resolve));
-  await closeDatabase();
-  process.exitCode = 0;
-}
+// Importing this module — the API tests do — must not bind a port or start
+// ingestion; only running it as a program should.
+const startedDirectly = process.argv[1] !== undefined
+  && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url);
 
-function requestShutdown() {
-  void shutdown().catch((error) => {
-    console.error('Graceful shutdown failed:', error);
-    process.exitCode = 1;
+if (startedDirectly) {
+  const server = app.listen(config.port, config.host, () => {
+    console.log(`TradeGate API listening on http://${config.host}:${config.port}`);
   });
-}
+  const stopIngestion = startIngestionScheduler();
+  let shutdownStarted = false;
 
-process.on('SIGTERM', requestShutdown);
-process.on('SIGINT', requestShutdown);
+  const shutdown = async () => {
+    if (shutdownStarted) return;
+    shutdownStarted = true;
+    await stopIngestion();
+    rateLimiter.stop();
+    await new Promise((resolve) => server.close(resolve));
+    await closeDatabase();
+    process.exitCode = 0;
+  };
+
+  const requestShutdown = () => {
+    void shutdown().catch((error) => {
+      console.error('Graceful shutdown failed:', error);
+      process.exitCode = 1;
+    });
+  };
+
+  process.on('SIGTERM', requestShutdown);
+  process.on('SIGINT', requestShutdown);
+}

@@ -48,7 +48,7 @@ curl http://127.0.0.1:8787/api/equities/sectors
 curl http://127.0.0.1:8787/api/ingestion/status
 ```
 
-Run the test suite with `npm test`; it covers the server calculation modules and the browser-side refresh and routing logic (`node --test server/*.test.js src/*.test.js`).
+Run the test suite with `npm test`; it covers the server calculation modules, the HTTP surface (`server/api.test.js` boots the exported Express app on an ephemeral port and asserts status codes, validation, security, cache, and rate-limit headers without touching a provider), and the browser-side refresh, routing, and sorting logic (`node --test server/*.test.js src/*.test.js`).
 
 ### Workspace routes
 
@@ -78,6 +78,8 @@ TWELVE_QUOTE_REFRESH_MS=900000
 FRED_API_KEY=your_fred_key
 DATABASE_URL=postgresql://tradegate_app:password@127.0.0.1:5432/tradegate
 DATABASE_SSL=false
+API_RATE_LIMIT=120
+API_RATE_WINDOW_MS=60000
 INGESTION_ENABLED=true
 MARKET_REFRESH_MS=900000
 MACRO_REFRESH_MS=21600000
@@ -266,6 +268,7 @@ With PostgreSQL configured, the scheduled `research-workspaces` ingestion job pe
 - Partial quote refreshes retain missing last-known-good assets as explicitly stale cache fallbacks.
 - FRED revisions are preserved in `observation_revisions` rather than overwritten without an audit trail.
 - Ingestion runs record status, write count, provider errors, and completion time.
+- `/api` is rate-limited per client address (`API_RATE_LIMIT` requests per `API_RATE_WINDOW_MS`, 120 a minute by default). Every response advertises `RateLimit-Limit`, `RateLimit-Remaining`, and `RateLimit-Reset`, and a rejection adds `Retry-After`. Counters are per process, so behind more than one Node instance each replica enforces its own share.
 - Hashed bundle assets are served `immutable` for a year, while `index.html` and every `/api` response are served `no-cache`, so a deploy can never leave a cached document asking for an asset hash that no longer exists and quotes are never read back from a heuristic browser cache.
 - The browser refresh loop (`src/polling.js`) never runs two loads concurrently, so a slow response — the screener sweeps the whole index — delays the next cycle instead of stacking requests against the API rate limit. Cycles are skipped entirely while the tab is hidden and one replay runs as soon as it is visible again.
 - Model outputs store their version, effective date, JSON output, and input-series lineage.
