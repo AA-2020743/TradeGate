@@ -27,6 +27,8 @@ cp .env.example .env
 npm run dev
 ```
 
+`.env.example` documents every supported environment variable (server binding, provider keys, Postgres persistence, and ingestion cadences); all are optional and the platform runs fully keyless without them. For containerized deployment, `docker build -t tradegate .` produces an image that serves the built frontend and API from a single process on port 8787.
+
 `npm run dev` starts both services:
 
 - Web application: `http://localhost:5173`
