@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { buildLiquidityNarrative, calculateChangeCorrelations, calculateCrossMarketRelationship, calculateGlobalLiquidityModel, calculateMacroRegimeModel, calculateRsi, calculateTechnicalSnapshot, calculateUsdStrengthModel, calculateUsLiquidityModel, pearsonCorrelation } from './analytics.js';
+import { buildLiquidityNarrative, calculateChangeCorrelations, calculatePositioningModel, calculateCrossMarketRelationship, calculateGlobalLiquidityModel, calculateMacroRegimeModel, calculateRsi, calculateTechnicalSnapshot, calculateUsdStrengthModel, calculateUsLiquidityModel, pearsonCorrelation } from './analytics.js';
 
 test('RSI reaches 100 for an uninterrupted advance', () => {
   const values = Array.from({ length: 30 }, (_, index) => 100 + index);
@@ -294,4 +294,23 @@ test('Liquidity narrative reports score and regime changes between runs', () => 
   );
   assert.equal(stable.status, 'stable');
   assert.equal(buildLiquidityNarrative([{ output: { score: 70 } }], []).status, 'insufficient-history');
+});
+test('COT positioning ranks net speculative exposure', () => {
+  const history = Array.from({ length: 60 }, (_, index) => ({
+    date: new Date(Date.UTC(2025, 0, 1 + (index * 7))).toISOString().slice(0, 10),
+    netNoncomm: index < 59 ? index * 1000 : 59000,
+    openInterest: 1_000_000,
+  }));
+  const model = calculatePositioningModel([
+    { key: 'sp500', name: 'E-mini S&P 500', history },
+    { key: 'gold', name: 'COMEX Gold', history: [] },
+  ]);
+  assert.equal(model.version, 'positioning-cot-v1');
+  assert.equal(model.status, 'calculated');
+  const sp = model.contracts.find((contract) => contract.key === 'sp500');
+  assert.equal(sp.percentile, 100);
+  assert.equal(sp.crowd, 'Crowded long');
+  assert.equal(sp.stance, 'Leveraged funds net long');
+  assert.equal(sp.weeklyChange, 1000);
+  assert.equal(model.coverage, 50);
 });

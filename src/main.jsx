@@ -392,7 +392,7 @@ function App() {
         </header>
 
         <div className="dashboard">
-          {activeNav === 'Macro' ? <MacroDashboard data={platformData} /> : activeNav === 'Markets' ? <MarketsDashboard data={platformData} /> : activeNav === 'Equities' ? <EquitiesDashboard /> : activeNav === 'Metals' ? <MetalsDashboard data={platformData} /> : ['Screener', 'Watchlists'].includes(activeNav) ? <PreviewWorkspace name={activeNav} /> : <>
+          {activeNav === 'Macro' ? <MacroDashboard data={platformData} /> : activeNav === 'Markets' ? <MarketsDashboard data={platformData} /> : activeNav === 'Equities' ? <EquitiesDashboard platformData={platformData} /> : activeNav === 'Metals' ? <MetalsDashboard data={platformData} /> : ['Screener', 'Watchlists'].includes(activeNav) ? <PreviewWorkspace name={activeNav} /> : <>
           <section className="welcome-row">
             <div><p className="eyebrow">{new Intl.DateTimeFormat('en-US', { weekday: 'long', month: 'long', day: 'numeric' }).format(new Date()).toUpperCase()}</p><h1>Good morning, Alex.</h1><p className="intro">Here is your market pulse for today.</p></div>
             <div className={`market-status ${platformData.status}`}><span className="live-dot"></span><span>{platformData.status === 'live' ? 'Data feeds connected' : platformData.status === 'partial' ? 'Partial data coverage' : 'Data API unavailable'}</span><strong>{formatTimestamp(platformData.markets?.asOf)}</strong></div>
@@ -484,9 +484,10 @@ function RequirementPanel({ title, dataset, requirements }) {
   return <article className="equity-requirement-panel panel"><div className="panel-title"><div><p className="section-kicker">REQUIRED DATASET</p><h3>{title}</h3></div><EquityStatus status={dataset?.status} /></div><p>{dataset?.reason ?? 'This dataset is not connected, so no score or directional claim is published.'}</p><div>{(dataset?.requirements ?? requirements ?? []).map((item) => <span key={item}>{item}</span>)}</div></article>;
 }
 
-function EquitiesDashboard() {
+function EquitiesDashboard({ platformData }) {
   const [selectedSymbol, setSelectedSymbol] = React.useState('SPY');
   const research = useEquityResearch(selectedSymbol);
+  const positioning = platformData?.positioning?.model;
   const catalog = research.catalog;
   const dashboard = research.dashboard;
   const sectorData = research.sectors;
@@ -562,6 +563,16 @@ function EquitiesDashboard() {
         {(sectorData?.styles?.pairs ?? []).map((pair) => pair.status === 'calculated' ? <div className="equity-rotation-row styles-row" key={pair.key}><span><strong>{pair.left}</strong><small>vs {pair.right}</small></span><span className={pair.spread20 >= 0 ? 'positive' : 'negative'}>{formatPercent(pair.spread20)}</span><span className={pair.spread60 >= 0 ? 'positive' : 'negative'}>{formatPercent(pair.spread60)}</span><b>{pair.leader}</b><i className={pair.regime === 'Balanced' ? 'neutral' : 'leading'}>{pair.regime}</i></div> : <div className="equity-rotation-row styles-row" key={pair.key}><span><strong>{pair.left}</strong><small>vs {pair.right}</small></span><span className="neutral">—</span><span className="neutral">—</span><b>Unavailable</b><small>{pair.missing?.join(', ') || 'History pending'}</small></div>)}
         {!(sectorData?.styles?.pairs ?? []).length && <div className="equity-empty">Stored basket histories are required before style rotation can publish.</div>}
         <p className="equity-source-line">{sectorData?.styles?.methodology ?? 'Awaiting sector API.'}</p>
+      </article>
+    </section>
+
+    <section className="equity-section-heading"><div><p className="section-kicker">POSITIONING · CALCULATED</p><h2>Leveraged-fund exposure from CFTC commitments</h2></div><EquityStatus status={positioning?.status} label="CFTC pending" /></section>
+    <section className="equity-macro-matrix">
+      <article className="equity-rotation-panel panel wide">
+        <div className="equity-rotation-head cot-head"><span>Contract</span><span>Net spec</span><span>WoW change</span><span>3Y percentile</span><span>Stance</span></div>
+        {(positioning?.contracts ?? []).map((contract) => <div className="equity-rotation-row cot-row" key={contract.key}><span><strong>{contract.name}</strong><small>{contract.asOf}{Number.isFinite(contract.openInterest) ? ` · OI ${contract.openInterest.toLocaleString()}` : ''}</small></span><b>{Number.isFinite(contract.netNoncomm) ? contract.netNoncomm.toLocaleString() : '—'}</b><b className={(contract.weeklyChange ?? 0) >= 0 ? 'positive' : 'negative'}>{Number.isFinite(contract.weeklyChange) ? `${contract.weeklyChange >= 0 ? '+' : ''}${contract.weeklyChange.toLocaleString()}` : '—'}</b><span className={contract.percentile >= 90 || contract.percentile <= 10 ? 'extreme' : ''}>{Number.isFinite(contract.percentile) ? `${contract.percentile}%` : '—'}{contract.crowd && contract.crowd !== 'Unextended' ? <small> · {contract.crowd}</small> : null}</span><i>{contract.stance ?? '—'}</i></div>)}
+        {!(positioning?.contracts ?? []).length && <div className="equity-empty">CFTC commitment histories are required before positioning can publish.</div>}
+        <p className="equity-source-line">{positioning?.methodology ?? 'Awaiting CFTC feed.'}{platformData?.positioning?.staleContracts?.length ? ` Stale: ${platformData.positioning.staleContracts.join(', ')}.` : ''}</p>
       </article>
     </section>
 
@@ -717,14 +728,14 @@ function MacroDashboard({ data }) {
 
     <section className="model-overview-grid">
       <article className={`macro-model panel ${activeModel === 'Liquidity' ? 'model-emphasis' : ''}`}>
-        <div className="macro-card-top"><div><p className="section-kicker">US LIQUIDITY MODEL</p><h2>{liquidityModel?.regime ?? 'Awaiting FRED'} <span className="status-dot"></span></h2><p>{liquidityModel ? 'Fed net liquidity, M2, and dollar transmission' : 'Configure FRED to calculate the regime'}</p></div><div className="score-orbit"><b>{liquidityModel?.score ?? '—'}</b><small>/100</small></div></div>
+        <div className="macro-card-top"><div><p className="section-kicker">US LIQUIDITY MODEL</p><h2>{liquidityModel?.regime ?? 'Awaiting FRED'} <span className="status-dot"></span></h2><p>{liquidityModel ? 'Fed net liquidity, M2, and dollar transmission' : 'Waiting on live macro histories'}</p></div><div className="score-orbit"><b>{liquidityModel?.score ?? '—'}</b><small>/100</small></div></div>
         <div className="liquidity-chart"><div className="chart-caption"><span>Calculated net liquidity</span><div><strong>{liquidityModel ? formatLiquidityValue(liquidityModel.netLiquidity) : 'Unavailable'}</strong><button className="chart-expand-button" onClick={() => setLiquidityChartOpen(true)} disabled={!liquidityModel?.history?.length} aria-label="Enlarge liquidity history chart">↗</button></div></div>{liquidityHistory.length ? <Sparkline color="#75c966" values={liquidityHistory} /> : <div className="model-chart-empty">No calculated history</div>}<div className="liquidity-axis"><span>Oldest</span><span>Midpoint</span><span>Recent</span><span>Latest</span></div></div>
         <div className="signal-summary"><span>Momentum <b>{liquidityModel?.momentum ?? 'Unavailable'}</b></span><span>Breadth <b>{liquidityModel ? `${liquidityModel.breadth.positive} of ${liquidityModel.breadth.total} positive` : 'Unavailable'}</b></span><span>Confidence <b>{liquidityModel?.confidence ?? 'Unavailable'}</b></span></div>
         <div className="model-action"><span>{liquidityModel?.version ?? 'No model output'}</span><button onClick={() => setActiveModel('Liquidity')}>Open model →</button></div>
       </article>
 
       <article className={`macro-model panel global-model ${activeModel === 'Global' ? 'model-emphasis' : ''}`}>
-        <div className="macro-card-top"><div><p className="section-kicker">GLOBAL LIQUIDITY MODEL</p><h2>{globalLiquidity?.regime ?? 'Awaiting FRED'} <span className="status-dot violet"></span></h2><p>{globalLiquidity ? 'Fed, ECB, and BoJ balance sheets in USD' : 'Configure FRED to calculate the regime'}</p></div><div className="score-orbit violet-orbit"><b>{globalLiquidity?.score ?? '—'}</b><small>/100</small></div></div>
+        <div className="macro-card-top"><div><p className="section-kicker">GLOBAL LIQUIDITY MODEL</p><h2>{globalLiquidity?.regime ?? 'Awaiting FRED'} <span className="status-dot violet"></span></h2><p>{globalLiquidity ? 'Fed, ECB, and BoJ balance sheets in USD' : 'Waiting on live macro histories'}</p></div><div className="score-orbit violet-orbit"><b>{globalLiquidity?.score ?? '—'}</b><small>/100</small></div></div>
         <div className="liquidity-chart"><div className="chart-caption"><span>Central-bank liquidity, USD</span><div><strong>{globalLiquidity ? formatLiquidityValue(globalLiquidity.globalLiquidityUsdMillions) : 'Unavailable'}</strong><button className="chart-expand-button" onClick={() => setGlobalChartOpen(true)} disabled={!globalLiquidity?.history?.length} aria-label="Enlarge global liquidity history chart">↗</button></div></div>{globalLiquidityHistory.length ? <Sparkline color="#b08ad6" values={globalLiquidityHistory} /> : <div className="model-chart-empty">No calculated history</div>}<div className="liquidity-axis"><span>Oldest</span><span>Midpoint</span><span>Recent</span><span>Latest</span></div></div>
         <div className="signal-summary"><span>Momentum <b>{globalLiquidity?.momentum ?? 'Unavailable'}</b></span><span>Cycle percentile <b>{Number.isFinite(globalLiquidity?.cyclePercentile) ? `${globalLiquidity.cyclePercentile}%` : 'Unavailable'}</b></span><span>Confidence <b>{globalLiquidity?.confidence ?? 'Unavailable'}</b></span></div>
         <div className="model-action"><span>{globalLiquidity?.version ?? 'No model output'}</span><button onClick={() => setActiveModel('Global')}>Open model →</button></div>

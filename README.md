@@ -214,6 +214,7 @@ The sector dashboard also publishes a calculated macro-sensitivity matrix: for e
 ## Reliability Rules
 
 - Missing provider data returns unavailable; it is never silently replaced with a sample value.
+- FRED works with or without an API key: the authenticated observations API is preferred, and without a key the public `fredgraph.csv` endpoint supplies full-history CSV per series. H.10 FX and broad-dollar series allow a 10-day observation age to absorb the Fed's Monday release cadence.
 - PostgreSQL provides last-known-good history when an upstream provider fails.
 - Stored fallbacks retain their original provider timestamp and source label.
 - Successful provider responses are also freshness-checked; stale observations remain labeled and may be retained as raw history, but are excluded from current models.

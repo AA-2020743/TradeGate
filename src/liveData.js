@@ -14,6 +14,7 @@ export function usePlatformData() {
     liquidity: null,
     dxyBtc: null,
     regimeCorrelations: null,
+    positioning: null,
     error: null,
   });
 
@@ -21,12 +22,13 @@ export function usePlatformData() {
     let active = true;
 
     const load = async () => {
-      const [health, markets, liquidity, dxyBtc, regimeCorrelations] = await Promise.allSettled([
+      const [health, markets, liquidity, dxyBtc, regimeCorrelations, positioning] = await Promise.allSettled([
         requestJson('/api/health'),
         requestJson('/api/markets/snapshot'),
         requestJson('/api/macro/liquidity'),
         requestJson('/api/analytics/dxy-btc'),
         requestJson('/api/analytics/regime-correlations'),
+        requestJson('/api/analytics/positioning'),
       ]);
       if (!active) return;
 
@@ -35,6 +37,7 @@ export function usePlatformData() {
       const liquidityData = liquidity.status === 'fulfilled' ? liquidity.value : null;
       const dxyBtcData = dxyBtc.status === 'fulfilled' ? dxyBtc.value : null;
       const regimeCorrelationsData = regimeCorrelations.status === 'fulfilled' ? regimeCorrelations.value : null;
+      const positioningData = positioning.status === 'fulfilled' ? positioning.value : null;
       const hasQuotes = Boolean(marketData?.assets?.length);
       const hasUnconfiguredProviders = Object.values(healthData?.providers ?? {}).some((provider) => !provider.configured || (provider.connected === false && provider.mode === 'unavailable') || provider.migrated === false && provider.configured);
       const hasErrors = [health, markets, liquidity, dxyBtc].some((result) => result.status === 'rejected') || Boolean(marketData?.errors?.length) || Boolean(liquidityData?.errors?.length) || hasUnconfiguredProviders;
@@ -46,6 +49,7 @@ export function usePlatformData() {
         liquidity: liquidityData,
         dxyBtc: dxyBtcData,
         regimeCorrelations: regimeCorrelationsData,
+        positioning: positioningData,
         error: !healthData ? 'The data API is unavailable.' : hasErrors ? 'Some data providers are unavailable.' : null,
       });
     };

@@ -1,9 +1,9 @@
 import { config } from './config.js';
 import { withCache } from './cache.js';
-import { buildLiquidityNarrative, calculateChangeCorrelations, calculateCrossMarketRelationship, calculateGlobalLiquidityModel, calculateMacroRegimeModel, calculateTechnicalSnapshot, calculateUsdStrengthModel, calculateUsLiquidityModel } from './analytics.js';
+import { buildLiquidityNarrative, calculateChangeCorrelations, calculatePositioningModel, calculateCrossMarketRelationship, calculateGlobalLiquidityModel, calculateMacroRegimeModel, calculateTechnicalSnapshot, calculateUsdStrengthModel, calculateUsLiquidityModel } from './analytics.js';
 import { getStoredFredSeries, getStoredMarketHistory, getStoredMarketSnapshot, getRecentModelOutputs, isDatabaseConfigured, reserveProviderCredits } from './database.js';
 import { getAllEquityHistorySymbols, getCoreEquityHistorySymbols } from './equityCatalog.js';
-import { isCryptoHistoryStale, isDailyCloseStale, isFredSeriesStale, isPbocObservationStale, monthsBetween } from './freshness.js';
+import { isCryptoHistoryStale, isCotReportStale, isDailyCloseStale, isFredSeriesStale, isPbocObservationStale, monthsBetween } from './freshness.js';
 
 const TWELVE_SYMBOLS = [
   { symbol: 'SPY', key: 'SPY', name: 'S&P 500 proxy', kind: 'ETF' },
@@ -88,6 +88,22 @@ async function fetchJson(url, attempt = 0, maxRetries = 2) {
   }
   if (!response.ok) throw new Error(`Upstream request failed with ${response.status}`);
   return response.json();
+}
+
+async function fetchText(url, attempt = 0, maxRetries = 2) {
+  const response = await fetch(url, {
+    headers: { Accept: 'text/csv', 'User-Agent': 'TradeGateResearch/0.1' },
+    signal: AbortSignal.timeout(12_000),
+  });
+
+  if (response.status === 429 && attempt < maxRetries) {
+    const retryAfterHeader = response.headers.get('retry-after');
+    const retryAfter = retryAfterHeader === null ? Number.NaN : Number(retryAfterHeader);
+    await wait(Number.isFinite(retryAfter) ? Math.min(retryAfter * 1000, 30_000) : 5_000 * (attempt + 1));
+    return fetchText(url, attempt + 1, maxRetries);
+  }
+  if (!response.ok) throw new Error(`Upstream request failed with ${response.status}`);
+  return response.text();
 }
 
 export function calculateTwelveCreditSlot(reservations, requestedAt, credits, limit) {
@@ -281,7 +297,8 @@ export function mergeFredSeries(liveSeries, storedSeries) {
     const storedTime = new Date(`${stored?.date}T00:00:00.000Z`).getTime();
     if (!live.stale || !stored || (stored.stale && (!Number.isFinite(storedTime) || liveTime >= storedTime))) seriesByKey.set(live.key, live);
   }
-  return FRED_SERIES.flatMap((definition) => seriesByKey.has(definition.key) ? [seriesByKey.get(definition.key)] : []);
+  const allowedDefinitions = [...FRED_SERIES, { id: PBOC_SERIES_ID, key: 'pbocBalanceSheet', name: 'PBoC total assets', unit: 'CNY billions', multiplier: 1 }];
+  return allowedDefinitions.flatMap((definition) => seriesByKey.has(definition.key) ? [seriesByKey.get(definition.key)] : []);
 }
 
 export async function getMarketSnapshot(options = {}) {
@@ -521,6 +538,53 @@ export async function getRegimeCorrelations() {
   });
 }
 
+const COT_DATASET = '6dca-aqww';
+const COT_CONTRACTS = [
+  { code: '13874A', key: 'sp500', name: 'E-mini S&P 500' },
+  { code: '209742', key: 'nasdaq100', name: 'E-mini Nasdaq-100' },
+  { code: '088691', key: 'gold', name: 'COMEX Gold' },
+  { code: '1170E1', key: 'vix', name: 'VIX Futures' },
+];
+
+async function getCotContract(contract) {
+  const url = new URL(`https://publicreporting.cftc.gov/resource/${COT_DATASET}.json`);
+  url.searchParams.set('$select', 'report_date_as_yyyy_mm_dd,noncomm_positions_long_all,noncomm_positions_short_all,comm_positions_long_all,comm_positions_short_all,open_interest_all');
+  url.searchParams.set('$where', `cftc_contract_market_code='${contract.code}'`);
+  url.searchParams.set('$order', 'report_date_as_yyyy_mm_dd DESC');
+  url.searchParams.set('$limit', '160');
+  const rows = await fetchJson(url);
+  const history = (Array.isArray(rows) ? rows : []).map((row) => {
+    const long = Number(row.noncomm_positions_long_all);
+    const short = Number(row.noncomm_positions_short_all);
+    const commLong = Number(row.comm_positions_long_all);
+    const commShort = Number(row.comm_positions_short_all);
+    return {
+      date: String(row.report_date_as_yyyy_mm_dd ?? '').slice(0, 10),
+      netNoncomm: Number.isFinite(long) && Number.isFinite(short) ? long - short : null,
+      commNet: Number.isFinite(commLong) && Number.isFinite(commShort) ? commLong - commShort : null,
+      openInterest: Number(row.open_interest_all),
+    };
+  }).filter((point) => point.date && Number.isFinite(point.netNoncomm));
+  if (!history.length) throw new Error(`CFTC returned no usable rows for ${contract.code}`);
+  return { key: contract.key, name: contract.name, code: contract.code, latestDate: history[0].date, stale: isCotReportStale(history[0].date), history };
+}
+
+export async function getMarketPositioning() {
+  return withCache('analytics:cot-positioning', 24 * 60 * 60_000, async () => {
+    const results = await Promise.allSettled(COT_CONTRACTS.map(getCotContract));
+    const reports = results.flatMap((result) => result.status === 'fulfilled' ? [result.value] : []);
+    const errors = results.flatMap((result) => result.status === 'rejected' ? [result.reason.message] : []);
+    const model = calculatePositioningModel(reports);
+    return {
+      asOf: new Date().toISOString(),
+      provider: { name: 'CFTC public reporting (Socrata)', configured: true },
+      model,
+      staleContracts: reports.filter((report) => report.stale).map((report) => report.name),
+      errors,
+    };
+  });
+}
+
 async function getFredSeries(series) {
   const url = new URL('https://api.stlouisfed.org/fred/series/observations');
   url.searchParams.set('series_id', series.id);
@@ -549,17 +613,41 @@ async function getFredSeries(series) {
   };
 }
 
+async function getFredCsvSeries(series) {
+  const url = new URL('https://fred.stlouisfed.org/graph/fredgraph.csv');
+  url.searchParams.set('id', series.id);
+  const csv = await fetchText(url);
+  const history = csv.trim().split(/\r?\n/).slice(1)
+    .map((line) => {
+      const [date, raw] = line.split(',');
+      return { date, value: Number(raw), realtimeStart: null, realtimeEnd: null };
+    })
+    .filter((item) => /^\d{4}-\d{2}-\d{2}$/.test(item.date ?? '') && Number.isFinite(item.value))
+    .sort((left, right) => new Date(left.date) - new Date(right.date));
+  const observation = history.at(-1);
+  const value = observation?.value;
+  if (!observation || !Number.isFinite(value)) throw new Error(`FRED CSV returned no usable observation for ${series.id}`);
+  return {
+    ...series,
+    value,
+    date: observation.date,
+    stored: false,
+    stale: isFredSeriesStale(series.id, observation.date),
+    history,
+  };
+}
+
 export async function getLiquiditySnapshot(options = {}) {
   return withCache('liquidity-snapshot', 15 * 60_000, async () => {
     const storedSeries = await getStoredFredSeries().catch(() => []);
-    const results = config.fredApiKey ? await Promise.allSettled([...FRED_SERIES.map(getFredSeries), getPbocAssets()]) : await Promise.allSettled([getPbocAssets()]);
+    const results = await Promise.allSettled([...FRED_SERIES.map((series) => config.fredApiKey ? getFredSeries(series) : getFredCsvSeries(series)), getPbocAssets()]);
     const liveSeries = results.flatMap((result) => result.status === 'fulfilled' ? [result.value] : []);
     const series = mergeFredSeries(liveSeries, storedSeries);
     const modelSeries = series.filter((item) => !item.stale);
     const staleSeries = series.filter((item) => item.stale);
     const staleLiveSeries = liveSeries.filter((item) => item.stale);
     const errors = results.flatMap((result) => result.status === 'rejected' ? [result.reason.message] : []);
-    if (!config.fredApiKey && !storedSeries.length) errors.push('FRED_API_KEY is not configured and no stored observations are available');
+    if (!config.fredApiKey && !storedSeries.length) errors.push('FRED_API_KEY is not configured; using the public FRED CSV endpoint');
     if (staleLiveSeries.length) errors.push(`Latest FRED responses are stale: ${staleLiveSeries.map((item) => item.id).join(', ')}`);
     if (staleSeries.length) errors.push(`FRED series are stale and excluded from models: ${staleSeries.map((item) => item.id).join(', ')}`);
     const values = Object.fromEntries(modelSeries.map((item) => [item.key, item.value * item.multiplier]));
@@ -583,7 +671,7 @@ export async function getLiquiditySnapshot(options = {}) {
 
     return {
       asOf: new Date().toISOString(),
-      provider: { configured: Boolean(config.fredApiKey), name: 'FRED', storedFallbacks: series.filter((item) => item.stored).length, staleSeries: staleSeries.length },
+      provider: { configured: true, mode: config.fredApiKey ? 'api' : 'public-csv', name: 'FRED', storedFallbacks: series.filter((item) => item.stored).length, staleSeries: staleSeries.length },
       series,
       netLiquidity: hasNetLiquidityInputs ? values.fedBalanceSheet - values.treasuryGeneralAccount - values.reverseRepo : null,
       model,

@@ -460,6 +460,47 @@ export function calculateGlobalLiquidityModel(seriesList) {
   };
 }
 
+export function calculatePositioningModel(reports) {
+  const usable = reports.filter((report) => Array.isArray(report.history) && report.history.length >= 26);
+  const contracts = usable.map((report) => {
+    const history = [...report.history].sort((left, right) => new Date(left.date) - new Date(right.date));
+    const latest = history.at(-1);
+    const previous = history.at(-2);
+    const nets = history.map((point) => point.netNoncomm).filter(Number.isFinite);
+    const percentile = nets.length >= 2 && Number.isFinite(latest.netNoncomm)
+      ? Math.round((nets.filter((value) => value <= latest.netNoncomm).length / nets.length) * 100)
+      : null;
+    const weeklyChange = Number.isFinite(latest.netNoncomm) && Number.isFinite(previous?.netNoncomm)
+      ? latest.netNoncomm - previous.netNoncomm
+      : null;
+    const stance = !Number.isFinite(latest.netNoncomm) ? null
+      : latest.netNoncomm > 0 ? 'Leveraged funds net long' : 'Leveraged funds net short';
+    const crowd = percentile === null ? null
+      : percentile >= 90 ? 'Crowded long' : percentile <= 10 ? 'Crowded short' : 'Unextended';
+    return {
+      key: report.key,
+      name: report.name,
+      asOf: latest.date,
+      netNoncomm: latest.netNoncomm ?? null,
+      weeklyChange,
+      percentile,
+      stance,
+      crowd,
+      openInterest: latest.openInterest ?? null,
+      observations: history.length,
+    };
+  });
+  const calculatedCount = contracts.filter((contract) => contract.percentile !== null).length;
+  return {
+    version: 'positioning-cot-v1',
+    status: calculatedCount ? 'calculated' : 'unavailable',
+    asOf: contracts.map((contract) => contract.asOf).sort().at(-1) ?? null,
+    coverage: Math.round((calculatedCount / Math.max(reports.length, 1)) * 100),
+    contracts,
+    methodology: 'CFTC Commitments of Traders, legacy futures-only report. Net non-commercial position with three-year percentile rank; weekly change versus the prior Tuesday report.',
+  };
+}
+
 export function calculateChangeCorrelations(leftPoints, rightPoints) {
   const leftByDate = new Map(leftPoints.map((point) => [(point.date ?? point.timestamp).slice(0, 10), point.value]));
   const rightByDate = new Map(rightPoints.map((point) => [(point.date ?? point.timestamp).slice(0, 10), point.value]));
