@@ -1,6 +1,6 @@
 import { config } from './config.js';
 import { withCache } from './cache.js';
-import { buildHeatmapRow, buildLiquidityNarrative, buildWorkspaceNarrative, calculateChangeCorrelations, calculateLeadLag, calculatePositioningModel, calculateCrossMarketRelationship, calculateGlobalLiquidityModel, calculateMacroRegimeModel, calculateRsi, calculateScreenerScores, calculateTechnicalSnapshot, calculateUsdStrengthModel, calculateUsLiquidityModel } from './analytics.js';
+import { buildHeatmapRow, buildLiquidityNarrative, buildWorkspaceNarrative, calculateChangeCorrelations, calculateLeadLag, calculatePositioningModel, calculateCrossMarketRelationship, calculateGlobalLiquidityModel, calculateMacroRegimeModel, calculateRsi, calculateScreenerScores, calculateTechnicalSnapshot, classifyHeadlineSentiment, calculateUsdStrengthModel, calculateUsLiquidityModel } from './analytics.js';
 import { getStoredFredSeries, getStoredMarketHistory, getStoredMarketSnapshot, getRecentModelOutputs, isDatabaseConfigured, reserveProviderCredits } from './database.js';
 import { getAllEquityHistorySymbols, getCoreEquityHistorySymbols } from './equityCatalog.js';
 import { isCryptoHistoryStale, isCotReportStale, isDailyCloseStale, isFredSeriesStale, isPbocObservationStale, monthsBetween } from './freshness.js';
@@ -727,14 +727,21 @@ export async function getNewsWire() {
       }
     });
     const dated = items.filter((item) => item.publishedAt !== null).sort((left, right) => new Date(right.publishedAt) - new Date(left.publishedAt));
+    const tagged = dated.map((item) => ({ ...item, ...classifyHeadlineSentiment(item.title) }));
+    const toneCounts = {
+      positive: tagged.filter((item) => item.tone === 'positive').length,
+      negative: tagged.filter((item) => item.tone === 'negative').length,
+      neutral: tagged.filter((item) => item.tone === 'neutral').length,
+    };
     return {
       asOf: new Date().toISOString(),
       version: 'news-wire-v1',
       status: dated.length ? 'calculated' : 'unavailable',
       calculatedCount: dated.length,
       sources,
-      items: dated.slice(0, 14),
-      methodology: 'Aggregated official and outlet RSS wires: Federal Reserve press releases, CNBC top news, and MarketWatch top stories, sorted by publish time.',
+      items: tagged.slice(0, 14),
+      toneCounts,
+      methodology: 'Aggregated official and outlet RSS wires: Federal Reserve press releases, CNBC top news, and MarketWatch top stories, sorted by publish time. Each headline is keyword-classified as positive, negative, or neutral by a transparent lexicon; unmatched headlines stay neutral.',
     };
   });
 }

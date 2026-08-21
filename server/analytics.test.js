@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { buildHeatmapRow, buildLiquidityNarrative, buildWorkspaceNarrative, calculateChangeCorrelations, calculateLeadLag, calculatePositioningModel, calculateCrossMarketRelationship, calculateGlobalLiquidityModel, calculateMacroRegimeModel, calculateRsi, calculateScreenerScores, calculateTechnicalSnapshot, calculateUsdStrengthModel, calculateUsLiquidityModel, pearsonCorrelation } from './analytics.js';
+import { buildHeatmapRow, buildLiquidityNarrative, buildWorkspaceNarrative, calculateChangeCorrelations, calculateLeadLag, calculatePositioningModel, calculateCrossMarketRelationship, calculateGlobalLiquidityModel, calculateMacroRegimeModel, calculateRsi, calculateScreenerScores, calculateTechnicalSnapshot, classifyHeadlineSentiment, calculateUsdStrengthModel, calculateUsLiquidityModel, pearsonCorrelation } from './analytics.js';
 
 test('RSI reaches 100 for an uninterrupted advance', () => {
   const values = Array.from({ length: 30 }, (_, index) => 100 + index);
@@ -387,4 +387,11 @@ test('screener scores weight momentum, trend, and inverse volatility', () => {
   assert.equal(rows[0].score, 93);
   assert.equal(rows[1].score, 32);
   assert.equal(rows[2].score, null);
+});
+
+test('headline sentiment classifies by transparent keyword lexicon', () => {
+  assert.equal(classifyHeadlineSentiment('Stocks surge as rate cut hopes rise').tone, 'positive');
+  assert.equal(classifyHeadlineSentiment('Markets plunge amid recession fears').tone, 'negative');
+  assert.equal(classifyHeadlineSentiment('Fed publishes minutes from June meeting').tone, 'neutral');
+  assert.equal(classifyHeadlineSentiment('').tone, 'neutral');
 });

@@ -71,6 +71,19 @@ export function calculateLeadLag(seriesX, seriesY, maxLagBars = 4, minObservatio
   };
 }
 
+const HEADLINE_POSITIVE_WORDS = ['surge', 'surges', 'soar', 'soars', 'rally', 'rallies', 'jump', 'jumps', 'record high', 'beats', 'beat expectations', 'upbeat', 'strengthens', 'gains', 'climbs', 'rebounds', 'eases inflation', 'cooling inflation', 'rate cut', 'dovish', 'stimulus', 'expands', 'upgrade', 'upgraded', 'optimism', 'recovery'];
+const HEADLINE_NEGATIVE_WORDS = ['plunge', 'plunges', 'slump', 'slumps', 'tumble', 'tumbles', 'selloff', 'sell-off', 'slides', 'falls', 'drops', 'recession', 'fears', 'warns', 'warning', 'crisis', 'default', 'layoffs', 'downgrade', 'downgraded', 'hawkish', 'rate hike', 'inflation spike', 'contraction', 'weakens', 'misses', 'miss on', 'cuts outlook', 'risk aversion'];
+
+export function classifyHeadlineSentiment(title) {
+  const text = String(title ?? '').toLowerCase();
+  if (!text) return { tone: 'neutral', matches: [] };
+  const positive = HEADLINE_POSITIVE_WORDS.filter((word) => text.includes(word));
+  const negative = HEADLINE_NEGATIVE_WORDS.filter((word) => text.includes(word));
+  if (positive.length > negative.length) return { tone: 'positive', matches: positive };
+  if (negative.length > positive.length) return { tone: 'negative', matches: negative };
+  return { tone: 'neutral', matches: [...positive, ...negative] };
+}
+
 export function calculateScreenerScores(rows) {
   if (!Array.isArray(rows)) return [];
   const momValues = rows.map((row) => row.mom20).filter(Number.isFinite);
