@@ -230,6 +230,8 @@ const RESEARCH_WORKSPACES = [
         globalMomentum: snapshot.globalLiquidity?.momentum ?? null,
         stablecoinState: snapshot.stablecoins?.state ?? null,
         stablecoinChange30dPct: Number.isFinite(snapshot.stablecoins?.change30dPct) ? Math.round(snapshot.stablecoins.change30dPct * 100) / 100 : null,
+        dominantLeg: snapshot.model?.decomposition?.find((window) => window.windowDays === 91)?.dominantLeg ?? null,
+        netChange13wUsdBillions: (() => { const quarter = snapshot.model?.decomposition?.find((window) => window.windowDays === 91); return quarter ? Math.round(quarter.netChange / 100) / 10 : null; })(),
       };
     },
   },

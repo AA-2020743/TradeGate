@@ -86,6 +86,63 @@ export function calculateLeadLag(seriesX, seriesY, maxLagBars = 4, minObservatio
   };
 }
 
+export function buildLiquidityTransmission(liquidityPoints, assetPoints, assetName, { changeBars = 4, maxLagWeeks = 8, minObservations = 40 } = {}) {
+  if (!Array.isArray(liquidityPoints) || liquidityPoints.length < changeBars + minObservations || !Array.isArray(assetPoints) || assetPoints.length < 30) {
+    return { asset: assetName, status: 'unavailable', reason: 'Liquidity and asset histories must both cover the transmission window.' };
+  }
+  const assetByDate = new Map();
+  for (const point of assetPoints) {
+    const value = Number(point.value);
+    if (Number.isFinite(value)) assetByDate.set(String(point.timestamp).slice(0, 10), value);
+  }
+  const assetDates = [...assetByDate.keys()].sort();
+  const assetClosest = (date) => {
+    for (let index = assetDates.length - 1; index >= 0; index -= 1) {
+      if (assetDates[index] <= date) return assetByDate.get(assetDates[index]);
+    }
+    return null;
+  };
+  const liquidityValues = [];
+  const assetValues = [];
+  for (const point of liquidityPoints) {
+    const liquidityValue = Number(point.value);
+    const assetValue = assetClosest(String(point.date).slice(0, 10));
+    if (Number.isFinite(liquidityValue) && Number.isFinite(assetValue)) {
+      liquidityValues.push(liquidityValue);
+      assetValues.push(assetValue);
+    }
+  }
+  if (liquidityValues.length < changeBars + minObservations) {
+    return { asset: assetName, status: 'unavailable', reason: 'Not enough aligned weekly observations.' };
+  }
+  const pctChange = (series, index) => (series[index - changeBars] > 0 ? (series[index] / series[index - changeBars] - 1) * 100 : null);
+  const liquidityChanges = [];
+  const assetChanges = [];
+  for (let index = changeBars; index < liquidityValues.length; index += 1) {
+    const liquidityChange = pctChange(liquidityValues, index);
+    const assetChange = pctChange(assetValues, index);
+    if (Number.isFinite(liquidityChange) && Number.isFinite(assetChange)) {
+      liquidityChanges.push(liquidityChange);
+      assetChanges.push(assetChange);
+    }
+  }
+  const leadLag = calculateLeadLag(liquidityChanges, assetChanges, maxLagWeeks, minObservations, { rankBy: 'magnitude' });
+  if (!leadLag) return { asset: assetName, status: 'unavailable', reason: 'Cross-correlation needs more overlapping changes.' };
+  const decisive = Math.abs(leadLag.corrAtBest) >= 0.2;
+  const direction = leadLag.corrAtBest >= 0 ? 'supportive' : 'inverse';
+  return {
+    asset: assetName,
+    status: 'calculated',
+    changeWindowDays: changeBars * 7,
+    bestLagWeeks: leadLag.bestLag,
+    corrAtBest: leadLag.corrAtBest,
+    synchronousCorr: leadLag.synchronousCorr,
+    observations: leadLag.observations,
+    direction,
+    read: !decisive ? 'No decisive transmission' : leadLag.bestLag >= 2 ? `Liquidity leads ${assetName} by ~${leadLag.bestLag}w (${direction})` : leadLag.bestLag <= -2 ? `${assetName} leads liquidity by ~${-leadLag.bestLag}w (${direction})` : `Contemporaneous link (${direction})`,
+  };
+}
+
 const HEADLINE_POSITIVE_WORDS = ['surge', 'surges', 'soar', 'soars', 'rally', 'rallies', 'jump', 'jumps', 'record high', 'beats', 'beat expectations', 'upbeat', 'strengthens', 'gains', 'climbs', 'rebounds', 'eases inflation', 'cooling inflation', 'rate cut', 'dovish', 'stimulus', 'expands', 'upgrade', 'upgraded', 'optimism', 'recovery'];
 const HEADLINE_NEGATIVE_WORDS = ['plunge', 'plunges', 'slump', 'slumps', 'tumble', 'tumbles', 'selloff', 'sell-off', 'slides', 'falls', 'drops', 'recession', 'fears', 'warns', 'warning', 'crisis', 'default', 'layoffs', 'downgrade', 'downgraded', 'hawkish', 'rate hike', 'inflation spike', 'contraction', 'weakens', 'misses', 'miss on', 'cuts outlook', 'risk aversion'];
 
@@ -808,6 +865,8 @@ const WORKSPACE_VITALS = {
     ...(workspace.globalMomentum && workspace.globalMomentum !== 'Unavailable' ? [{ key: 'globalMomentum', label: 'Global liquidity momentum', string: workspace.globalMomentum }] : []),
     ...(workspace.stablecoinState ? [{ key: 'stablecoinState', label: 'Stablecoin supply regime', string: workspace.stablecoinState }] : []),
     ...(Number.isFinite(workspace.stablecoinChange30dPct) ? [{ key: 'stablecoinChange30d', label: 'Stablecoin 30-day growth %', value: workspace.stablecoinChange30dPct, threshold: 0.1 }] : []),
+    ...(workspace.dominantLeg ? [{ key: 'dominantLeg', label: 'Dominant net-liquidity leg (13w)', string: workspace.dominantLeg }] : []),
+    ...(Number.isFinite(workspace.netChange13wUsdBillions) ? [{ key: 'netChange13w', label: 'Net liquidity 13-week change ($B)', value: workspace.netChange13wUsdBillions, threshold: 50 }] : []),
   ],
   'dollar-transmission': (workspace) => [
     ...(workspace.tailwindLabel ? [{ key: 'tailwindLabel', label: 'Bitcoin dollar backdrop', string: workspace.tailwindLabel }] : []),

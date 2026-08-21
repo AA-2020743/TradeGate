@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { buildAtomFeed, buildHeatmapRow, buildLiquidityNarrative, buildWorkspaceNarrative, calculateChangeCorrelations, calculateLeadLag, calculatePositioningModel, calculateCrossMarketRelationship, calculateGlobalLiquidityModel, calculateMacroRegimeModel, calculateRsi, calculateScreenerScores, calculateSeriesLeadLag, calculateTechnicalSnapshot, calculateTrendQuality, classifyHeadlineSentiment, calculateUsdStrengthModel, calculateUsLiquidityModel, escapeXml, pearsonCorrelation } from './analytics.js';
+import { buildAtomFeed, buildHeatmapRow, buildLiquidityNarrative, buildLiquidityTransmission, buildWorkspaceNarrative, calculateChangeCorrelations, calculateLeadLag, calculatePositioningModel, calculateCrossMarketRelationship, calculateGlobalLiquidityModel, calculateMacroRegimeModel, calculateRsi, calculateScreenerScores, calculateSeriesLeadLag, calculateTechnicalSnapshot, calculateTrendQuality, classifyHeadlineSentiment, calculateUsdStrengthModel, calculateUsLiquidityModel, escapeXml, pearsonCorrelation } from './analytics.js';
 
 test('RSI reaches 100 for an uninterrupted advance', () => {
   const values = Array.from({ length: 30 }, (_, index) => 100 + index);
@@ -343,8 +343,8 @@ test('Workspace narrative detects vitals changes across persisted runs', () => {
 test('Liquidity states vitals raise alerts on regime and stablecoin transitions', () => {
   const narrative = buildWorkspaceNarrative({
     'liquidity-states': [
-      { output: { usRegime: 'Expansion', globalRegime: 'Contraction', globalMomentum: 'Accelerating', stablecoinState: 'Expanding', stablecoinChange30dPct: 0.62 } },
-      { output: { usRegime: 'Neutral', globalRegime: 'Contraction', globalMomentum: 'Decelerating', stablecoinState: 'Flat', stablecoinChange30dPct: 0.31 } },
+      { output: { usRegime: 'Expansion', globalRegime: 'Contraction', globalMomentum: 'Accelerating', stablecoinState: 'Expanding', stablecoinChange30dPct: 0.62, dominantLeg: 'fedBalanceSheet', netChange13wUsdBillions: 120 } },
+      { output: { usRegime: 'Neutral', globalRegime: 'Contraction', globalMomentum: 'Decelerating', stablecoinState: 'Flat', stablecoinChange30dPct: 0.31, dominantLeg: 'treasuryGeneralAccount', netChange13wUsdBillions: -140 } },
     ],
   });
   assert.equal(narrative.status, 'updated');
@@ -352,6 +352,8 @@ test('Liquidity states vitals raise alerts on regime and stablecoin transitions'
   assert.ok(narrative.entries.some((entry) => entry.key === 'liquidity-states:globalMomentum'));
   assert.ok(narrative.entries.some((entry) => entry.key === 'liquidity-states:stablecoinState'));
   assert.ok(narrative.entries.some((entry) => entry.key === 'liquidity-states:stablecoinChange30d'));
+  assert.ok(narrative.entries.some((entry) => entry.key === 'liquidity-states:dominantLeg'));
+  assert.ok(narrative.entries.some((entry) => entry.key === 'liquidity-states:netChange13w'));
   assert.ok(!narrative.entries.some((entry) => entry.key === 'liquidity-states:globalRegime'));
 
   const unchanged = buildWorkspaceNarrative({
@@ -381,6 +383,27 @@ test('Dollar transmission vitals raise alerts on backdrop flips', () => {
     ],
   });
   assert.equal(unchanged.status, 'stable');
+});
+
+test('Liquidity transmission detects a two-week lead into an asset', () => {
+  const weeks = 110;
+  const pattern = (index) => Math.sin(index / 3) * 4;
+  const weekDate = (index) => new Date(Date.UTC(2024, 0, 4 + (index * 7))).toISOString().slice(0, 10);
+  let liquidityLevel = 1000;
+  let assetLevel = 100;
+  const liquidityPoints = [];
+  const assetPoints = [];
+  for (let index = 0; index < weeks; index += 1) {
+    liquidityPoints.push({ date: weekDate(index), value: liquidityLevel });
+    assetPoints.push({ timestamp: weekDate(index), value: assetLevel });
+    liquidityLevel *= 1 + pattern(index) / 100;
+    assetLevel *= 1 + pattern(index - 2) / 100;
+  }
+  const transmission = buildLiquidityTransmission(liquidityPoints, assetPoints, 'Test asset');
+  assert.equal(transmission.status, 'calculated');
+  assert.equal(transmission.bestLagWeeks, 2);
+  assert.ok(transmission.corrAtBest > 0.5);
+  assert.ok(transmission.read.includes('Liquidity leads'));
 });
 
 test('Atom feed builder escapes content and produces valid structure', () => {

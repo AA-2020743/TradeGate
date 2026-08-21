@@ -1,7 +1,7 @@
 import { config } from './config.js';
 import { withCache } from './cache.js';
 import { settle, unwrap } from './settled.js';
-import { buildHeatmapRow, buildLiquidityNarrative, buildWorkspaceNarrative, calculateChangeCorrelations, calculateLeadLag, calculatePositioningModel, calculateCrossMarketRelationship, calculateGlobalLiquidityModel, calculateMacroRegimeModel, calculateRsi, calculateScreenerScores, calculateTechnicalSnapshot, calculateTrendQuality, classifyHeadlineSentiment, calculateUsdStrengthModel, calculateUsLiquidityModel } from './analytics.js';
+import { buildHeatmapRow, buildLiquidityNarrative, buildLiquidityTransmission, buildWorkspaceNarrative, calculateChangeCorrelations, calculateLeadLag, calculatePositioningModel, calculateCrossMarketRelationship, calculateGlobalLiquidityModel, calculateMacroRegimeModel, calculateRsi, calculateScreenerScores, calculateTechnicalSnapshot, calculateTrendQuality, classifyHeadlineSentiment, calculateUsdStrengthModel, calculateUsLiquidityModel } from './analytics.js';
 import { getStoredFredSeries, getStoredMarketHistory, getStoredMarketSnapshot, getRecentModelOutputs, isDatabaseConfigured, reserveProviderCredits } from './database.js';
 import { getAllEquityHistorySymbols, getCoreEquityHistorySymbols } from './equityCatalog.js';
 import { isCryptoHistoryStale, isCotReportStale, isDailyCloseStale, isFredSeriesStale, isPbocObservationStale, monthsBetween } from './freshness.js';
@@ -1203,6 +1203,56 @@ export async function getBitcoinCycleWorkspace() {
       observations: closes.length,
     } : { status: 'unavailable', reason: 'Yahoo BTC-USD 10-year history is required for the 200-day and 200-week averages.' };
 
+    const drawdown = spot !== null && priceHistory.length > 250 ? (() => {
+      let ath = -Infinity;
+      let athTimestamp = null;
+      for (const point of priceHistory) {
+        if (point.value > ath) {
+          ath = point.value;
+          athTimestamp = point.timestamp;
+        }
+      }
+      const daysSinceAth = athTimestamp ? Math.round((new Date(priceHistory.at(-1).timestamp) - new Date(athTimestamp)) / 86_400_000) : null;
+      const drawdownPct = Math.round(((spot / ath) - 1) * 1000) / 10;
+      return {
+        status: 'calculated',
+        allTimeHigh: Math.round(ath),
+        drawdownPct,
+        daysSinceAth,
+        read: drawdownPct > -20 ? 'Near highs' : drawdownPct > -45 ? 'Drawdown' : drawdownPct > -70 ? 'Deep bear' : 'Capitulation zone',
+        observations: priceHistory.length,
+      };
+    })() : { status: 'unavailable', reason: 'Yahoo BTC-USD 10-year history is required for the drawdown read.' };
+
+    const realizedVolatility = (() => {
+      if (closes.length < 60) return { status: 'unavailable', reason: 'At least 60 daily closes are required for realized volatility.' };
+      const windowVol = (start, end) => {
+        const returns = [];
+        for (let index = Math.max(1, start); index < end; index += 1) {
+          if (closes[index - 1] > 0) returns.push(Math.log(closes[index] / closes[index - 1]));
+        }
+        if (returns.length < 2) return null;
+        const meanReturn = returns.reduce((total, value) => total + value, 0) / returns.length;
+        const variance = returns.reduce((total, value) => total + ((value - meanReturn) ** 2), 0) / (returns.length - 1);
+        return Math.sqrt(variance) * Math.sqrt(365) * 100;
+      };
+      const current = windowVol(closes.length - 31, closes.length);
+      if (current === null) return { status: 'unavailable', reason: 'Volatility window incomplete.' };
+      const rolling = [];
+      for (let end = 31; end <= closes.length; end += 1) {
+        const value = windowVol(end - 31, end);
+        if (value !== null) rolling.push(value);
+      }
+      const percentile = percentileOf(rolling, current);
+      return {
+        status: 'calculated',
+        realizedVol30dPct: Math.round(current * 10) / 10,
+        percentile: rolling.length > 60 ? percentile : null,
+        read: percentile >= 80 ? 'Elevated' : percentile <= 20 ? 'Compressed' : 'Normal',
+        observations: rolling.length,
+      };
+    })();
+
     const mvrvSeries = Array.isArray(mvrvRaw) ? mvrvRaw : [];
     const mvrvLatest = mvrvSeries.at(-1);
     const mvrvScore = asNumber(mvrvLatest?.mvrvZscore);
@@ -1250,7 +1300,7 @@ export async function getBitcoinCycleWorkspace() {
       state: supplyNow >= supply30dAgo ? 'Dry powder building' : 'Supply contracting',
     } : { status: 'unavailable', reason: 'DefiLlama stablecoin history is required.' };
 
-    const legs = [trend, valuation, shortTermHolder, leverage, positioning, etfFlows, stablecoins];
+    const legs = [trend, valuation, shortTermHolder, leverage, positioning, etfFlows, stablecoins, drawdown, realizedVolatility];
     const calculatedCount = legs.filter((leg) => leg.status === 'calculated').length;
     return {
       asOf: new Date().toISOString(),
@@ -1265,7 +1315,9 @@ export async function getBitcoinCycleWorkspace() {
       positioning,
       etfFlows,
       stablecoins,
-      methodology: 'Trend uses Yahoo BTC-USD daily closes (200-day and 200-week simple averages). Valuation and short-term-holder cost basis come from bitcoin-data.com on-chain series. Funding aggregates Binance and Bybit perpetual rates with a Binance-history percentile; the OI/price quadrant uses 7-day changes in Binance futures open interest versus price. Stablecoin supply is DefiLlama aggregate circulating value. Spot ETF flows remain unavailable without a licensed source.',
+      drawdown,
+      realizedVolatility,
+      methodology: 'Trend uses Yahoo BTC-USD daily closes (200-day and 200-week simple averages). Valuation and short-term-holder cost basis come from bitcoin-data.com on-chain series. Funding aggregates Binance and Bybit perpetual rates with a Binance-history percentile; the OI/price quadrant uses 7-day changes in Binance futures open interest versus price. Stablecoin supply is DefiLlama aggregate circulating value. Drawdown is measured from the ten-year high; realized volatility is the 30-day annualized standard deviation of log returns percentile-ranked over the same window. Spot ETF flows remain unavailable without a licensed source.',
     };
   });
 }
@@ -1457,6 +1509,12 @@ export async function getRegimeCorrelations() {
       };
     });
     const calculatedCount = pairs.filter((pair) => pair.status === 'calculated').length;
+    const transmissionAssets = [
+      { name: 'US equities (SPY)', symbol: 'SPY' },
+      { name: 'Bitcoin', symbol: 'BTC' },
+      { name: 'Gold (GLD)', symbol: 'GLD' },
+    ];
+    const liquidityTransmission = transmissionAssets.map((asset) => buildLiquidityTransmission(liquidity.model?.history ?? [], marketPointsBySymbol[asset.symbol] ?? [], asset.name));
     const leadSignals = pairs
       .filter((pair) => pair.leadLag?.leader)
       .sort((left, right) => Math.abs(right.leadLag.corrAtBest) - Math.abs(left.leadLag.corrAtBest))
@@ -1479,6 +1537,8 @@ export async function getRegimeCorrelations() {
       calculatedCount,
       pairs,
       leadSignals,
+      liquidityTransmission,
+      liquidityTransmissionMethodology: 'Four-week net-liquidity changes (us-liquidity-v1 history) are cross-correlated against same-window changes of each asset aligned to liquidity dates, at lags of up to eight weeks. A positive lag means liquidity moves first; the peak is ranked by absolute correlation and a lead is only claimed at |r| >= 0.20.',
       leadLagMethodology: 'Each pair\'s aligned daily changes are cross-correlated across a lag window of ten observations in both directions, ranked by absolute correlation so a genuinely inverse pair is not misread. A lead is only claimed when the peak beats the synchronous reading by 0.05 and the lag is measured in calendar days from the pair\'s own observation cadence, so a weekly series reports weeks rather than sessions.',
       missingInputs: pairs.filter((pair) => pair.status === 'unavailable').map((pair) => `${pair.left} / ${pair.right}`),
     };
