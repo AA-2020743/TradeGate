@@ -135,7 +135,7 @@ export async function getRecentModelOutputs(modelId, limit = 2) {
   const result = await pool.query(
     `SELECT version, effective_at, output FROM model_outputs
      WHERE model_id = $1
-     ORDER BY effective_at DESC, id DESC
+     ORDER BY calculated_at DESC, effective_at DESC
      LIMIT $2`,
     [modelId, limit],
   );
