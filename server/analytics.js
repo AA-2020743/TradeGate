@@ -247,6 +247,9 @@ export function calculateTechnicalSnapshot(inputPoints, options = {}) {
   const volatilityScore = clamp(100 - volatility);
   const score = Math.round((trendScore * 0.4) + (momentumScore * 0.35) + (rsiScore * 0.2) + (volatilityScore * 0.05));
   const regime = score >= 65 ? 'Constructive' : score <= 35 ? 'Guarded' : 'Neutral';
+  const trailingWindow = values.length > 200 ? values.slice(-252) : values;
+  const yearHigh = trailingWindow.length ? Math.max(...trailingWindow) : null;
+  const pctFrom52wHigh = Number.isFinite(yearHigh) && yearHigh > 0 ? Math.round(((latest / yearHigh) - 1) * 1000) / 10 : null;
 
   return {
     version: 'technical-v1',
@@ -263,6 +266,7 @@ export function calculateTechnicalSnapshot(inputPoints, options = {}) {
       sma200,
       momentum20d: momentumPercent,
       annualizedVolatility20d: volatility,
+      pctFrom52wHigh,
     },
     components: {
       trend: Math.round(trendScore),

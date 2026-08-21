@@ -833,7 +833,7 @@ function MacroDashboard({ data }) {
     </section>}
 
     <section className="macro-bottom-grid">
-      {data.alerts?.status === 'calculated' && data.alerts.alerts?.length ? <article className="change-panel panel"><p className="section-kicker">MODEL ALERTS · PERSISTED</p><h3>Detected vitals shifts across ingestion runs</h3><div className="narrative-list">{data.alerts.alerts.slice(0, 8).map((alert) => <p key={`${alert.modelId}-${alert.key}-${alert.detectedAt}`} className="change-copy">{alert.text}</p>)}</div><div className="change-tags"><span>{data.alerts.alerts.length} stored</span><span>Ingestion-time detection</span></div></article> : null}
+      {data.alerts?.status === 'calculated' && data.alerts.alerts?.length ? <article className="change-panel panel"><p className="section-kicker">MODEL ALERTS · PERSISTED</p><h3>Detected vitals shifts across ingestion runs</h3><div className="narrative-list">{data.alerts.alerts.slice(0, 8).map((alert) => <p key={`${alert.modelId}-${alert.key}-${alert.detectedAt}`} className="change-copy">{alert.text}<span className="alert-meta">{MODEL_LABELS[alert.modelId] ?? alert.modelId} · {alertAge(alert.detectedAt)}</span></p>)}</div><div className="change-tags"><span>{data.alerts.alerts.length} stored</span><span>Ingestion-time detection</span></div></article> : null}
       <article className={`change-panel panel ${narrative?.status === 'updated' || narrative?.status === 'stable' ? '' : 'preview-section'}`}><p className="section-kicker">NARRATIVE · {narrative?.status === 'updated' ? 'MODEL CHANGES DETECTED' : narrative?.status === 'stable' ? 'MODEL CHANGES' : 'MODEL PREVIEW'}</p>{narrative?.entries?.length ? <div className="narrative-list">{narrative.entries.map((entry) => <p key={entry.key} className="change-copy">{entry.text}</p>)}</div> : <><h3>Automated change detection pending.</h3><p className="change-copy">{narrative?.status === 'insufficient-history' ? 'At least two persisted ingestion runs are required before model changes can be narrated.' : 'This panel is generated from persisted model changes once ingestion history exists.'}</p></>}<div className="change-tags"><span>Versioned changes</span><span>Source lineage</span><span>Release-aware</span></div></article>
       <article className={`sensitivity-panel panel ${regimeCorrelations?.status === 'calculated' ? '' : 'preview-section'}`}><div className="panel-title"><div><p className="section-kicker">ASSET SENSITIVITY · CALCULATED</p><h3>Current macro exposures</h3></div><button onClick={() => setActiveModel('Correlations')}>Details →</button></div><div className="sensitivity-list">{sensitivityRows.map((row) => <div key={row.asset}><b>{row.asset}</b><span>{row.driver} <i>{row.strength}</i></span><small>{Number.isFinite(row.value) ? `${row.value > 0 ? '+' : ''}${row.value.toFixed(2)}` : '—'}</small></div>)}</div><p className="model-footnote">Sensitivities are the {correlationWindow} correlations from <code>regime-correlation-v1</code>; strength labels derive from |r| thresholds of 0.25 and 0.50.</p></article>
       <article className="sources-panel panel"><p className="section-kicker">DATA PROVENANCE</p><h3>Connected and target sources.</h3><p>FRED is connected, including ECB and BoJ balance sheets with H.10 FX conversion, and PBoC total assets arrive via BIS WS_CBTA on DBnomics. BoE, IMF broad money, and institutional market feeds remain planned inputs.</p><button>Explore sources and lags →</button></article>
@@ -842,6 +842,26 @@ function MacroDashboard({ data }) {
     {liquidityChartOpen && <LiquidityChartDialog history={liquidityModel?.history ?? []} title="Calculated net US liquidity" description="Move across the chart to inspect a date. Click or tap to pin the observation for comparison." onClose={() => setLiquidityChartOpen(false)} />}
     {globalChartOpen && <LiquidityChartDialog history={globalLiquidity?.history ?? []} title="Calculated global central-bank liquidity" description="US net liquidity plus ECB and BoJ balance sheets in USD. Move across the chart to inspect a date; click to pin." label="global central-bank liquidity" onClose={() => setGlobalChartOpen(false)} />}
   </div>;
+}
+
+const MODEL_LABELS = {
+  'market-heatmap': 'Heatmap',
+  'metals-workspace': 'Metals',
+  'fx-workspace': 'FX',
+  'sentiment-snapshot': 'Sentiment',
+  'bitcoin-cycle': 'Bitcoin cycle',
+  'equity-risk': 'Equity risk',
+  'liquidity-states': 'Liquidity states',
+  'dollar-transmission': 'Dollar transmission',
+  'screener-v1': 'Screener',
+};
+
+function alertAge(iso) {
+  const minutes = Math.max(0, Math.round((Date.now() - new Date(iso).getTime()) / 60000));
+  if (minutes < 60) return `${minutes}m ago`;
+  const hours = Math.round(minutes / 60);
+  if (hours < 48) return `${hours}h ago`;
+  return `${Math.round(hours / 24)}d ago`;
 }
 
 const SCREENER_PRESETS = {
@@ -940,18 +960,20 @@ function WatchlistRow({ symbol, onRemove, onSnapshot }) {
   const last = points.at(-1)?.value;
   const changePct = Number.isFinite(first) && Number.isFinite(last) && first > 0 ? ((last / first) - 1) * 100 : null;
   const model = technical.data?.model;
+  const fromHigh = model?.indicators?.pctFrom52wHigh;
+  const snapshotValue = model ? { score: model.score, regime: model.regime, last: Number.isFinite(last) ? last : null, changePct, pctFrom52wHigh: Number.isFinite(fromHigh) ? fromHigh : null } : null;
 
   React.useEffect(() => {
-    onSnapshot(symbol, model ? { score: model.score, regime: model.regime, last: Number.isFinite(last) ? last : null, changePct } : null);
+    onSnapshot(symbol, snapshotValue);
     return () => onSnapshot(symbol, null);
-  }, [symbol, model?.score, model?.regime, last, changePct]);
+  }, [symbol, snapshotValue?.score, snapshotValue?.regime, snapshotValue?.last, snapshotValue?.changePct, snapshotValue?.pctFrom52wHigh]);
 
   return <div className="watchlist-row">
     <b>{symbol}</b>
     {values.length > 1 ? <Sparkline color={changePct >= 0 ? '#75c966' : '#d98a72'} values={values} /> : <div className="model-chart-empty">No history</div>}
     <span>{formatUsd(last)}</span>
     <span className={changePct >= 0 ? 'positive' : 'negative'}>{Number.isFinite(changePct) ? formatPercent(changePct) : '—'}</span>
-    <small>{model ? `Score ${model.score} · ${model.regime}` : history.status === 'loading' ? 'Calculating…' : 'Score unavailable'}</small>
+    <small>{model ? `Score ${model.score} · ${model.regime}${Number.isFinite(fromHigh) ? ` · ${fromHigh > 0 ? '+' : ''}${fromHigh}% vs 52W high` : ''}` : history.status === 'loading' ? 'Calculating…' : 'Score unavailable'}</small>
     <button onClick={() => onRemove(symbol)} aria-label={`Remove ${symbol}`}>×</button>
   </div>;
 }
@@ -1058,10 +1080,10 @@ function WatchlistsDashboard({ data }) {
     updateSnapshot(symbol, null);
   };
   const exportListCsv = () => {
-    const header = 'Symbol,Last,Change3mPct,Score,Regime';
+    const header = 'Symbol,Last,Change3mPct,Score,Regime,PctFrom52wHigh';
     const lines = symbols.map((symbol) => {
       const snapshot = snapshots[symbol];
-      return [symbol, snapshot?.last ?? '', Number.isFinite(snapshot?.changePct) ? snapshot.changePct.toFixed(2) : '', snapshot?.score ?? '', snapshot?.regime ?? ''].join(',');
+      return [symbol, snapshot?.last ?? '', Number.isFinite(snapshot?.changePct) ? snapshot.changePct.toFixed(2) : '', snapshot?.score ?? '', snapshot?.regime ?? '', Number.isFinite(snapshot?.pctFrom52wHigh) ? snapshot.pctFrom52wHigh : ''].join(',');
     });
     const blob = new Blob([[header].concat(lines).join('\n')], { type: 'text/csv' });
     const url = URL.createObjectURL(blob);
