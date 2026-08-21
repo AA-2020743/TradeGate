@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { buildHeatmapRow, buildLiquidityNarrative, buildWorkspaceNarrative, calculateChangeCorrelations, calculateLeadLag, calculatePositioningModel, calculateCrossMarketRelationship, calculateGlobalLiquidityModel, calculateMacroRegimeModel, calculateRsi, calculateTechnicalSnapshot, calculateUsdStrengthModel, calculateUsLiquidityModel, pearsonCorrelation } from './analytics.js';
+import { buildHeatmapRow, buildLiquidityNarrative, buildWorkspaceNarrative, calculateChangeCorrelations, calculateLeadLag, calculatePositioningModel, calculateCrossMarketRelationship, calculateGlobalLiquidityModel, calculateMacroRegimeModel, calculateRsi, calculateScreenerScores, calculateTechnicalSnapshot, calculateUsdStrengthModel, calculateUsLiquidityModel, pearsonCorrelation } from './analytics.js';
 
 test('RSI reaches 100 for an uninterrupted advance', () => {
   const values = Array.from({ length: 30 }, (_, index) => 100 + index);
@@ -376,4 +376,15 @@ test('lead-lag recovers known shifts between return series', () => {
   const leading = calculateLeadLag(x, yLeads);
   assert.equal(leading.bestLag, -2);
   assert.equal(leading.curve.length, 9);
+});
+
+test('screener scores weight momentum, trend, and inverse volatility', () => {
+  const rows = calculateScreenerScores([
+    { symbol: 'AAA', mom20: 10, vsSma200: 5, vol20: 10 },
+    { symbol: 'BBB', mom20: 0, vsSma200: 0, vol20: 30 },
+    { symbol: 'CCC', mom20: 4, vsSma200: null, vol20: 12 },
+  ]);
+  assert.equal(rows[0].score, 93);
+  assert.equal(rows[1].score, 32);
+  assert.equal(rows[2].score, null);
 });

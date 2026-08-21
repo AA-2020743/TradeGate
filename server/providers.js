@@ -1,6 +1,6 @@
 import { config } from './config.js';
 import { withCache } from './cache.js';
-import { buildHeatmapRow, buildLiquidityNarrative, buildWorkspaceNarrative, calculateChangeCorrelations, calculateLeadLag, calculatePositioningModel, calculateCrossMarketRelationship, calculateGlobalLiquidityModel, calculateMacroRegimeModel, calculateRsi, calculateTechnicalSnapshot, calculateUsdStrengthModel, calculateUsLiquidityModel } from './analytics.js';
+import { buildHeatmapRow, buildLiquidityNarrative, buildWorkspaceNarrative, calculateChangeCorrelations, calculateLeadLag, calculatePositioningModel, calculateCrossMarketRelationship, calculateGlobalLiquidityModel, calculateMacroRegimeModel, calculateRsi, calculateScreenerScores, calculateTechnicalSnapshot, calculateUsdStrengthModel, calculateUsLiquidityModel } from './analytics.js';
 import { getStoredFredSeries, getStoredMarketHistory, getStoredMarketSnapshot, getRecentModelOutputs, isDatabaseConfigured, reserveProviderCredits } from './database.js';
 import { getAllEquityHistorySymbols, getCoreEquityHistorySymbols } from './equityCatalog.js';
 import { isCryptoHistoryStale, isCotReportStale, isDailyCloseStale, isFredSeriesStale, isPbocObservationStale, monthsBetween } from './freshness.js';
@@ -1059,24 +1059,14 @@ export async function getEquityScreener() {
     if (!rows.length) {
       return { asOf: new Date().toISOString(), version: 'screener-v1', status: 'unavailable', reason: 'No constituent histories were returned.', calculatedCount: 0, universeSize: symbols.length, rows: [], methodology: 'Requires Yahoo batch spark histories for the S&P 500 constituent list.' };
     }
-    const momValues = rows.map((row) => row.mom20).filter(Number.isFinite);
-    const trendValues = rows.map((row) => row.vsSma200).filter(Number.isFinite);
-    const volValues = rows.map((row) => row.vol20).filter(Number.isFinite);
-    for (const row of rows) {
-      const momentumRank = Number.isFinite(row.mom20) ? percentileOf(momValues, row.mom20) : null;
-      const trendRank = Number.isFinite(row.vsSma200) ? percentileOf(trendValues, row.vsSma200) : null;
-      const calmRank = Number.isFinite(row.vol20) ? 100 - percentileOf(volValues, row.vol20) : null;
-      row.score = momentumRank !== null && trendRank !== null && calmRank !== null
-        ? Math.round((momentumRank * 0.45) + (trendRank * 0.35) + (calmRank * 0.2))
-        : null;
-    }
+    const scored = calculateScreenerScores(rows);
     return {
       asOf: new Date().toISOString(),
       version: 'screener-v1',
       status: 'calculated',
-      calculatedCount: rows.length,
+      calculatedCount: scored.length,
       universeSize: symbols.length,
-      rows,
+      rows: scored,
       methodology: 'Universe is Wikipedia\'s S&P 500 constituent list; metrics come from Yahoo batch spark one-year daily closes. The composite score cross-sectionally ranks 20-session momentum (45%), distance above the 200-day average (35%), and the inverse of 20-day annualized volatility (20%). RSI-14 uses standard Wilder smoothing on the same closes.',
     };
   });
@@ -1770,13 +1760,26 @@ export async function getLiquiditySnapshot(options = {}) {
 
 export function getProviderHealth() {
   return {
-    coingecko: { configured: true, mode: 'public', purpose: 'Crypto spot data' },
+    fred: { configured: Boolean(config.fredApiKey), mode: config.fredApiKey ? 'credentialed' : 'keyless-public-csv', purpose: 'Official U.S. macro and liquidity series' },
     twelveData: {
       configured: Boolean(config.twelveDataApiKey),
       mode: config.twelveDataApiKey ? 'credentialed' : 'not-configured',
       purpose: 'Equities, ETFs, FX, and metals proxies',
       limits: { creditsPerMinute: config.twelveMinuteCreditLimit, creditsPerDay: config.twelveDailyCreditLimit },
     },
-    fred: { configured: Boolean(config.fredApiKey), mode: config.fredApiKey ? 'credentialed' : 'not-configured', purpose: 'Official U.S. macro and liquidity series' },
+    yahooSpark: { configured: true, mode: 'keyless-public', purpose: 'Batch daily and intraday closes for the screener, breadth, sectors, crypto pairs, and VIX term structure' },
+    wikipedia: { configured: true, mode: 'keyless-public', purpose: 'S&P 500 constituent universe' },
+    coingecko: { configured: true, mode: 'public', purpose: 'Bitcoin on-chain proxies and global market aggregates (dominance, total capitalization)' },
+    defiLlama: { configured: true, mode: 'keyless-public', purpose: 'Aggregate stablecoin supply history for the issuance liquidity leg' },
+    binanceBybit: { configured: true, mode: 'keyless-public', purpose: 'Perpetual funding rates, open-interest history, and BTC cycle derivatives legs' },
+    bitcoinData: { configured: true, mode: 'keyless-public', serialized: true, purpose: 'MVRV Z-score and short-term holder realized price' },
+    multpl: { configured: true, mode: 'keyless-public', purpose: 'Trailing S&P 500 earnings yield for the equity risk-premium proxy' },
+    rssWires: { configured: true, mode: 'keyless-public', purpose: 'Federal Reserve, CNBC, and MarketWatch headlines for the news wire' },
+    blockedPreviews: [
+      { source: 'Farside UK', reason: 'Cloudflare 403', preview: 'Spot bitcoin ETF flows' },
+      { source: 'CBOE / cdn.cboe.com', reason: 'Akamai 403', preview: 'Dealer gamma and options positioning' },
+      { source: 'Coin Metrics community API', reason: '403', preview: 'Institutional on-chain series' },
+      { source: 'AAII', reason: 'Paywall', preview: 'Sentiment survey' },
+    ],
   };
 }

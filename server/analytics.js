@@ -71,6 +71,25 @@ export function calculateLeadLag(seriesX, seriesY, maxLagBars = 4, minObservatio
   };
 }
 
+export function calculateScreenerScores(rows) {
+  if (!Array.isArray(rows)) return [];
+  const momValues = rows.map((row) => row.mom20).filter(Number.isFinite);
+  const trendValues = rows.map((row) => row.vsSma200).filter(Number.isFinite);
+  const volValues = rows.map((row) => row.vol20).filter(Number.isFinite);
+  const rankOf = (values, value) => (values.length ? Math.round((values.filter((item) => item <= value).length / values.length) * 100) : null);
+  return rows.map((row) => {
+    const momentumRank = Number.isFinite(row.mom20) ? rankOf(momValues, row.mom20) : null;
+    const trendRank = Number.isFinite(row.vsSma200) ? rankOf(trendValues, row.vsSma200) : null;
+    const calmRank = Number.isFinite(row.vol20) && volValues.length ? 100 - rankOf(volValues, row.vol20) : null;
+    return {
+      ...row,
+      score: momentumRank !== null && trendRank !== null && calmRank !== null
+        ? Math.round((momentumRank * 0.45) + (trendRank * 0.35) + (calmRank * 0.2))
+        : null,
+    };
+  });
+}
+
 export function calculateRsi(values, period = 14) {
   if (values.length <= period) return null;
   let averageGain = 0;

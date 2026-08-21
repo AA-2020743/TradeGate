@@ -855,11 +855,23 @@ function ScreenerDashboard({ data }) {
   const screener = data.screener;
   const rows = screener?.rows ?? [];
   const definition = SCREENER_PRESETS[preset];
-  const filtered = rows
+  const matched = rows
     .filter(definition.filter)
     .filter((row) => !search || row.symbol.toLowerCase().includes(search.trim().toLowerCase()))
-    .sort(definition.sort)
-    .slice(0, 40);
+    .sort(definition.sort);
+  const filtered = matched.slice(0, 40);
+
+  const exportCsv = () => {
+    const header = 'Symbol,Last,Mom20,Mom60,VsSma200,Rsi14,Vol20,Score';
+    const lines = matched.map((row) => [row.symbol, row.last ?? '', row.mom20 ?? '', row.mom60 ?? '', row.vsSma200 ?? '', Number.isFinite(row.rsi14) ? row.rsi14.toFixed(1) : '', row.vol20 ?? '', row.score ?? ''].join(','));
+    const blob = new Blob([[header].concat(lines).join('\n')], { type: 'text/csv' });
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement('a');
+    anchor.href = url;
+    anchor.download = `tradegate-screener-${preset}.csv`;
+    anchor.click();
+    URL.revokeObjectURL(url);
+  };
 
   return <div className="screener-dashboard">
     <section className="macro-intro">
@@ -871,6 +883,7 @@ function ScreenerDashboard({ data }) {
     <section className="screener-controls-row">
       <div className="window-buttons">{Object.entries(SCREENER_PRESETS).map(([key, item]) => <button className={preset === key ? 'selected' : ''} key={key} onClick={() => setPreset(key)}>{item.label}</button>)}</div>
       <input className="screener-search" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Filter by symbol…" aria-label="Filter by symbol" />
+      {matched.length ? <button className="watch-button" onClick={exportCsv}>Export CSV ({matched.length})</button> : null}
     </section>
     <section className={`screener-panel panel ${screener?.status === 'calculated' ? '' : 'preview-section'}`}>
       {screener?.status === 'calculated' ? <div className="screener-wrap">
