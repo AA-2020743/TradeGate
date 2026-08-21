@@ -22,6 +22,8 @@ import { buildAtomFeed } from './analytics.js';
 const app = express();
 const rootDirectory = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const distDirectory = path.join(rootDirectory, 'dist');
+const distIndexFile = path.join(distDirectory, 'index.html');
+const distAssetsPrefix = path.join(distDirectory, 'assets') + path.sep;
 const apiRateLimits = new Map();
 
 app.disable('x-powered-by');
@@ -34,6 +36,9 @@ app.use((_request, response, next) => {
   next();
 });
 app.use('/api', (request, response, next) => {
+  // Market data must never come back from a heuristic browser cache. no-cache
+  // still permits a conditional revalidation rather than forbidding storage.
+  response.setHeader('Cache-Control', 'no-cache');
   const now = Date.now();
   const key = request.ip;
   const current = apiRateLimits.get(key);
@@ -425,8 +430,15 @@ app.use('/api', (_request, response) => {
 });
 
 if (existsSync(distDirectory)) {
-  app.use(express.static(distDirectory));
-  app.get('/{*path}', (_request, response) => response.sendFile(path.join(distDirectory, 'index.html')));
+  // Bundle filenames carry a content hash, so they can be cached forever; the
+  // document that names them must be revalidated or a deploy leaves clients
+  // asking for assets that no longer exist.
+  app.use(express.static(distDirectory, {
+    setHeaders: (response, filePath) => {
+      response.setHeader('Cache-Control', filePath.startsWith(distAssetsPrefix) ? 'public, max-age=31536000, immutable' : 'no-cache');
+    },
+  }));
+  app.get('/{*path}', (_request, response) => response.sendFile(distIndexFile, { headers: { 'Cache-Control': 'no-cache' } }));
 }
 
 app.use((error, _request, response, _next) => {
