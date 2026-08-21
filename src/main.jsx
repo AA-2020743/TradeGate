@@ -3,6 +3,7 @@ import { createRoot } from 'react-dom/client';
 import './styles.css';
 import { formatPercent, formatTimestamp, formatUsd, useEquityResearch, useMarketHistory, usePlatformData, useTechnicalAnalytics } from './liveData.js';
 import { buildRoute, parseRoute } from './routing.js';
+import { SCREENER_COLUMNS, ariaSortFor, nextSortState, sortRows } from './screenerSort.js';
 
 const navItems = [
   ['⌘', 'Overview'],
@@ -906,16 +907,20 @@ function ScreenerDashboard({ data }) {
   const [preset, setPreset] = React.useState('momentum-leaders');
   const [search, setSearch] = React.useState('');
   const [sectorFilter, setSectorFilter] = React.useState('All');
+  const [sort, setSort] = React.useState(null);
   const screener = data.screener;
   const rows = screener?.rows ?? [];
   const definition = SCREENER_PRESETS[preset];
   const sectors = ['All', ...(screener?.sectorLeadership ?? []).map((item) => item.sector)];
-  const matched = rows
+  const matched = sortRows(rows
     .filter(definition.filter)
     .filter((row) => sectorFilter === 'All' || row.sector === sectorFilter)
-    .filter((row) => !search || row.symbol.toLowerCase().includes(search.trim().toLowerCase()))
-    .sort(definition.sort);
+    .filter((row) => !search || row.symbol.toLowerCase().includes(search.trim().toLowerCase())), sort, definition.sort);
   const filtered = matched.slice(0, 40);
+  const selectPreset = (key) => {
+    setPreset(key);
+    setSort(null);
+  };
 
   const exportCsv = () => {
     const header = 'Symbol,Sector,SectorRank,SectorSize,Last,Mom20,Mom60,VsIdx20,VsIdx60,VsSma200,Rsi14,Vol20,PctFrom52wHigh,TrendSlopePct,TrendR2,TrendQuality,QualityRank,Score';
@@ -936,18 +941,18 @@ function ScreenerDashboard({ data }) {
     </section>
     <DataDisclosure data={data} message={`Every metric is calculated from Yahoo batch spark one-year daily closes over the Wikipedia S&P 500 list. ${screener?.calculatedCount ?? 0} of ${screener?.universeSize ?? 0} constituents returned usable history.`} />
     {screener?.breadth && Number.isFinite(screener.breadth.above50Pct) ? <p className="watchlist-summary">{screener.breadth.near52wHighCount} of {screener.breadth.calculated} names within 5% of their 52-week high ({screener.breadth.near52wHighPct}%) · {screener.breadth.above50Pct}% above their 50-day average{Number.isFinite(screener.breadth.persistentTrendPct) ? ` · ${screener.breadth.persistentTrendCount} of ${screener.breadth.qualityCovered} riding a persistent 90-session uptrend (${screener.breadth.persistentTrendPct}%)` : ''} · momentum expressed net of SPY over the same windows</p> : null}
-    <section className="macro-section-heading"><div><p className="section-kicker">SCREENS · CALCULATED</p><h2>{definition.label}</h2></div><span className="data-pill">{filtered.length ? `Top ${filtered.length} of ${rows.length}` : 'No matches'}</span></section>
+    <section className="macro-section-heading"><div><p className="section-kicker">SCREENS · CALCULATED</p><h2>{definition.label}</h2></div><span className="data-pill">{filtered.length ? `Top ${filtered.length} of ${rows.length}${sort ? ` · by ${SCREENER_COLUMNS.find((column) => column.key === sort.key)?.label ?? sort.key}` : ''}` : 'No matches'}</span></section>
     <section className="screener-controls-row">
       <div className="window-buttons">{sectors.map((sector) => <button className={sectorFilter === sector ? 'selected' : ''} key={sector} onClick={() => setSectorFilter(sector)}>{sector === 'All' ? 'All sectors' : sector}</button>)}</div>
     </section>
     <section className="screener-controls-row">
-      <div className="window-buttons">{Object.entries(SCREENER_PRESETS).map(([key, item]) => <button className={preset === key ? 'selected' : ''} key={key} onClick={() => setPreset(key)}>{item.label}</button>)}</div>
+      <div className="window-buttons">{Object.entries(SCREENER_PRESETS).map(([key, item]) => <button className={preset === key ? 'selected' : ''} key={key} onClick={() => selectPreset(key)}>{item.label}</button>)}</div>
       <input className="screener-search" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Filter by symbol…" aria-label="Filter by symbol" />
       {matched.length ? <button className="watch-button" onClick={exportCsv}>Export CSV ({matched.length})</button> : null}
     </section>
     <section className={`screener-panel panel ${screener?.status === 'calculated' ? '' : 'preview-section'}`}>
       {screener?.status === 'calculated' ? <div className="screener-wrap">
-        <div className="screener-head"><span>Symbol</span><span>Last</span><span>20D</span><span>60D</span><span>vs 200D</span><span>RSI-14</span><span>Vol 20D</span><span>Trend 90D</span><span>Score</span></div>
+        <div className="screener-head" role="row">{SCREENER_COLUMNS.map((column) => <button className={`screener-sort ${sort?.key === column.key ? 'sorted' : ''}`} role="columnheader" aria-sort={ariaSortFor(sort, column.key)} key={column.key} onClick={() => setSort((current) => nextSortState(current, column.key))} title={`Sort by ${column.label}`}>{column.label}<i>{sort?.key === column.key ? sort.direction === 'asc' ? '↑' : '↓' : ''}</i></button>)}</div>
         {filtered.map((row) => <div className="screener-row" key={row.symbol}>
           <b>{row.symbol}</b>
           <span>{formatUsd(row.last)}</span>
