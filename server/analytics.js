@@ -680,6 +680,13 @@ const WORKSPACE_VITALS = {
     ...(Number.isFinite(workspace.spxBreadth?.pctAbove200) ? [{ key: 'pctAbove200', label: '% of S&P 500 above 200-day', value: workspace.spxBreadth.pctAbove200, threshold: 2 }] : []),
     ...(Number.isFinite(workspace.creditStress?.level) ? [{ key: 'hyOas', label: 'high-yield OAS', value: workspace.creditStress.level, threshold: 0.1 }] : []),
   ],
+  'liquidity-states': (workspace) => [
+    ...(workspace.usRegime ? [{ key: 'usRegime', label: 'US net-liquidity regime', string: workspace.usRegime }] : []),
+    ...(workspace.globalRegime ? [{ key: 'globalRegime', label: 'Global liquidity regime', string: workspace.globalRegime }] : []),
+    ...(workspace.globalMomentum && workspace.globalMomentum !== 'Unavailable' ? [{ key: 'globalMomentum', label: 'Global liquidity momentum', string: workspace.globalMomentum }] : []),
+    ...(workspace.stablecoinState ? [{ key: 'stablecoinState', label: 'Stablecoin supply regime', string: workspace.stablecoinState }] : []),
+    ...(Number.isFinite(workspace.stablecoinChange30dPct) ? [{ key: 'stablecoinChange30d', label: 'Stablecoin 30-day growth %', value: workspace.stablecoinChange30dPct, threshold: 0.1 }] : []),
+  ],
 };
 
 export function buildWorkspaceNarrative(outputsByKey = {}) {

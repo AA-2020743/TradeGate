@@ -216,6 +216,23 @@ const RESEARCH_WORKSPACES = [
   { modelId: 'sentiment-snapshot', load: getSentimentSnapshot },
   { modelId: 'bitcoin-cycle', load: getBitcoinCycleWorkspace },
   { modelId: 'equity-risk', load: getEquityRiskAppetite },
+  {
+    modelId: 'liquidity-states',
+    load: async () => {
+      const snapshot = await getLiquiditySnapshot();
+      if (!snapshot?.model && !snapshot?.globalLiquidity) throw new Error('Liquidity models unavailable');
+      return {
+        asOf: new Date().toISOString(),
+        version: 'liquidity-states-v1',
+        status: 'calculated',
+        usRegime: snapshot.model?.regime ?? null,
+        globalRegime: snapshot.globalLiquidity?.regime ?? null,
+        globalMomentum: snapshot.globalLiquidity?.momentum ?? null,
+        stablecoinState: snapshot.stablecoins?.state ?? null,
+        stablecoinChange30dPct: Number.isFinite(snapshot.stablecoins?.change30dPct) ? Math.round(snapshot.stablecoins.change30dPct * 100) / 100 : null,
+      };
+    },
+  },
 ];
 
 export async function ingestResearchWorkspaces() {

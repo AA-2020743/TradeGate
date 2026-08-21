@@ -327,6 +327,29 @@ test('Workspace narrative detects vitals changes across persisted runs', () => {
   assert.equal(stable.status, 'stable');
   assert.equal(buildWorkspaceNarrative({ 'metals-workspace': [{ output: {} }] }).status, 'insufficient-history');
 });
+
+test('Liquidity states vitals raise alerts on regime and stablecoin transitions', () => {
+  const narrative = buildWorkspaceNarrative({
+    'liquidity-states': [
+      { output: { usRegime: 'Expansion', globalRegime: 'Contraction', globalMomentum: 'Accelerating', stablecoinState: 'Expanding', stablecoinChange30dPct: 0.62 } },
+      { output: { usRegime: 'Neutral', globalRegime: 'Contraction', globalMomentum: 'Decelerating', stablecoinState: 'Flat', stablecoinChange30dPct: 0.31 } },
+    ],
+  });
+  assert.equal(narrative.status, 'updated');
+  assert.ok(narrative.entries.some((entry) => entry.key === 'liquidity-states:usRegime' && entry.text.includes('Neutral') && entry.text.includes('Expansion')));
+  assert.ok(narrative.entries.some((entry) => entry.key === 'liquidity-states:globalMomentum'));
+  assert.ok(narrative.entries.some((entry) => entry.key === 'liquidity-states:stablecoinState'));
+  assert.ok(narrative.entries.some((entry) => entry.key === 'liquidity-states:stablecoinChange30d'));
+  assert.ok(!narrative.entries.some((entry) => entry.key === 'liquidity-states:globalRegime'));
+
+  const unchanged = buildWorkspaceNarrative({
+    'liquidity-states': [
+      { output: { usRegime: 'Expansion', stablecoinChange30dPct: 0.62 } },
+      { output: { usRegime: 'Expansion', stablecoinChange30dPct: 0.58 } },
+    ],
+  });
+  assert.equal(unchanged.status, 'stable');
+});
 test('COT positioning ranks net speculative exposure', () => {
   const history = Array.from({ length: 60 }, (_, index) => ({
     date: new Date(Date.UTC(2025, 0, 1 + (index * 7))).toISOString().slice(0, 10),
