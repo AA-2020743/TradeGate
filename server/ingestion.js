@@ -1,10 +1,12 @@
 import { config } from './config.js';
-import { calculateTechnicalSnapshot } from './analytics.js';
+import { buildWorkspaceNarrative, calculateTechnicalSnapshot } from './analytics.js';
 import {
   acquireIngestionLock,
   finishIngestionRun,
   hasIngestedMarketHistoriesSince,
+  insertModelAlerts,
   isDatabaseConfigured,
+  getRecentModelOutputs,
   persistModelOutput,
   persistSeries,
   startIngestionRun,
@@ -221,6 +223,7 @@ export async function ingestResearchWorkspaces() {
     const persisted = [];
     const skipped = [];
     const errors = [];
+    let alertsRaised = 0;
     for (const workspace of RESEARCH_WORKSPACES) {
       try {
         const output = await workspace.load();
@@ -228,14 +231,19 @@ export async function ingestResearchWorkspaces() {
           skipped.push(workspace.modelId);
           continue;
         }
+        const previousOutputs = await getRecentModelOutputs(workspace.modelId, 1);
         await persistModelOutput(workspace.modelId, output, [{ provider: 'aggregated-workspace', asOf: output.asOf }], runId);
         persisted.push(workspace.modelId);
+        const narrative = buildWorkspaceNarrative({ [workspace.modelId]: [{ output }, ...previousOutputs] });
+        if (narrative.status === 'updated' && narrative.entries.length) {
+          alertsRaised += await insertModelAlerts(workspace.modelId, narrative.entries, runId);
+        }
       } catch (error) {
         errors.push({ modelId: workspace.modelId, message: error.message });
       }
     }
     if (!persisted.length) throw new Error(`No research workspaces were persisted (skipped: ${skipped.join(', ') || 'none'}; errors: ${errors.map((error) => error.modelId).join(', ') || 'none'})`);
-    return { status: errors.length ? 'partial' : 'completed', details: { persisted, skipped, errors } };
+    return { status: errors.length ? 'partial' : 'completed', details: { persisted, skipped, alertsRaised, errors } };
   });
 }
 

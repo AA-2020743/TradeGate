@@ -239,7 +239,7 @@ The home news card aggregates live RSS wires (`news-wire-v1`): Federal Reserve p
 
 `equity-risk-v1` also carries a VIX term-structure leg (spot VIX divided by VIX3M from Yahoo index histories, percentile-ranked over six months) and a 10Y-2Y Treasury-curve leg (FRED T10Y2Y with a 20-observation change), for seven calculated legs in total. The metals workspace publishes gold/silver and gold/copper cross-ratios with one-year percentiles.
 
-With PostgreSQL configured, the scheduled `research-workspaces` ingestion job persists the heatmap, metals, FX, sentiment, bitcoin-cycle, and equity-risk workspaces as versioned model outputs on the macro cadence. The liquidity narrative then merges `buildWorkspaceNarrative` change detection over those stored outputs, so the Macro tab narrates movements in Fear & Greed, breadth, high-yield OAS, MVRV-Z, funding, COT percentiles, and cross-ratios between runs.
+With PostgreSQL configured, the scheduled `research-workspaces` ingestion job persists the heatmap, metals, FX, sentiment, bitcoin-cycle, and equity-risk workspaces as versioned model outputs on the macro cadence. The liquidity narrative then merges `buildWorkspaceNarrative` change detection over those stored outputs, so the Macro tab narrates movements in Fear & Greed, breadth, high-yield OAS, MVRV-Z, funding, COT percentiles, and cross-ratios between runs. The same detection runs at ingestion time: any detected vitals shift is written to a `model_alerts` table (migration `004`) and served from `/api/alerts`, giving a persisted alert history rather than only an ephemeral narrative.
 
 ## Reliability Rules
 

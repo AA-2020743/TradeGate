@@ -3,7 +3,7 @@ import { existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import { config } from './config.js';
-import { closeDatabase, getDatabaseHealth, getIngestionStatus, getStoredSeriesCoverage, isDatabaseConfigured } from './database.js';
+import { closeDatabase, getDatabaseHealth, getIngestionStatus, getRecentModelAlerts, getStoredSeriesCoverage, isDatabaseConfigured } from './database.js';
 import {
   attachSeriesCoverage,
   breadthRequirements,
@@ -162,6 +162,18 @@ app.get('/api/analytics/bitcoin', async (_request, response, next) => {
 app.get('/api/analytics/screener', async (_request, response, next) => {
   try {
     response.json(await getEquityScreener());
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.get('/api/alerts', async (_request, response, next) => {
+  try {
+    if (!isDatabaseConfigured()) {
+      response.json({ asOf: new Date().toISOString(), status: 'unconfigured', alerts: [] });
+      return;
+    }
+    response.json({ asOf: new Date().toISOString(), status: 'calculated', alerts: await getRecentModelAlerts(50) });
   } catch (error) {
     next(error);
   }

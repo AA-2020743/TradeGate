@@ -142,6 +142,30 @@ export async function getRecentModelOutputs(modelId, limit = 2) {
   return result.rows.map((row) => ({ version: row.version, effectiveAt: row.effective_at, output: row.output }));
 }
 
+export async function insertModelAlerts(modelId, entries, ingestionRunId = null) {
+  if (!pool || !Array.isArray(entries) || !entries.length) return 0;
+  let inserted = 0;
+  for (const entry of entries) {
+    const result = await pool.query(
+      `INSERT INTO model_alerts (model_id, entry_key, text, run_id)
+       VALUES ($1, $2, $3, $4)
+       ON CONFLICT (model_id, entry_key, detected_at) DO NOTHING`,
+      [modelId, entry.key, entry.text, ingestionRunId],
+    );
+    inserted += result.rowCount ?? 0;
+  }
+  return inserted;
+}
+
+export async function getRecentModelAlerts(limit = 50) {
+  if (!pool) return [];
+  const result = await pool.query(
+    `SELECT model_id, entry_key, text, detected_at FROM model_alerts ORDER BY detected_at DESC, id DESC LIMIT $1`,
+    [limit],
+  );
+  return result.rows.map((row) => ({ modelId: row.model_id, key: row.entry_key, text: row.text, detectedAt: row.detected_at }));
+}
+
 export async function reserveProviderCredits(provider, credits, dailyLimit, interactiveLimit, usage, usageDate) {
   if (!pool) return { persisted: false, allowed: true };
   const interactiveCredits = usage === 'interactive' ? credits : 0;
