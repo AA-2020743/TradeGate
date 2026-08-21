@@ -7,7 +7,7 @@
     "dev": "concurrently \"npm:dev:api\" \"npm:dev:web\"",
     "dev:api": "node --watch server/index.js",
     "dev:web": "vite",
-    "test": "node --test server/*.test.js",
+    "test": "node --test server/*.test.js src/*.test.js",
     "db:migrate": "node server/migrate.js",
     "ingest:once": "node server/ingest-once.js",
     "build": "vite build",

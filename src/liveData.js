@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { createPoller } from './polling.js';
 
 async function requestJson(path) {
   const response = await fetch(path, { headers: { Accept: 'application/json' } });
@@ -90,11 +91,11 @@ export function usePlatformData() {
       });
     };
 
-    load();
-    const interval = window.setInterval(load, 60_000);
+    const poller = createPoller({ load, intervalMs: 60_000 });
+    poller.start();
     return () => {
       active = false;
-      window.clearInterval(interval);
+      poller.stop();
     };
   }, []);
 
@@ -168,11 +169,11 @@ export function useEquityResearch(symbol) {
         error: failed.length ? failed.map((result) => result.reason.message).join('; ') : null,
       });
     };
-    load();
-    const interval = window.setInterval(load, 5 * 60_000);
+    const poller = createPoller({ load, intervalMs: 5 * 60_000 });
+    poller.start();
     return () => {
       active = false;
-      window.clearInterval(interval);
+      poller.stop();
     };
   }, [symbol]);
 

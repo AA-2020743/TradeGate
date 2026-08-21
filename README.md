@@ -251,6 +251,7 @@ With PostgreSQL configured, the scheduled `research-workspaces` ingestion job pe
 - Partial quote refreshes retain missing last-known-good assets as explicitly stale cache fallbacks.
 - FRED revisions are preserved in `observation_revisions` rather than overwritten without an audit trail.
 - Ingestion runs record status, write count, provider errors, and completion time.
+- The browser refresh loop (`src/polling.js`) never runs two loads concurrently, so a slow response — the screener sweeps the whole index — delays the next cycle instead of stacking requests against the API rate limit. Cycles are skipped entirely while the tab is hidden and one replay runs as soon as it is visible again.
 - Model outputs store their version, effective date, JSON output, and input-series lineage.
 - Remaining preview modules are visibly labeled at the navigation, tab, and individual-section level until their real input sets and calculation tests exist.
 - Calculated sections show their model version or coverage status instead of a Preview badge.
