@@ -928,7 +928,7 @@ function ScreenerDashboard({ data }) {
   </div>;
 }
 
-function WatchlistRow({ symbol, onRemove }) {
+function WatchlistRow({ symbol, onRemove, onSnapshot }) {
   const history = useMarketHistory(symbol, '3M');
   const technical = useTechnicalAnalytics(symbol);
   const points = history.data?.points ?? [];
@@ -937,6 +937,12 @@ function WatchlistRow({ symbol, onRemove }) {
   const last = points.at(-1)?.value;
   const changePct = Number.isFinite(first) && Number.isFinite(last) && first > 0 ? ((last / first) - 1) * 100 : null;
   const model = technical.data?.model;
+
+  React.useEffect(() => {
+    onSnapshot(symbol, model ? { score: model.score, regime: model.regime } : null);
+    return () => onSnapshot(symbol, null);
+  }, [symbol, model?.score, model?.regime]);
+
   return <div className="watchlist-row">
     <b>{symbol}</b>
     {values.length > 1 ? <Sparkline color={changePct >= 0 ? '#75c966' : '#d98a72'} values={values} /> : <div className="model-chart-empty">No history</div>}
@@ -1028,13 +1034,26 @@ function WatchlistsDashboard({ data }) {
   }, []);
 
   const symbols = lists[activeList] ?? [];
+  const [snapshots, setSnapshots] = React.useState({});
+  const updateSnapshot = React.useCallback((symbol, value) => {
+    setSnapshots((current) => {
+      if (current[symbol] === value || (value && current[symbol] && current[symbol].score === value.score && current[symbol].regime === value.regime)) return current;
+      const next = { ...current };
+      if (value === null) delete next[symbol]; else next[symbol] = value;
+      return next;
+    });
+  }, []);
+
   const addSymbol = () => {
     const symbol = draftSymbol.trim().toUpperCase().slice(0, 8);
     if (!symbol || symbols.includes(symbol)) return;
     setLists((current) => ({ ...current, [activeList]: [...(current[activeList] ?? []), symbol] }));
     setDraftSymbol('');
   };
-  const removeSymbol = (symbol) => setLists((current) => ({ ...current, [activeList]: (current[activeList] ?? []).filter((item) => item !== symbol) }));
+  const removeSymbol = (symbol) => {
+    setLists((current) => ({ ...current, [activeList]: (current[activeList] ?? []).filter((item) => item !== symbol) }));
+    updateSnapshot(symbol, null);
+  };
   const createList = () => {
     const name = `List ${Object.keys(lists).length + 1}`;
     setLists((current) => ({ ...current, [name]: [] }));
@@ -1066,8 +1085,16 @@ function WatchlistsDashboard({ data }) {
       </div>
     </section>
     <section className="screener-panel panel">
+      {(() => {
+        const computed = symbols.map((symbol) => snapshots[symbol]).filter(Boolean);
+        if (!symbols.length || !computed.length) return null;
+        const avgScore = Math.round(computed.reduce((total, snapshot) => total + snapshot.score, 0) / computed.length);
+        const riskOn = computed.filter((snapshot) => snapshot.regime === 'Risk-on' || snapshot.regime === 'Constructive').length;
+        const stress = computed.filter((snapshot) => snapshot.regime === 'Stress').length;
+        return <p className="watchlist-summary">{symbols.length} tracked · {computed.length} calculated · avg score {avgScore} · {riskOn} risk-on · {stress} stress</p>;
+      })()}
       <div className="watchlist-head"><span>Symbol</span><span>3M trend</span><span>Latest</span><span>3M change</span><span>Technical state</span><span></span></div>
-      {symbols.map((symbol) => <WatchlistRow key={`${activeList}-${symbol}`} symbol={symbol} onRemove={removeSymbol} />)}
+      {symbols.map((symbol) => <WatchlistRow key={`${activeList}-${symbol}`} symbol={symbol} onRemove={removeSymbol} onSnapshot={updateSnapshot} />)}
       {!symbols.length && <div className="calculation-empty">This list is empty — add a ticker above to start tracking calculated signals.</div>}
     </section>
     <p className="independence-note">TradeGate is an independent market research platform and is not affiliated with Tradegate AG.</p>
