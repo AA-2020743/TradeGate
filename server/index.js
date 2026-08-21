@@ -16,7 +16,7 @@ import {
 } from './equityCatalog.js';
 import { getEquityDashboard, getSectorDashboard } from './equities.js';
 import { startIngestionScheduler } from './ingestion.js';
-import { getDxyBitcoinRelationship, getLiquiditySnapshot, getMarketHeatmap, getMarketHistory, getMarketPositioning, getMarketSnapshot, getProviderHealth, getRegimeCorrelations, getTechnicalSnapshot } from './providers.js';
+import { getDxyBitcoinRelationship, getLiquiditySnapshot, getMarketHeatmap, getMarketHistory, getMarketPositioning, getMarketSnapshot, getMetalsWorkspace, getProviderHealth, getRegimeCorrelations, getTechnicalSnapshot } from './providers.js';
 
 const app = express();
 const rootDirectory = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -124,6 +124,14 @@ app.get('/api/analytics/positioning', async (_request, response, next) => {
 app.get('/api/analytics/heatmap', async (_request, response, next) => {
   try {
     response.json(await getMarketHeatmap());
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.get('/api/analytics/metals', async (_request, response, next) => {
+  try {
+    response.json(await getMetalsWorkspace());
   } catch (error) {
     next(error);
   }

@@ -519,6 +519,71 @@ export async function getMarketHeatmap() {
   });
 }
 
+const METALS_SPOT = [
+  { symbol: 'XAU', name: 'Gold', yahooSymbol: 'GC=F' },
+  { symbol: 'XAG', name: 'Silver', yahooSymbol: 'SI=F' },
+  { symbol: 'XPT', name: 'Platinum', yahooSymbol: 'PL=F' },
+  { symbol: 'XPD', name: 'Palladium', yahooSymbol: 'PA=F' },
+];
+const METALS_MINERS = [
+  { symbol: 'GDX', name: 'Gold Miners' },
+  { symbol: 'GDXJ', name: 'Junior Gold Miners' },
+  { symbol: 'SIL', name: 'Silver Miners' },
+  { symbol: 'SILJ', name: 'Junior Silver Miners' },
+];
+
+function summarizeMetalHistory(name, points) {
+  const technical = calculateTechnicalSnapshot(points, { annualizationDays: 252 });
+  if (!technical) return null;
+  const latest = points.at(-1)?.value ?? null;
+  const prior = points.length > 20 ? points[points.length - 21]?.value : null;
+  const change20d = Number.isFinite(latest) && Number.isFinite(prior) && prior !== 0 ? Number(((latest / prior - 1) * 100).toFixed(2)) : null;
+  return {
+    name,
+    price: Number.isFinite(latest) ? Number(latest.toFixed(2)) : null,
+    change20d,
+    score: technical.score,
+    regime: technical.regime,
+    momentum20d: technical.indicators.momentum20d,
+    rsi14: technical.indicators.rsi14,
+    sma50: technical.indicators.sma50,
+    sma200: technical.indicators.sma200,
+    annualizedVolatility: technical.indicators.annualizedVolatility20d,
+    asOf: technical.asOf,
+    observations: technical.observations,
+    sparkline: points.slice(-40).map((point) => Number(point.value.toFixed(2))),
+  };
+}
+
+export async function getMetalsWorkspace() {
+  return withCache('analytics:metals-workspace', 15 * 60_000, async () => {
+    const [positioningResult, liquidityResult] = await Promise.allSettled([getMarketPositioning(), getLiquiditySnapshot()]);
+    const positioning = positioningResult.status === 'fulfilled' ? positioningResult.value.model : null;
+    const liquidity = liquidityResult.status === 'fulfilled' ? liquidityResult.value : null;
+    const goldContract = positioning?.contracts?.find((contract) => contract.key === 'gold') ?? null;
+    const fetchSeries = async (yahooSymbol) => {
+      const points = await getYahooHistory(yahooSymbol);
+      return points.map((point) => ({ timestamp: point.timestamp, value: point.value }));
+    };
+    const spotResults = await Promise.allSettled(METALS_SPOT.map(async (entry) => ({ entry, summary: summarizeMetalHistory(entry.name, await fetchSeries(entry.yahooSymbol)) })));
+    const minerResults = await Promise.allSettled(METALS_MINERS.map(async (entry) => ({ entry, summary: summarizeMetalHistory(entry.name, await fetchSeries(entry.symbol)) })));
+    const assets = spotResults.flatMap((result) => result.status === 'fulfilled' && result.value.summary ? [{ symbol: result.value.entry.symbol, ...result.value.summary }] : []);
+    const miners = minerResults.flatMap((result) => result.status === 'fulfilled' && result.value.summary ? [{ symbol: result.value.entry.symbol, ...result.value.summary }] : []);
+    return {
+      asOf: new Date().toISOString(),
+      version: 'metals-workspace-v1',
+      status: assets.length ? 'calculated' : 'unavailable',
+      calculatedCount: assets.length + miners.length,
+      universeSize: METALS_SPOT.length + METALS_MINERS.length,
+      assets,
+      miners,
+      cot: goldContract ? { percentile: goldContract.percentile, netNoncomm: goldContract.netNoncomm, weeklyChange: goldContract.weeklyChange, crowd: goldContract.crowd, stance: goldContract.stance, asOf: goldContract.asOf } : null,
+      macro: liquidity?.usdStrength && liquidity?.globalLiquidity ? { dollar: { score: liquidity.usdStrength.score, regime: liquidity.usdStrength.regime }, globalLiquidity: { score: liquidity.globalLiquidity.score, regime: liquidity.globalLiquidity.regime } } : null,
+      methodology: 'Spot metals use front CME/COMEX futures (GC, SI, PL, PA) and miners use ETF close histories from Yahoo Finance; scores are technical-v1 with 20-day annualized volatility and 20-session momentum. COT figures reuse the platform gold contract percentile.',
+    };
+  });
+}
+
 export async function getTechnicalSnapshot(symbol) {
   const history = await getMarketHistory(symbol, '1Y');
   const model = calculateTechnicalSnapshot(history.points, { annualizationDays: history.symbol === 'BTC' ? 365 : 252 });
