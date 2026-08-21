@@ -17,7 +17,7 @@ import {
 import { getEquityDashboard, getSectorDashboard } from './equities.js';
 import { startIngestionScheduler } from './ingestion.js';
 import { createRateLimiter } from './rateLimit.js';
-import { getBitcoinCycleWorkspace, getBlockedSources, getCryptoGlobal, getDxyBitcoinRelationship, getEquityRiskAppetite, getEquityScreener, getEthereumRotation, getFxWorkspace, getIntradayRotation, getLiquiditySnapshot, getMarketHeatmap, getMarketHistory, getMarketPositioning, getMarketSnapshot, getMetalsWorkspace, getNewsWire, getProviderHealth, getRegimeCorrelations, getSentimentSnapshot, getTechnicalSnapshot } from './providers.js';
+import { getBitcoinCycleWorkspace, getBlockedSources, calculateDollarTransmission, getCryptoGlobal, getDxyBitcoinRelationship, getEquityRiskAppetite, getEquityScreener, getEthereumRotation, getFxWorkspace, getIntradayRotation, getLiquiditySnapshot, getMarketHeatmap, getMarketHistory, getMarketPositioning, getMarketSnapshot, getMetalsWorkspace, getNewsWire, getProviderHealth, getRegimeCorrelations, getSentimentSnapshot, getTechnicalSnapshot } from './providers.js';
 import { buildAtomFeed } from './analytics.js';
 
 const app = express();
@@ -170,7 +170,7 @@ app.get('/api/analytics/screener', async (_request, response, next) => {
             const bySymbol = new Map((payload.rows ?? []).map((row) => [row.symbol, row]));
             alertsRaised = await insertModelAlerts('screener-v1', fresh.map((symbol) => {
               const row = bySymbol.get(symbol);
-              return { key: symbol, text: `${symbol}${row?.sector ? ` (${row.sector})` : ''} cleared its 200-day average · screener score ${row?.score ?? 'n/a'}` };
+              return { key: symbol, text: `${symbol}${row?.sector ? ` (${row.sector})` : ''} cleared its 200-day average Â· screener score ${row?.score ?? 'n/a'}` };
             }));
           }
         }
@@ -310,6 +310,60 @@ app.get('/api/news/feed', async (_request, response, next) => {
   }
 });
 
+app.get('/api/digest', async (_request, response, next) => {
+  try {
+    const [liquidityResult, dxyBtcResult, screenerResult, sentimentResult, bitcoinResult] = await Promise.allSettled([
+      getLiquiditySnapshot(),
+      getDxyBitcoinRelationship(),
+      getEquityScreener(),
+      getSentimentSnapshot(),
+      getBitcoinCycleWorkspace(),
+    ]);
+    const asOf = new Date().toISOString();
+    if (liquidityResult.status !== 'fulfilled') {
+      response.status(503).json({ asOf, status: 'unavailable', reason: `Core liquidity computation failed: ${liquidityResult.reason?.message ?? liquidityResult.reason}` });
+      return;
+    }
+    const liquidity = liquidityResult.value;
+    const dxyBtc = dxyBtcResult.status === 'fulfilled' ? dxyBtcResult.value : null;
+    const screener = screenerResult.status === 'fulfilled' ? screenerResult.value : null;
+    const sentiment = sentimentResult.status === 'fulfilled' ? sentimentResult.value : null;
+    const bitcoin = bitcoinResult.status === 'fulfilled' ? bitcoinResult.value : null;
+    const leader = screener?.rows?.length
+      ? screener.rows.reduce((best, row) => ((row.score ?? -Infinity) > (best.score ?? -Infinity) ? row : best), screener.rows[0])
+      : null;
+    response.json({
+      asOf,
+      status: 'calculated',
+      liquidity: {
+        usRegime: liquidity.model?.regime ?? null,
+        globalRegime: liquidity.globalLiquidity?.regime ?? null,
+        globalMomentum: liquidity.globalLiquidity?.momentum ?? null,
+        stablecoinState: liquidity.stablecoins?.state ?? null,
+        stablecoinChange30dPct: Number.isFinite(liquidity.stablecoins?.change30dPct) ? Math.round(liquidity.stablecoins.change30dPct * 100) / 100 : null,
+      },
+      dollarTransmission: calculateDollarTransmission(liquidity, dxyBtc),
+      equities: screener ? {
+        calculatedCount: screener.calculatedCount ?? null,
+        universeSize: screener.universeSize ?? null,
+        near52wHighPct: screener.breadth?.near52wHighPct ?? null,
+        above50Pct: screener.breadth?.above50Pct ?? null,
+        leader: leader ? { symbol: leader.symbol, score: leader.score, sector: leader.sector ?? null, momentum20d: leader.mom20 ?? null, vsIndexMom20: leader.vsIndexMom20 ?? null, sectorRank: leader.sectorRank ?? null, sectorCount: leader.sectorCount ?? null } : null,
+      } : { status: 'unavailable' },
+      sentiment: sentiment?.fearGreed ? { score: sentiment.fearGreed.score, rating: sentiment.fearGreed.rating } : { status: 'unavailable' },
+      bitcoin: bitcoin ? {
+        price: bitcoin.trend?.status === 'calculated' ? bitcoin.trend.price : null,
+        pctVsSma200d: bitcoin.trend?.pctVsSma200d ?? null,
+        mvrvZ: bitcoin.valuation?.status === 'calculated' ? bitcoin.valuation.mvrvZ : null,
+        valuationBand: bitcoin.valuation?.band ?? null,
+        fundingAnnualizedPercent: bitcoin.leverage?.status === 'calculated' ? bitcoin.leverage.annualizedPercent ?? null : null,
+      } : { status: 'unavailable' },
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
 app.get('/api/analytics/equity-risk', async (_request, response, next) => {
   try {
     response.json(await getEquityRiskAppetite());
@@ -430,7 +484,7 @@ app.use((error, _request, response, _next) => {
 
 export { app };
 
-// Importing this module — the API tests do — must not bind a port or start
+// Importing this module â€” the API tests do â€” must not bind a port or start
 // ingestion; only running it as a program should.
 const startedDirectly = process.argv[1] !== undefined
   && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url);

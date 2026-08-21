@@ -1876,6 +1876,26 @@ export async function getLiquiditySnapshot(options = {}) {
   }, { force: options.refresh === true });
 }
 
+export function calculateDollarTransmission(liquidity, dxyBtc) {
+  const usdStrength = liquidity?.usdStrength ?? null;
+  const usdMomentum = usdStrength?.indicators?.momentum20d;
+  const corr60 = dxyBtc?.model?.correlations?.['60D'];
+  const votes = [];
+  if (Number.isFinite(usdMomentum)) votes.push(usdMomentum < -0.3 ? 1 : usdMomentum > 0.3 ? -1 : 0);
+  if (Number.isFinite(usdStrength?.score)) votes.push(usdStrength.score < 48 ? 1 : usdStrength.score > 55 ? -1 : 0);
+  const tailwindScore = votes.reduce((total, vote) => total + vote, 0);
+  const hasInputs = votes.length > 0 || Number.isFinite(corr60);
+  return {
+    asOf: new Date().toISOString(),
+    version: 'dollar-transmission-v1',
+    status: hasInputs ? 'calculated' : 'unavailable',
+    tailwindLabel: !hasInputs ? null : tailwindScore >= 1 ? 'Dollar tailwind' : tailwindScore <= -1 ? 'Dollar headwind' : 'Neutral dollar',
+    tailwindScore: votes.length ? tailwindScore : null,
+    corr60: Number.isFinite(corr60) ? Math.round(corr60 * 100) / 100 : null,
+    linkRegime: dxyBtc?.model?.regime ?? null,
+  };
+}
+
 export function getProviderHealth() {
   return {
     fred: { configured: Boolean(config.fredApiKey), mode: config.fredApiKey ? 'credentialed' : 'keyless-public-csv', purpose: 'Official U.S. macro and liquidity series' },

@@ -11,7 +11,7 @@ import {
   persistSeries,
   startIngestionRun,
 } from './database.js';
-import { getBitcoinCycleWorkspace, getDxyBitcoinRelationship, getEquityRiskAppetite, getFxWorkspace, getIngestionHistorySymbols, getLiquiditySnapshot, getMarketHeatmap, getMarketHistory, getMarketSnapshot, getMetalsWorkspace, getRegimeCorrelations, getSentimentSnapshot, REGIME_CORRELATION_PAIRS } from './providers.js';
+import { getBitcoinCycleWorkspace, calculateDollarTransmission, getDxyBitcoinRelationship, getEquityRiskAppetite, getFxWorkspace, getIngestionHistorySymbols, getLiquiditySnapshot, getMarketHeatmap, getMarketHistory, getMarketSnapshot, getMetalsWorkspace, getRegimeCorrelations, getSentimentSnapshot, REGIME_CORRELATION_PAIRS } from './providers.js';
 
 function observationTimestamp(value, fallback) {
   const timestamp = value ? new Date(value) : new Date(fallback);
@@ -237,23 +237,7 @@ const RESEARCH_WORKSPACES = [
     modelId: 'dollar-transmission',
     load: async () => {
       const [liquidity, dxyBtc] = await Promise.all([getLiquiditySnapshot(), getDxyBitcoinRelationship()]);
-      const usdStrength = liquidity.usdStrength;
-      const usdMomentum = usdStrength?.indicators?.momentum20d;
-      const corr60 = dxyBtc.model?.correlations?.['60D'];
-      const votes = [];
-      if (Number.isFinite(usdMomentum)) votes.push(usdMomentum < -0.3 ? 1 : usdMomentum > 0.3 ? -1 : 0);
-      if (Number.isFinite(usdStrength?.score)) votes.push(usdStrength.score < 48 ? 1 : usdStrength.score > 55 ? -1 : 0);
-      const tailwindScore = votes.reduce((total, vote) => total + vote, 0);
-      const hasInputs = votes.length > 0 || Number.isFinite(corr60);
-      return {
-        asOf: new Date().toISOString(),
-        version: 'dollar-transmission-v1',
-        status: hasInputs ? 'calculated' : 'unavailable',
-        tailwindLabel: !hasInputs ? null : tailwindScore >= 1 ? 'Dollar tailwind' : tailwindScore <= -1 ? 'Dollar headwind' : 'Neutral dollar',
-        tailwindScore: votes.length ? tailwindScore : null,
-        corr60: Number.isFinite(corr60) ? Math.round(corr60 * 100) / 100 : null,
-        linkRegime: dxyBtc.model?.regime ?? null,
-      };
+      return calculateDollarTransmission(liquidity, dxyBtc);
     },
   },
 ];
