@@ -3,7 +3,7 @@ import { existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import { config } from './config.js';
-import { closeDatabase, getDatabaseHealth, getIngestionStatus, getRecentModelAlerts, getStoredSeriesCoverage, isDatabaseConfigured } from './database.js';
+import { closeDatabase, getDatabaseHealth, getIngestionStatus, getRecentModelAlerts, getStoredSeriesCoverage, getWatchlists, isDatabaseConfigured, replaceWatchlists } from './database.js';
 import {
   attachSeriesCoverage,
   breadthRequirements,
@@ -25,6 +25,7 @@ const apiRateLimits = new Map();
 
 app.disable('x-powered-by');
 app.set('trust proxy', 'loopback');
+app.use(express.json({ limit: '64kb' }));
 app.use((_request, response, next) => {
   response.setHeader('X-Content-Type-Options', 'nosniff');
   response.setHeader('X-Frame-Options', 'DENY');
@@ -167,6 +168,52 @@ app.get('/api/analytics/screener', async (_request, response, next) => {
   }
 });
 
+app.get('/api/watchlists', async (_request, response, next) => {
+  try {
+    if (!isDatabaseConfigured()) {
+      response.json({ status: 'unconfigured', lists: [] });
+      return;
+    }
+    const lists = await getWatchlists();
+    response.json({ asOf: new Date().toISOString(), status: 'calculated', lists: lists ?? [] });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.put('/api/watchlists', async (request, response, next) => {
+  try {
+    const payload = request.body ?? {};
+    if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
+      response.status(400).json({ error: 'Watchlist payload must be an object of name to symbol arrays.' });
+      return;
+    }
+    const entries = Object.entries(payload);
+    if (entries.length > 20) {
+      response.status(400).json({ error: 'At most 20 watchlists are supported.' });
+      return;
+    }
+    const normalized = {};
+    for (const [name, symbols] of entries) {
+      const cleanName = String(name).trim().slice(0, 40);
+      if (!cleanName || !Array.isArray(symbols) || symbols.length > 50) {
+        response.status(400).json({ error: `Invalid watchlist "${cleanName || name}".` });
+        return;
+      }
+      const cleanSymbols = [...new Set(symbols.map((symbol) => String(symbol).toUpperCase().replace(/[^A-Z0-9.\-]/g, '').slice(0, 10)))].filter(Boolean);
+      normalized[cleanName] = cleanSymbols;
+    }
+    if (!isDatabaseConfigured()) {
+      response.json({ status: 'unconfigured', saved: false });
+      return;
+    }
+    await replaceWatchlists(normalized);
+    response.json({ asOf: new Date().toISOString(), status: 'calculated', saved: true });
+  } catch (error) {
+    next(error);
+  }
+});
+
 app.get('/api/alerts', async (_request, response, next) => {
   try {
     if (!isDatabaseConfigured()) {
@@ -282,6 +329,10 @@ if (existsSync(distDirectory)) {
 }
 
 app.use((error, _request, response, _next) => {
+  if (error?.type === 'entity.parse.failed' || error instanceof SyntaxError) {
+    response.status(400).json({ error: 'Request body is not valid JSON.' });
+    return;
+  }
   console.error(error);
   response.status(502).json({ error: 'Unable to fetch data from an upstream provider.' });
 });

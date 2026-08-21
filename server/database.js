@@ -166,6 +166,37 @@ export async function getRecentModelAlerts(limit = 50) {
   return result.rows.map((row) => ({ modelId: row.model_id, key: row.entry_key, text: row.text, detectedAt: row.detected_at }));
 }
 
+export async function replaceWatchlists(lists, ownerKey = 'local') {
+  if (!pool) return false;
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    await client.query('DELETE FROM watchlists WHERE owner_key = $1', [ownerKey]);
+    for (const [name, symbols] of Object.entries(lists)) {
+      await client.query(
+        'INSERT INTO watchlists (owner_key, name, symbols) VALUES ($1, $2, $3::jsonb)',
+        [ownerKey, name, JSON.stringify(symbols)],
+      );
+    }
+    await client.query('COMMIT');
+    return true;
+  } catch {
+    await client.query('ROLLBACK');
+    return false;
+  } finally {
+    client.release();
+  }
+}
+
+export async function getWatchlists(ownerKey = 'local') {
+  if (!pool) return null;
+  const result = await pool.query(
+    'SELECT name, symbols, updated_at FROM watchlists WHERE owner_key = $1 ORDER BY name',
+    [ownerKey],
+  );
+  return result.rows.map((row) => ({ name: row.name, symbols: row.symbols ?? [], updatedAt: row.updated_at }));
+}
+
 export async function reserveProviderCredits(provider, credits, dailyLimit, interactiveLimit, usage, usageDate) {
   if (!pool) return { persisted: false, allowed: true };
   const interactiveCredits = usage === 'interactive' ? credits : 0;

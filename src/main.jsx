@@ -960,10 +960,36 @@ function WatchlistsDashboard({ data }) {
   });
   const [activeList, setActiveList] = React.useState(() => Object.keys(DEFAULT_WATCHLISTS)[0]);
   const [draftSymbol, setDraftSymbol] = React.useState('');
+  const serverSyncedRef = React.useRef(false);
+  const syncTimerRef = React.useRef(null);
 
   React.useEffect(() => {
     window.localStorage.setItem('tradegate-watchlists', JSON.stringify(lists));
+    if (!serverSyncedRef.current) return;
+    if (syncTimerRef.current) clearTimeout(syncTimerRef.current);
+    syncTimerRef.current = setTimeout(() => {
+      fetch('/api/watchlists', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(lists) }).catch(() => {});
+    }, 1500);
+    return () => clearTimeout(syncTimerRef.current);
   }, [lists]);
+
+  React.useEffect(() => {
+    let active = true;
+    fetch('/api/watchlists').then((response) => response.json()).then((payload) => {
+      if (!active || payload?.status !== 'calculated') return;
+      const hasLocal = Boolean(window.localStorage.getItem('tradegate-watchlists'));
+      if (!hasLocal && Array.isArray(payload.lists) && payload.lists.length) {
+        const adopted = {};
+        for (const list of payload.lists) if (list?.name && Array.isArray(list.symbols)) adopted[list.name] = list.symbols;
+        if (Object.keys(adopted).length) {
+          setLists(adopted);
+          setActiveList(Object.keys(adopted)[0]);
+        }
+      }
+      serverSyncedRef.current = true;
+    }).catch(() => {});
+    return () => { active = false; };
+  }, []);
 
   const symbols = lists[activeList] ?? [];
   const addSymbol = () => {
