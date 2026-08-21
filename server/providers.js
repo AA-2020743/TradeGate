@@ -823,6 +823,7 @@ export async function getEquityRiskAppetite() {
       Promise.all([
         getFredCsvSeries({ id: 'BAMLH0A0HYM2', key: 'highYieldSpread', name: 'US high-yield OAS' }),
         getFredCsvSeries({ id: 'DFII10', key: 'realYield10y', name: '10-year real yield' }),
+        getFredCsvSeries({ id: 'T10Y2Y', key: 'yieldCurve10y2y', name: '10Y-2Y treasury spread' }),
       ]),
       getSparkBatch(['^VIX', '^VIX9D', '^VIX3M']),
     ]);
@@ -940,8 +941,9 @@ export async function getEquityRiskAppetite() {
 
     let creditStress = { status: 'unavailable', reason: 'FRED high-yield spread is required.' };
     let riskPremium = { status: 'unavailable', reason: 'Earnings-yield and real-yield inputs are required.' };
+    let yieldCurve = { status: 'unavailable', reason: 'FRED T10Y2Y is required.' };
     if (fredResult.status === 'fulfilled') {
-      const [hySeries, realSeries] = fredResult.value;
+      const [hySeries, realSeries, curveSeries] = fredResult.value;
       const hyValue = hySeries?.value;
       const hy20dAgo = hySeries?.history?.at(-21)?.value;
       creditStress = Number.isFinite(hyValue) ? {
@@ -951,6 +953,16 @@ export async function getEquityRiskAppetite() {
         read: hyValue < 3.2 ? 'Complacent' : hyValue < 4.5 ? 'Neutral' : hyValue < 6 ? 'Stress building' : 'Distress',
         date: hySeries.date,
       } : { status: 'unavailable', reason: 'FRED returned no usable high-yield observation.' };
+
+      const curveValue = curveSeries?.value;
+      const curve20dAgo = curveSeries?.history?.at(-21)?.value;
+      yieldCurve = Number.isFinite(curveValue) ? {
+        status: 'calculated',
+        spread: curveValue,
+        change20d: Number.isFinite(curve20dAgo) ? Math.round((curveValue - curve20dAgo) * 100) / 100 : null,
+        state: curveValue < 0 ? 'Inverted — late-cycle signal' : curveValue < 0.5 ? 'Flat — dis-inversion watch' : 'Positively sloped — early/mid cycle',
+        date: curveSeries.date,
+      } : { status: 'unavailable', reason: 'FRED returned no usable curve observation.' };
 
       const realYield = realSeries?.value;
       try {
@@ -973,7 +985,7 @@ export async function getEquityRiskAppetite() {
       creditStress = { status: 'unavailable', reason: `FRED CSV unreachable: ${fredResult.reason?.message ?? fredResult.reason}` };
     }
 
-    const legs = [spxBreadth, equalWeight, creditStress, riskPremium, sectorRotation, vixTermStructure];
+    const legs = [spxBreadth, equalWeight, creditStress, riskPremium, sectorRotation, vixTermStructure, yieldCurve];
     const calculatedCount = legs.filter((leg) => leg.status === 'calculated').length;
     return {
       asOf: new Date().toISOString(),
@@ -987,7 +999,8 @@ export async function getEquityRiskAppetite() {
       riskPremium,
       sectorRotation,
       vixTermStructure,
-      methodology: 'Breadth computes 200-day and 50-day simple averages per constituent from Wikipedia\'s S&P 500 list and Yahoo batch spark closes. Equal-weight participation uses the RSP/SPY ratio 50-session slope. Credit stress reads FRED BAMLH0A0HYM2 with a 20-observation change. The risk-premium proxy subtracts the 10-year TIPS real yield from the trailing earnings yield on multpl.com. Sector rotation ranks 11 SPDRs by 3-month relative strength versus SPY. The VIX term structure divides spot VIX by VIX3M from Yahoo index histories.',
+      yieldCurve,
+      methodology: 'Breadth computes 200-day and 50-day simple averages per constituent from Wikipedia\'s S&P 500 list and Yahoo batch spark closes. Equal-weight participation uses the RSP/SPY ratio 50-session slope. Credit stress reads FRED BAMLH0A0HYM2 with a 20-observation change, and the curve leg reads FRED T10Y2Y. The risk-premium proxy subtracts the 10-year TIPS real yield from the trailing earnings yield on multpl.com. Sector rotation ranks 11 SPDRs by 3-month relative strength versus SPY. The VIX term structure divides spot VIX by VIX3M from Yahoo index histories.',
     };
   });
 }

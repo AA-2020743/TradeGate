@@ -5,9 +5,9 @@ import { formatPercent, formatTimestamp, formatUsd, useEquityResearch, useMarket
 
 const navItems = [
   ['⌘', 'Overview'],
-  ['◌', 'Markets', 'Preview'],
+  ['◌', 'Markets'],
   ['▥', 'Equities'],
-  ['◇', 'Metals', 'Preview'],
+  ['◇', 'Metals'],
   ['▦', 'Screener', 'Preview'],
   ['◫', 'Watchlists', 'Preview'],
   ['◔', 'Macro'],
@@ -248,7 +248,9 @@ function App() {
     { label: 'Multi-asset heatmap', detail: 'Markets', action: () => setActiveNav('Markets') },
     { label: 'Equities research', detail: 'Global indices and sectors', action: () => setActiveNav('Equities') },
     { label: 'Precious metals research', detail: 'Metals', action: () => setActiveNav('Metals') },
-    { label: 'Macro research', detail: 'Workspace', action: () => setActiveNav('Macro') },
+    { label: 'Macro research', detail: 'Liquidity and regime', action: () => setActiveNav('Macro') },
+    { label: 'Forex research', detail: 'Momentum and CFTC positioning', action: () => setActiveNav('Forex') },
+    { label: 'Crypto research', detail: 'Bitcoin cycle and dollar tailwind', action: () => setActiveNav('Crypto') },
     ...watchlist.map((asset) => ({ label: asset.ticker, detail: asset.name, action: () => { setSelectedTicker(asset.ticker); setActiveNav('Overview'); } })),
   ];
   const matchingCommands = commands.filter((command) => `${command.label} ${command.detail}`.toLowerCase().includes(searchQuery.toLowerCase()));
@@ -539,6 +541,7 @@ function EquitiesDashboard({ platformData }) {
               <div className="btc-cycle-cell"><small>HY OAS</small><b>{risk.creditStress?.status === 'calculated' ? `${risk.creditStress.level}%` : '—'}</b><span>{risk.creditStress?.status === 'calculated' ? `${risk.creditStress.change20d >= 0 ? '+' : ''}${risk.creditStress.change20d} 20d · ${risk.creditStress.read}` : risk.creditStress?.reason}</span></div>
               <div className="btc-cycle-cell"><small>ERP proxy</small><b>{risk.riskPremium?.status === 'calculated' ? `${risk.riskPremium.spread > 0 ? '+' : ''}${risk.riskPremium.spread}%` : '—'}</b><span>{risk.riskPremium?.status === 'calculated' ? `EY ${risk.riskPremium.earningsYield}% − real ${risk.riskPremium.realYield10y}% · ${risk.riskPremium.read}` : risk.riskPremium?.reason}</span></div>
               <div className="btc-cycle-cell"><small>VIX term structure</small><b>{risk.vixTermStructure?.status === 'calculated' ? risk.vixTermStructure.vixVix3m : '—'}</b><span>{risk.vixTermStructure?.status === 'calculated' ? `VIX ${risk.vixTermStructure.vix} / 3M ${risk.vixTermStructure.vix3m} · ${risk.vixTermStructure.percentile}th pct · ${risk.vixTermStructure.state}` : risk.vixTermStructure?.reason}</span></div>
+              <div className="btc-cycle-cell"><small>10Y-2Y curve</small><b>{risk.yieldCurve?.status === 'calculated' ? `${risk.yieldCurve.spread > 0 ? '+' : ''}${risk.yieldCurve.spread}%` : '—'}</b><span>{risk.yieldCurve?.status === 'calculated' ? `${risk.yieldCurve.change20d >= 0 ? '+' : ''}${risk.yieldCurve.change20d} 20d · ${risk.yieldCurve.state}` : risk.yieldCurve?.reason}</span></div>
             </div>
             {risk.sectorRotation?.status === 'calculated' && <>
               <div className="equity-rotation-head sentiment-head" style={{ marginTop: 14 }}><span>Sector SPDR relative strength vs SPY</span><span>3M RS</span></div>
