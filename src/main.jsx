@@ -9,7 +9,7 @@ const navItems = [
   ['▥', 'Equities'],
   ['◇', 'Metals'],
   ['▦', 'Screener'],
-  ['◫', 'Watchlists', 'Preview'],
+  ['◫', 'Watchlists'],
   ['◔', 'Macro'],
   ['⇄', 'Forex'],
   ['₿', 'Crypto'],
@@ -252,6 +252,7 @@ function App() {
     { label: 'Forex research', detail: 'Momentum and CFTC positioning', action: () => setActiveNav('Forex') },
     { label: 'Crypto research', detail: 'Bitcoin cycle and dollar tailwind', action: () => setActiveNav('Crypto') },
     { label: 'S&P 500 screener', detail: 'Calculated cross-sectional screens', action: () => setActiveNav('Screener') },
+    { label: 'Watchlists', detail: 'Local lists with live signals', action: () => setActiveNav('Watchlists') },
     ...watchlist.map((asset) => ({ label: asset.ticker, detail: asset.name, action: () => { setSelectedTicker(asset.ticker); setActiveNav('Overview'); } })),
   ];
   const matchingCommands = commands.filter((command) => `${command.label} ${command.detail}`.toLowerCase().includes(searchQuery.toLowerCase()));
@@ -324,7 +325,7 @@ function App() {
         </header>
 
         <div className="dashboard">
-          {activeNav === 'Macro' ? <MacroDashboard data={platformData} /> : activeNav === 'Forex' ? <ForexDashboard data={platformData} /> : activeNav === 'Crypto' ? <CryptoDashboard data={platformData} /> : activeNav === 'Markets' ? <MarketsDashboard data={platformData} /> : activeNav === 'Equities' ? <EquitiesDashboard platformData={platformData} /> : activeNav === 'Metals' ? <MetalsDashboard data={platformData} /> : activeNav === 'Screener' ? <ScreenerDashboard data={platformData} /> : activeNav === 'Watchlists' ? <PreviewWorkspace name="Watchlists" /> : <>
+          {activeNav === 'Macro' ? <MacroDashboard data={platformData} /> : activeNav === 'Forex' ? <ForexDashboard data={platformData} /> : activeNav === 'Crypto' ? <CryptoDashboard data={platformData} /> : activeNav === 'Markets' ? <MarketsDashboard data={platformData} /> : activeNav === 'Equities' ? <EquitiesDashboard platformData={platformData} /> : activeNav === 'Metals' ? <MetalsDashboard data={platformData} /> : activeNav === 'Screener' ? <ScreenerDashboard data={platformData} /> : activeNav === 'Watchlists' ? <WatchlistsDashboard data={platformData} /> : <>
           <section className="welcome-row">
             <div><p className="eyebrow">{new Intl.DateTimeFormat('en-US', { weekday: 'long', month: 'long', day: 'numeric' }).format(new Date()).toUpperCase()}</p><h1>Good morning, Alex.</h1><p className="intro">Here is your market pulse for today.</p></div>
             <div className={`market-status ${platformData.status}`}><span className="live-dot"></span><span>{platformData.status === 'live' ? 'Data feeds connected' : platformData.status === 'partial' ? 'Partial data coverage' : 'Data API unavailable'}</span><strong>{formatTimestamp(platformData.markets?.asOf)}</strong></div>
@@ -388,10 +389,6 @@ function DataDisclosure({ data, message }) {
 
 function PreviewBadge({ label = 'Preview' }) {
   return <span className="preview-badge">{label}</span>;
-}
-
-function PreviewWorkspace({ name }) {
-  return <div className="preview-workspace"><section className="markets-intro"><div><p className="eyebrow">DESIGNED WORKSPACE</p><h1>{name}</h1><p className="intro">This workspace is visible for product review but does not publish research outputs yet.</p></div><PreviewBadge /></section><article className="preview-placeholder panel"><PreviewBadge /><span>◌</span><h2>{name} is a preview.</h2><p>Provider inputs, calculations, source lineage, and tests must be connected before values appear here.</p></article><p className="independence-note">TradeGate is an independent market research platform and is not affiliated with Tradegate AG.</p></div>;
 }
 
 function EquityStatus({ status = 'unavailable', label }) {
@@ -881,6 +878,90 @@ function ScreenerDashboard({ data }) {
         {!filtered.length && <div className="calculation-empty">No constituents match this screen right now.</div>}
         <p className="model-footnote">{screener.methodology}</p>
       </div> : <div className="calculation-empty">{screener?.reason ?? 'Constituent histories are required before the screener can publish.'}</div>}
+    </section>
+    <p className="independence-note">TradeGate is an independent market research platform and is not affiliated with Tradegate AG.</p>
+  </div>;
+}
+
+function WatchlistRow({ symbol, onRemove }) {
+  const history = useMarketHistory(symbol, '3M');
+  const technical = useTechnicalAnalytics(symbol);
+  const points = history.data?.points ?? [];
+  const values = normalizeSparkline(points.map((point) => point.value));
+  const first = points[0]?.value;
+  const last = points.at(-1)?.value;
+  const changePct = Number.isFinite(first) && Number.isFinite(last) && first > 0 ? ((last / first) - 1) * 100 : null;
+  const model = technical.data?.model;
+  return <div className="watchlist-row">
+    <b>{symbol}</b>
+    {values.length > 1 ? <Sparkline color={changePct >= 0 ? '#75c966' : '#d98a72'} values={values} /> : <div className="model-chart-empty">No history</div>}
+    <span>{formatUsd(last)}</span>
+    <span className={changePct >= 0 ? 'positive' : 'negative'}>{Number.isFinite(changePct) ? formatPercent(changePct) : '—'}</span>
+    <small>{model ? `Score ${model.score} · ${model.regime}` : history.status === 'loading' ? 'Calculating…' : 'Score unavailable'}</small>
+    <button onClick={() => onRemove(symbol)} aria-label={`Remove ${symbol}`}>×</button>
+  </div>;
+}
+
+const DEFAULT_WATCHLISTS = { Core: ['NVDA', 'AAPL', 'GLD', 'BTC'] };
+
+function WatchlistsDashboard({ data }) {
+  const [lists, setLists] = React.useState(() => {
+    try {
+      const stored = JSON.parse(window.localStorage.getItem('tradegate-watchlists'));
+      return stored && typeof stored === 'object' && Object.keys(stored).length ? stored : DEFAULT_WATCHLISTS;
+    } catch {
+      return DEFAULT_WATCHLISTS;
+    }
+  });
+  const [activeList, setActiveList] = React.useState(() => Object.keys(DEFAULT_WATCHLISTS)[0]);
+  const [draftSymbol, setDraftSymbol] = React.useState('');
+
+  React.useEffect(() => {
+    window.localStorage.setItem('tradegate-watchlists', JSON.stringify(lists));
+  }, [lists]);
+
+  const symbols = lists[activeList] ?? [];
+  const addSymbol = () => {
+    const symbol = draftSymbol.trim().toUpperCase().slice(0, 8);
+    if (!symbol || symbols.includes(symbol)) return;
+    setLists((current) => ({ ...current, [activeList]: [...(current[activeList] ?? []), symbol] }));
+    setDraftSymbol('');
+  };
+  const removeSymbol = (symbol) => setLists((current) => ({ ...current, [activeList]: (current[activeList] ?? []).filter((item) => item !== symbol) }));
+  const createList = () => {
+    const name = `List ${Object.keys(lists).length + 1}`;
+    setLists((current) => ({ ...current, [name]: [] }));
+    setActiveList(name);
+  };
+  const deleteList = () => {
+    if (Object.keys(lists).length <= 1) return;
+    setLists((current) => {
+      const next = { ...current };
+      delete next[activeList];
+      return next;
+    });
+    setActiveList((current) => Object.keys(lists).find((name) => name !== current) ?? 'Core');
+  };
+
+  return <div className="watchlists-dashboard">
+    <section className="macro-intro">
+      <div><p className="eyebrow">WATCHLIST WORKSPACE</p><h1>Your names, calculated.</h1><p className="intro">Live provider histories, technical scores, and regimes for the symbols you track. Lists persist in this browser.</p></div>
+      <div className="model-tabs"><button className="active">Local lists</button></div>
+    </section>
+    <DataDisclosure data={data} message="Each row pulls live market history and the technical-v1 snapshot from the server. Nothing is fabricated; unavailable providers show blanks." />
+    <section className="screener-controls-row">
+      <div className="window-buttons">{Object.keys(lists).map((name) => <button className={activeList === name ? 'selected' : ''} key={name} onClick={() => setActiveList(name)}>{name}</button>)}</div>
+      <div className="watchlist-actions">
+        <input className="screener-search" value={draftSymbol} onChange={(event) => setDraftSymbol(event.target.value)} onKeyDown={(event) => event.key === 'Enter' && addSymbol()} placeholder="Add symbol…" aria-label="Add symbol" />
+        <button className="watch-button" onClick={addSymbol}>+ Add</button>
+        <button className="watch-button" onClick={createList}>New list</button>
+        {Object.keys(lists).length > 1 && <button className="watch-button" onClick={deleteList}>Delete list</button>}
+      </div>
+    </section>
+    <section className="screener-panel panel">
+      <div className="watchlist-head"><span>Symbol</span><span>3M trend</span><span>Latest</span><span>3M change</span><span>Technical state</span><span></span></div>
+      {symbols.map((symbol) => <WatchlistRow key={`${activeList}-${symbol}`} symbol={symbol} onRemove={removeSymbol} />)}
+      {!symbols.length && <div className="calculation-empty">This list is empty — add a ticker above to start tracking calculated signals.</div>}
     </section>
     <p className="independence-note">TradeGate is an independent market research platform and is not affiliated with Tradegate AG.</p>
   </div>;
