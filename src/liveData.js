@@ -22,6 +22,7 @@ export function usePlatformData() {
     bitcoin: null,
     equityRisk: null,
     news: null,
+    screener: null,
     error: null,
   });
 
@@ -29,7 +30,7 @@ export function usePlatformData() {
     let active = true;
 
     const load = async () => {
-      const [health, markets, liquidity, dxyBtc, regimeCorrelations, positioning, heatmap, metals, fx, sentiment, bitcoin, equityRisk, news] = await Promise.allSettled([
+      const [health, markets, liquidity, dxyBtc, regimeCorrelations, positioning, heatmap, metals, fx, sentiment, bitcoin, equityRisk, news, screener] = await Promise.allSettled([
         requestJson('/api/health'),
         requestJson('/api/markets/snapshot'),
         requestJson('/api/macro/liquidity'),
@@ -43,6 +44,7 @@ export function usePlatformData() {
         requestJson('/api/analytics/bitcoin'),
         requestJson('/api/analytics/equity-risk'),
         requestJson('/api/news/wire'),
+        requestJson('/api/analytics/screener'),
       ]);
       if (!active) return;
 
@@ -59,6 +61,7 @@ export function usePlatformData() {
       const bitcoinData = bitcoin.status === 'fulfilled' ? bitcoin.value : null;
       const equityRiskData = equityRisk.status === 'fulfilled' ? equityRisk.value : null;
       const newsData = news.status === 'fulfilled' ? news.value : null;
+      const screenerData = screener.status === 'fulfilled' ? screener.value : null;
       const hasQuotes = Boolean(marketData?.assets?.length);
       const hasUnconfiguredProviders = Object.values(healthData?.providers ?? {}).some((provider) => !provider.configured || (provider.connected === false && provider.mode === 'unavailable') || provider.migrated === false && provider.configured);
       const hasErrors = [health, markets, liquidity, dxyBtc].some((result) => result.status === 'rejected') || Boolean(marketData?.errors?.length) || Boolean(liquidityData?.errors?.length) || hasUnconfiguredProviders;
@@ -78,6 +81,7 @@ export function usePlatformData() {
         bitcoin: bitcoinData,
         equityRisk: equityRiskData,
         news: newsData,
+        screener: screenerData,
         error: !healthData ? 'The data API is unavailable.' : hasErrors ? 'Some data providers are unavailable.' : null,
       });
     };

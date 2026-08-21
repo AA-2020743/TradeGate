@@ -16,7 +16,7 @@ import {
 } from './equityCatalog.js';
 import { getEquityDashboard, getSectorDashboard } from './equities.js';
 import { startIngestionScheduler } from './ingestion.js';
-import { getBitcoinCycleWorkspace, getDxyBitcoinRelationship, getEquityRiskAppetite, getEthereumRotation, getFxWorkspace, getLiquiditySnapshot, getMarketHeatmap, getMarketHistory, getMarketPositioning, getMarketSnapshot, getMetalsWorkspace, getNewsWire, getProviderHealth, getRegimeCorrelations, getSentimentSnapshot, getTechnicalSnapshot } from './providers.js';
+import { getBitcoinCycleWorkspace, getDxyBitcoinRelationship, getEquityRiskAppetite, getEquityScreener, getEthereumRotation, getFxWorkspace, getLiquiditySnapshot, getMarketHeatmap, getMarketHistory, getMarketPositioning, getMarketSnapshot, getMetalsWorkspace, getNewsWire, getProviderHealth, getRegimeCorrelations, getSentimentSnapshot, getTechnicalSnapshot } from './providers.js';
 
 const app = express();
 const rootDirectory = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -152,6 +152,14 @@ app.get('/api/analytics/bitcoin', async (_request, response, next) => {
       getEthereumRotation().catch(() => null),
     ]);
     response.json({ ...workspace, ethRotation });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.get('/api/analytics/screener', async (_request, response, next) => {
+  try {
+    response.json(await getEquityScreener());
   } catch (error) {
     next(error);
   }

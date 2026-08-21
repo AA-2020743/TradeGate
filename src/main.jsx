@@ -8,7 +8,7 @@ const navItems = [
   ['◌', 'Markets'],
   ['▥', 'Equities'],
   ['◇', 'Metals'],
-  ['▦', 'Screener', 'Preview'],
+  ['▦', 'Screener'],
   ['◫', 'Watchlists', 'Preview'],
   ['◔', 'Macro'],
   ['⇄', 'Forex'],
@@ -251,6 +251,7 @@ function App() {
     { label: 'Macro research', detail: 'Liquidity and regime', action: () => setActiveNav('Macro') },
     { label: 'Forex research', detail: 'Momentum and CFTC positioning', action: () => setActiveNav('Forex') },
     { label: 'Crypto research', detail: 'Bitcoin cycle and dollar tailwind', action: () => setActiveNav('Crypto') },
+    { label: 'S&P 500 screener', detail: 'Calculated cross-sectional screens', action: () => setActiveNav('Screener') },
     ...watchlist.map((asset) => ({ label: asset.ticker, detail: asset.name, action: () => { setSelectedTicker(asset.ticker); setActiveNav('Overview'); } })),
   ];
   const matchingCommands = commands.filter((command) => `${command.label} ${command.detail}`.toLowerCase().includes(searchQuery.toLowerCase()));
@@ -323,7 +324,7 @@ function App() {
         </header>
 
         <div className="dashboard">
-          {activeNav === 'Macro' ? <MacroDashboard data={platformData} /> : activeNav === 'Forex' ? <ForexDashboard data={platformData} /> : activeNav === 'Crypto' ? <CryptoDashboard data={platformData} /> : activeNav === 'Markets' ? <MarketsDashboard data={platformData} /> : activeNav === 'Equities' ? <EquitiesDashboard platformData={platformData} /> : activeNav === 'Metals' ? <MetalsDashboard data={platformData} /> : ['Screener', 'Watchlists'].includes(activeNav) ? <PreviewWorkspace name={activeNav} /> : <>
+          {activeNav === 'Macro' ? <MacroDashboard data={platformData} /> : activeNav === 'Forex' ? <ForexDashboard data={platformData} /> : activeNav === 'Crypto' ? <CryptoDashboard data={platformData} /> : activeNav === 'Markets' ? <MarketsDashboard data={platformData} /> : activeNav === 'Equities' ? <EquitiesDashboard platformData={platformData} /> : activeNav === 'Metals' ? <MetalsDashboard data={platformData} /> : activeNav === 'Screener' ? <ScreenerDashboard data={platformData} /> : activeNav === 'Watchlists' ? <PreviewWorkspace name="Watchlists" /> : <>
           <section className="welcome-row">
             <div><p className="eyebrow">{new Intl.DateTimeFormat('en-US', { weekday: 'long', month: 'long', day: 'numeric' }).format(new Date()).toUpperCase()}</p><h1>Good morning, Alex.</h1><p className="intro">Here is your market pulse for today.</p></div>
             <div className={`market-status ${platformData.status}`}><span className="live-dot"></span><span>{platformData.status === 'live' ? 'Data feeds connected' : platformData.status === 'partial' ? 'Partial data coverage' : 'Data API unavailable'}</span><strong>{formatTimestamp(platformData.markets?.asOf)}</strong></div>
@@ -830,6 +831,58 @@ function MacroDashboard({ data }) {
     <p className="independence-note">TradeGate is an independent market research platform and is not affiliated with Tradegate AG.</p>
     {liquidityChartOpen && <LiquidityChartDialog history={liquidityModel?.history ?? []} title="Calculated net US liquidity" description="Move across the chart to inspect a date. Click or tap to pin the observation for comparison." onClose={() => setLiquidityChartOpen(false)} />}
     {globalChartOpen && <LiquidityChartDialog history={globalLiquidity?.history ?? []} title="Calculated global central-bank liquidity" description="US net liquidity plus ECB and BoJ balance sheets in USD. Move across the chart to inspect a date; click to pin." label="global central-bank liquidity" onClose={() => setGlobalChartOpen(false)} />}
+  </div>;
+}
+
+const SCREENER_PRESETS = {
+  'momentum-leaders': { label: 'Momentum leaders', filter: () => true, sort: (a, b) => (b.mom20 ?? -999) - (a.mom20 ?? -999) },
+  'uptrend-pullbacks': { label: 'Uptrend pullbacks', filter: (row) => row.vsSma200 > 0 && row.mom20 < 0, sort: (a, b) => (b.vsSma200 ?? -999) - (a.vsSma200 ?? -999) },
+  'low-vol-uptrend': { label: 'Low-vol uptrends', filter: (row) => row.vsSma200 > 0 && row.above50 === true, sort: (a, b) => (b.score ?? -1) - (a.score ?? -1) },
+  breakouts: { label: '200D breakouts', filter: (row) => row.breakout === true, sort: (a, b) => (b.mom20 ?? -999) - (a.mom20 ?? -999) },
+  oversold: { label: 'Oversold', filter: (row) => row.mom20 <= -8, sort: (a, b) => (a.mom20 ?? 999) - (b.mom20 ?? 999) },
+};
+
+function ScreenerDashboard({ data }) {
+  const [preset, setPreset] = React.useState('momentum-leaders');
+  const [search, setSearch] = React.useState('');
+  const screener = data.screener;
+  const rows = screener?.rows ?? [];
+  const definition = SCREENER_PRESETS[preset];
+  const filtered = rows
+    .filter(definition.filter)
+    .filter((row) => !search || row.symbol.toLowerCase().includes(search.trim().toLowerCase()))
+    .sort(definition.sort)
+    .slice(0, 40);
+
+  return <div className="screener-dashboard">
+    <section className="macro-intro">
+      <div><p className="eyebrow">EQUITY SCREENING SYSTEM</p><h1>Rank the whole index, not a watchlist.</h1><p className="intro">Cross-sectional momentum, trend, volatility, and RSI for every S&P 500 constituent, calculated from provider closes.</p></div>
+      <div className="model-tabs"><button className="active">Calculated universe</button></div>
+    </section>
+    <DataDisclosure data={data} message={`Every metric is calculated from Yahoo batch spark one-year daily closes over the Wikipedia S&P 500 list. ${screener?.calculatedCount ?? 0} of ${screener?.universeSize ?? 0} constituents returned usable history.`} />
+    <section className="macro-section-heading"><div><p className="section-kicker">SCREENS · CALCULATED</p><h2>{definition.label}</h2></div><span className="data-pill">{filtered.length ? `Top ${filtered.length} of ${rows.length}` : 'No matches'}</span></section>
+    <section className="screener-controls-row">
+      <div className="window-buttons">{Object.entries(SCREENER_PRESETS).map(([key, item]) => <button className={preset === key ? 'selected' : ''} key={key} onClick={() => setPreset(key)}>{item.label}</button>)}</div>
+      <input className="screener-search" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Filter by symbol…" aria-label="Filter by symbol" />
+    </section>
+    <section className={`screener-panel panel ${screener?.status === 'calculated' ? '' : 'preview-section'}`}>
+      {screener?.status === 'calculated' ? <div className="screener-wrap">
+        <div className="screener-head"><span>Symbol</span><span>Last</span><span>20D</span><span>60D</span><span>vs 200D</span><span>RSI-14</span><span>Vol 20D</span><span>Score</span></div>
+        {filtered.map((row) => <div className="screener-row" key={row.symbol}>
+          <b>{row.symbol}</b>
+          <span>{formatUsd(row.last)}</span>
+          <span className={row.mom20 >= 0 ? 'positive' : 'negative'}>{Number.isFinite(row.mom20) ? formatPercent(row.mom20) : '—'}</span>
+          <span className={row.mom60 >= 0 ? 'positive' : 'negative'}>{Number.isFinite(row.mom60) ? formatPercent(row.mom60) : '—'}</span>
+          <span className={row.vsSma200 >= 0 ? 'positive' : 'negative'}>{Number.isFinite(row.vsSma200) ? `${row.vsSma200 > 0 ? '+' : ''}${row.vsSma200}%` : '—'}</span>
+          <span>{Number.isFinite(row.rsi14) ? row.rsi14.toFixed(0) : '—'}</span>
+          <span>{Number.isFinite(row.vol20) ? `${row.vol20}%` : '—'}</span>
+          <b>{row.score ?? '—'}</b>
+        </div>)}
+        {!filtered.length && <div className="calculation-empty">No constituents match this screen right now.</div>}
+        <p className="model-footnote">{screener.methodology}</p>
+      </div> : <div className="calculation-empty">{screener?.reason ?? 'Constituent histories are required before the screener can publish.'}</div>}
+    </section>
+    <p className="independence-note">TradeGate is an independent market research platform and is not affiliated with Tradegate AG.</p>
   </div>;
 }
 

@@ -1,6 +1,6 @@
 import { config } from './config.js';
 import { withCache } from './cache.js';
-import { buildHeatmapRow, buildLiquidityNarrative, buildWorkspaceNarrative, calculateChangeCorrelations, calculatePositioningModel, calculateCrossMarketRelationship, calculateGlobalLiquidityModel, calculateMacroRegimeModel, calculateTechnicalSnapshot, calculateUsdStrengthModel, calculateUsLiquidityModel } from './analytics.js';
+import { buildHeatmapRow, buildLiquidityNarrative, buildWorkspaceNarrative, calculateChangeCorrelations, calculatePositioningModel, calculateCrossMarketRelationship, calculateGlobalLiquidityModel, calculateMacroRegimeModel, calculateRsi, calculateTechnicalSnapshot, calculateUsdStrengthModel, calculateUsLiquidityModel } from './analytics.js';
 import { getStoredFredSeries, getStoredMarketHistory, getStoredMarketSnapshot, getRecentModelOutputs, isDatabaseConfigured, reserveProviderCredits } from './database.js';
 import { getAllEquityHistorySymbols, getCoreEquityHistorySymbols } from './equityCatalog.js';
 import { isCryptoHistoryStale, isCotReportStale, isDailyCloseStale, isFredSeriesStale, isPbocObservationStale, monthsBetween } from './freshness.js';
@@ -1001,6 +1001,62 @@ export async function getEquityRiskAppetite() {
       vixTermStructure,
       yieldCurve,
       methodology: 'Breadth computes 200-day and 50-day simple averages per constituent from Wikipedia\'s S&P 500 list and Yahoo batch spark closes. Equal-weight participation uses the RSP/SPY ratio 50-session slope. Credit stress reads FRED BAMLH0A0HYM2 with a 20-observation change, and the curve leg reads FRED T10Y2Y. The risk-premium proxy subtracts the 10-year TIPS real yield from the trailing earnings yield on multpl.com. Sector rotation ranks 11 SPDRs by 3-month relative strength versus SPY. The VIX term structure divides spot VIX by VIX3M from Yahoo index histories.',
+    };
+  });
+}
+
+export async function getEquityScreener() {
+  return withCache('analytics:screener', 12 * 3_600_000, async () => {
+    const symbols = await getSpxConstituents();
+    const closesByKey = await getSparkCloses(symbols);
+    const round1 = (value) => Math.round(value * 10) / 10;
+    const rows = [];
+    for (const [symbol, closes] of closesByKey) {
+      const last = closes.at(-1);
+      if (!Number.isFinite(last)) continue;
+      const sma200 = smaOf(closes, 200);
+      const sma50 = smaOf(closes, 50);
+      const sma200Then = smaOf(closes.slice(0, -20), 200);
+      const returns = [];
+      for (let index = closes.length - 20; index < closes.length; index += 1) {
+        if (closes[index - 1] > 0) returns.push((closes[index] / closes[index - 1]) - 1);
+      }
+      const meanReturn = returns.reduce((total, value) => total + value, 0) / (returns.length || 1);
+      const variance = returns.reduce((total, value) => total + ((value - meanReturn) ** 2), 0) / (returns.length || 1);
+      rows.push({
+        symbol,
+        last: Math.round(last * 100) / 100,
+        mom20: closes.length > 21 ? round1(((last / closes.at(-21)) - 1) * 100) : null,
+        mom60: closes.length > 61 ? round1(((last / closes.at(-61)) - 1) * 100) : null,
+        vsSma200: Number.isFinite(sma200) ? round1(((last / sma200) - 1) * 100) : null,
+        above50: Number.isFinite(sma50) ? last > sma50 : null,
+        breakout: Number.isFinite(sma200) && Number.isFinite(sma200Then) && last > sma200 && closes.at(-21) <= sma200Then,
+        vol20: returns.length >= 10 ? round1(Math.sqrt(variance) * Math.sqrt(252) * 100) : null,
+        rsi14: calculateRsi(closes),
+      });
+    }
+    if (!rows.length) {
+      return { asOf: new Date().toISOString(), version: 'screener-v1', status: 'unavailable', reason: 'No constituent histories were returned.', calculatedCount: 0, universeSize: symbols.length, rows: [], methodology: 'Requires Yahoo batch spark histories for the S&P 500 constituent list.' };
+    }
+    const momValues = rows.map((row) => row.mom20).filter(Number.isFinite);
+    const trendValues = rows.map((row) => row.vsSma200).filter(Number.isFinite);
+    const volValues = rows.map((row) => row.vol20).filter(Number.isFinite);
+    for (const row of rows) {
+      const momentumRank = Number.isFinite(row.mom20) ? percentileOf(momValues, row.mom20) : null;
+      const trendRank = Number.isFinite(row.vsSma200) ? percentileOf(trendValues, row.vsSma200) : null;
+      const calmRank = Number.isFinite(row.vol20) ? 100 - percentileOf(volValues, row.vol20) : null;
+      row.score = momentumRank !== null && trendRank !== null && calmRank !== null
+        ? Math.round((momentumRank * 0.45) + (trendRank * 0.35) + (calmRank * 0.2))
+        : null;
+    }
+    return {
+      asOf: new Date().toISOString(),
+      version: 'screener-v1',
+      status: 'calculated',
+      calculatedCount: rows.length,
+      universeSize: symbols.length,
+      rows,
+      methodology: 'Universe is Wikipedia\'s S&P 500 constituent list; metrics come from Yahoo batch spark one-year daily closes. The composite score cross-sectionally ranks 20-session momentum (45%), distance above the 200-day average (35%), and the inverse of 20-day annualized volatility (20%). RSI-14 uses standard Wilder smoothing on the same closes.',
     };
   });
 }
