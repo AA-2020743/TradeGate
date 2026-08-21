@@ -849,6 +849,7 @@ const SCREENER_PRESETS = {
   'low-vol-uptrend': { label: 'Low-vol uptrends', filter: (row) => row.vsSma200 > 0 && row.above50 === true, sort: (a, b) => (b.score ?? -1) - (a.score ?? -1) },
   breakouts: { label: '200D breakouts', filter: (row) => row.breakout === true, sort: (a, b) => (b.mom20 ?? -999) - (a.mom20 ?? -999) },
   oversold: { label: 'Oversold', filter: (row) => row.mom20 <= -8, sort: (a, b) => (a.mom20 ?? 999) - (b.mom20 ?? 999) },
+  'near-highs': { label: 'Near 52W highs', filter: (row) => Number.isFinite(row.pctFrom52wHigh) && row.pctFrom52wHigh >= -5, sort: (a, b) => (b.pctFrom52wHigh ?? -999) - (a.pctFrom52wHigh ?? -999) },
 };
 
 function ScreenerDashboard({ data }) {
@@ -867,8 +868,8 @@ function ScreenerDashboard({ data }) {
   const filtered = matched.slice(0, 40);
 
   const exportCsv = () => {
-    const header = 'Symbol,Sector,Last,Mom20,Mom60,VsSma200,Rsi14,Vol20,Score';
-    const lines = matched.map((row) => [row.symbol, row.sector ?? '', row.last ?? '', row.mom20 ?? '', row.mom60 ?? '', row.vsSma200 ?? '', Number.isFinite(row.rsi14) ? row.rsi14.toFixed(1) : '', row.vol20 ?? '', row.score ?? ''].join(','));
+    const header = 'Symbol,Sector,Last,Mom20,Mom60,VsSma200,Rsi14,Vol20,PctFrom52wHigh,Score';
+    const lines = matched.map((row) => [row.symbol, row.sector ?? '', row.last ?? '', row.mom20 ?? '', row.mom60 ?? '', row.vsSma200 ?? '', Number.isFinite(row.rsi14) ? row.rsi14.toFixed(1) : '', row.vol20 ?? '', row.pctFrom52wHigh ?? '', row.score ?? ''].join(','));
     const blob = new Blob([[header].concat(lines).join('\n')], { type: 'text/csv' });
     const url = URL.createObjectURL(blob);
     const anchor = document.createElement('a');

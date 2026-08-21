@@ -1061,6 +1061,7 @@ export async function getEquityScreener() {
       const sma200 = smaOf(closes, 200);
       const sma50 = smaOf(closes, 50);
       const sma200Then = smaOf(closes.slice(0, -20), 200);
+      const yearHigh = closes.length > 200 ? Math.max(...closes.slice(-252)) : Math.max(...closes);
       const returns = [];
       for (let index = closes.length - 20; index < closes.length; index += 1) {
         if (closes[index - 1] > 0) returns.push((closes[index] / closes[index - 1]) - 1);
@@ -1074,6 +1075,7 @@ export async function getEquityScreener() {
         mom20: closes.length > 21 ? round1(((last / closes.at(-21)) - 1) * 100) : null,
         mom60: closes.length > 61 ? round1(((last / closes.at(-61)) - 1) * 100) : null,
         vsSma200: Number.isFinite(sma200) ? round1(((last / sma200) - 1) * 100) : null,
+        pctFrom52wHigh: yearHigh > 0 ? round1(((last / yearHigh) - 1) * 100) : null,
         above50: Number.isFinite(sma50) ? last > sma50 : null,
         breakout: Number.isFinite(sma200) && Number.isFinite(sma200Then) && last > sma200 && closes.at(-21) <= sma200Then,
         vol20: returns.length >= 10 ? round1(Math.sqrt(variance) * Math.sqrt(252) * 100) : null,
@@ -1115,7 +1117,7 @@ export async function getEquityScreener() {
       universeSize: symbols.length,
       rows: scored,
       sectorLeadership,
-      methodology: 'Universe is Wikipedia\'s S&P 500 constituent list with GICS sector attribution from the same table; metrics come from Yahoo batch spark one-year daily closes. The composite score cross-sectionally ranks 20-session momentum (45%), distance above the 200-day average (35%), and the inverse of 20-day annualized volatility (20%). RSI-14 uses standard Wilder smoothing on the same closes. Sector leadership aggregates each GICS sector\'s share of 20-session advancers and its average momentum.',
+      methodology: 'Universe is Wikipedia\'s S&P 500 constituent list with GICS sector attribution from the same table; metrics come from Yahoo batch spark one-year daily closes. The composite score cross-sectionally ranks 20-session momentum (45%), distance above the 200-day average (35%), and the inverse of 20-day annualized volatility (20%). RSI-14 uses standard Wilder smoothing on the same closes. Sector leadership aggregates each GICS sector\'s share of 20-session advancers and its average momentum. Distance from the 52-week high uses the trailing 252-session peak.',
     };
   });
 }
