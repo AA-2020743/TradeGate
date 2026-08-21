@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { buildHeatmapRow, buildLiquidityNarrative, calculateChangeCorrelations, calculatePositioningModel, calculateCrossMarketRelationship, calculateGlobalLiquidityModel, calculateMacroRegimeModel, calculateRsi, calculateTechnicalSnapshot, calculateUsdStrengthModel, calculateUsLiquidityModel, pearsonCorrelation } from './analytics.js';
+import { buildHeatmapRow, buildLiquidityNarrative, buildWorkspaceNarrative, calculateChangeCorrelations, calculatePositioningModel, calculateCrossMarketRelationship, calculateGlobalLiquidityModel, calculateMacroRegimeModel, calculateRsi, calculateTechnicalSnapshot, calculateUsdStrengthModel, calculateUsLiquidityModel, pearsonCorrelation } from './analytics.js';
 
 test('RSI reaches 100 for an uninterrupted advance', () => {
   const values = Array.from({ length: 30 }, (_, index) => 100 + index);
@@ -294,6 +294,38 @@ test('Liquidity narrative reports score and regime changes between runs', () => 
   );
   assert.equal(stable.status, 'stable');
   assert.equal(buildLiquidityNarrative([{ output: { score: 70 } }], []).status, 'insufficient-history');
+});
+
+test('Workspace narrative detects vitals changes across persisted runs', () => {
+  const narrative = buildWorkspaceNarrative({
+    'sentiment-snapshot': [
+      { output: { fearGreed: { score: 61.2, rating: 'greed' } } },
+      { output: { fearGreed: { score: 52.5, rating: 'neutral' } } },
+    ],
+    'equity-risk': [
+      { output: { spxBreadth: { pctAbove200: 70 }, creditStress: { level: 2.9 } } },
+      { output: { spxBreadth: { pctAbove200: 66 }, creditStress: { level: 2.85 } } },
+    ],
+    'bitcoin-cycle': [
+      { output: { valuation: { mvrvZ: 0.41 }, leverage: { annualizedPercent: 5.93 } } },
+      { output: { valuation: { mvrvZ: 0.4 }, leverage: { annualizedPercent: 6.1 } } },
+    ],
+  });
+  assert.equal(narrative.status, 'updated');
+  assert.ok(narrative.entries.some((entry) => entry.key === 'sentiment-snapshot:fearGreedRating'));
+  assert.ok(narrative.entries.some((entry) => entry.key === 'sentiment-snapshot:fearGreedScore'));
+  assert.ok(narrative.entries.some((entry) => entry.key === 'equity-risk:pctAbove200'));
+  assert.ok(!narrative.entries.some((entry) => entry.key === 'equity-risk:hyOas'));
+  assert.ok(!narrative.entries.some((entry) => entry.key === 'bitcoin-cycle:mvrvZ'));
+
+  const stable = buildWorkspaceNarrative({
+    'fx-workspace': [
+      { output: { usdCot: { percentile: 99 } } },
+      { output: { usdCot: { percentile: 99 } } },
+    ],
+  });
+  assert.equal(stable.status, 'stable');
+  assert.equal(buildWorkspaceNarrative({ 'metals-workspace': [{ output: {} }] }).status, 'insufficient-history');
 });
 test('COT positioning ranks net speculative exposure', () => {
   const history = Array.from({ length: 60 }, (_, index) => ({

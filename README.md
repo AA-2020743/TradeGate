@@ -231,6 +231,10 @@ The Macro tab keeps only macro-connected USD content (the FRED-driven USD streng
 
 The home news card aggregates live RSS wires (`news-wire-v1`): Federal Reserve press releases, CNBC top news, and MarketWatch top stories, sorted newest first. Constituent breadth (`spx-constituent-breadth-v1`) feeds the index-level top-risk and bottom-detection models directly, with the live provider technical snapshot as fallback when stored histories are absent, so those signals publish without a database. The last remaining previews are source-blocked: spot ETF flows (Farside is Cloudflare-blocked), metals ETF holdings/physical premia/producer cost curves, and dealer-gamma options positioning (CBOE is Akamai-blocked).
 
+`equity-risk-v1` also carries a VIX term-structure leg (spot VIX divided by VIX3M from Yahoo index histories, percentile-ranked over six months) and a 10Y-2Y Treasury-curve leg (FRED T10Y2Y with a 20-observation change), for seven calculated legs in total. The metals workspace publishes gold/silver and gold/copper cross-ratios with one-year percentiles.
+
+With PostgreSQL configured, the scheduled `research-workspaces` ingestion job persists the heatmap, metals, FX, sentiment, bitcoin-cycle, and equity-risk workspaces as versioned model outputs on the macro cadence. The liquidity narrative then merges `buildWorkspaceNarrative` change detection over those stored outputs, so the Macro tab narrates movements in Fear & Greed, breadth, high-yield OAS, MVRV-Z, funding, COT percentiles, and cross-ratios between runs.
+
 ## Reliability Rules
 
 - Missing provider data returns unavailable; it is never silently replaced with a sample value.

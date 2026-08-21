@@ -1,6 +1,6 @@
 import { config } from './config.js';
 import { withCache } from './cache.js';
-import { buildHeatmapRow, buildLiquidityNarrative, calculateChangeCorrelations, calculatePositioningModel, calculateCrossMarketRelationship, calculateGlobalLiquidityModel, calculateMacroRegimeModel, calculateTechnicalSnapshot, calculateUsdStrengthModel, calculateUsLiquidityModel } from './analytics.js';
+import { buildHeatmapRow, buildLiquidityNarrative, buildWorkspaceNarrative, calculateChangeCorrelations, calculatePositioningModel, calculateCrossMarketRelationship, calculateGlobalLiquidityModel, calculateMacroRegimeModel, calculateTechnicalSnapshot, calculateUsdStrengthModel, calculateUsLiquidityModel } from './analytics.js';
 import { getStoredFredSeries, getStoredMarketHistory, getStoredMarketSnapshot, getRecentModelOutputs, isDatabaseConfigured, reserveProviderCredits } from './database.js';
 import { getAllEquityHistorySymbols, getCoreEquityHistorySymbols } from './equityCatalog.js';
 import { isCryptoHistoryStale, isCotReportStale, isDailyCloseStale, isFredSeriesStale, isPbocObservationStale, monthsBetween } from './freshness.js';
@@ -1517,11 +1517,31 @@ export async function getLiquiditySnapshot(options = {}) {
     let narrative = null;
     if (isDatabaseConfigured()) {
       try {
-        const [usOutputs, globalOutputs] = await Promise.all([
+        const [usOutputs, globalOutputs, heatmapOutputs, metalsOutputs, fxOutputs, sentimentOutputs, bitcoinOutputs, riskOutputs] = await Promise.all([
           getRecentModelOutputs('us-liquidity', 2),
           getRecentModelOutputs('global-liquidity', 2),
+          getRecentModelOutputs('market-heatmap', 2).catch(() => []),
+          getRecentModelOutputs('metals-workspace', 2).catch(() => []),
+          getRecentModelOutputs('fx-workspace', 2).catch(() => []),
+          getRecentModelOutputs('sentiment-snapshot', 2).catch(() => []),
+          getRecentModelOutputs('bitcoin-cycle', 2).catch(() => []),
+          getRecentModelOutputs('equity-risk', 2).catch(() => []),
         ]);
         narrative = buildLiquidityNarrative(usOutputs, globalOutputs);
+        const workspaceNarrative = buildWorkspaceNarrative({
+          'market-heatmap': heatmapOutputs,
+          'metals-workspace': metalsOutputs,
+          'fx-workspace': fxOutputs,
+          'sentiment-snapshot': sentimentOutputs,
+          'bitcoin-cycle': bitcoinOutputs,
+          'equity-risk': riskOutputs,
+        });
+        if (workspaceNarrative.entries.length) {
+          narrative = {
+            status: narrative?.status === 'updated' || workspaceNarrative.status === 'updated' ? 'updated' : narrative?.status ?? workspaceNarrative.status,
+            entries: [...(narrative?.entries ?? []), ...workspaceNarrative.entries],
+          };
+        }
       } catch {
         narrative = null;
       }

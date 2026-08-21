@@ -586,6 +586,57 @@ export function buildLiquidityNarrative(usOutputs = [], globalOutputs = []) {
   return { status: hasRunPairs ? 'stable' : 'insufficient-history', entries: [] };
 }
 
+const WORKSPACE_VITALS = {
+  'market-heatmap': (workspace) => {
+    const scores = (workspace.assets ?? []).map((asset) => asset.score).filter(Number.isFinite);
+    return scores.length ? [{ key: 'avgScore', label: 'heatmap average score', value: Math.round(scores.reduce((total, score) => total + score, 0) / scores.length), threshold: 2 }] : [];
+  },
+  'metals-workspace': (workspace) => [
+    ...(Number.isFinite(workspace.cot?.percentile) ? [{ key: 'goldCot', label: 'gold COT percentile', value: workspace.cot.percentile, threshold: 3 }] : []),
+    ...(Number.isFinite(workspace.ratios?.goldSilver?.ratio) ? [{ key: 'goldSilver', label: 'gold/silver ratio', value: workspace.ratios.goldSilver.ratio, threshold: 1 }] : []),
+  ],
+  'fx-workspace': (workspace) => Number.isFinite(workspace.usdCot?.percentile) ? [{ key: 'usdCot', label: 'USD index COT percentile', value: workspace.usdCot.percentile, threshold: 3 }] : [],
+  'sentiment-snapshot': (workspace) => [
+    ...(Number.isFinite(workspace.fearGreed?.score) ? [{ key: 'fearGreedScore', label: 'CNN Fear & Greed score', value: workspace.fearGreed.score, threshold: 3 }] : []),
+    ...(workspace.fearGreed?.rating ? [{ key: 'fearGreedRating', label: 'Fear & Greed rating', string: workspace.fearGreed.rating }] : []),
+  ],
+  'bitcoin-cycle': (workspace) => [
+    ...(Number.isFinite(workspace.valuation?.mvrvZ) ? [{ key: 'mvrvZ', label: 'MVRV Z-score', value: workspace.valuation.mvrvZ, threshold: 0.05 }] : []),
+    ...(Number.isFinite(workspace.leverage?.annualizedPercent) ? [{ key: 'fundingApr', label: 'aggregate funding APR %', value: workspace.leverage.annualizedPercent, threshold: 0.5 }] : []),
+  ],
+  'equity-risk': (workspace) => [
+    ...(Number.isFinite(workspace.spxBreadth?.pctAbove200) ? [{ key: 'pctAbove200', label: '% of S&P 500 above 200-day', value: workspace.spxBreadth.pctAbove200, threshold: 2 }] : []),
+    ...(Number.isFinite(workspace.creditStress?.level) ? [{ key: 'hyOas', label: 'high-yield OAS', value: workspace.creditStress.level, threshold: 0.1 }] : []),
+  ],
+};
+
+export function buildWorkspaceNarrative(outputsByKey = {}) {
+  const entries = [];
+  let hasPairs = false;
+  for (const [modelId, outputs] of Object.entries(outputsByKey)) {
+    const latest = outputs?.[0]?.output ?? null;
+    const previous = outputs?.[1]?.output ?? null;
+    if (!latest || !previous) continue;
+    hasPairs = true;
+    const extract = WORKSPACE_VITALS[modelId];
+    if (!extract) continue;
+    const latestVitals = extract(latest);
+    const previousVitals = extract(previous);
+    for (const vital of latestVitals) {
+      const before = previousVitals.find((candidate) => candidate.key === vital.key);
+      if (!before) continue;
+      if (vital.string !== undefined) {
+        if (vital.string !== before.string) entries.push({ key: `${modelId}:${vital.key}`, text: `${vital.label} shifted from ${before.string} to ${vital.string}.` });
+      } else if (Number.isFinite(vital.value) && Number.isFinite(before.value)) {
+        const delta = Math.round((vital.value - before.value) * 100) / 100;
+        if (Math.abs(delta) >= vital.threshold) entries.push({ key: `${modelId}:${vital.key}`, text: `${vital.label} ${delta > 0 ? 'rose' : 'fell'} ${Math.abs(delta)} to ${vital.value}.` });
+      }
+    }
+  }
+  if (entries.length) return { status: 'updated', entries };
+  return { status: hasPairs ? 'stable' : 'insufficient-history', entries: [] };
+}
+
 function formatUsdBillions(valueInMillions) {
   const billions = valueInMillions / 1000;
   return billions >= 1000 ? `$${(billions / 1000).toFixed(2)}T` : `$${billions.toFixed(1)}B`;

@@ -9,7 +9,7 @@ import {
   persistSeries,
   startIngestionRun,
 } from './database.js';
-import { getIngestionHistorySymbols, getLiquiditySnapshot, getMarketHistory, getMarketSnapshot, REGIME_CORRELATION_PAIRS, getRegimeCorrelations } from './providers.js';
+import { getBitcoinCycleWorkspace, getEquityRiskAppetite, getFxWorkspace, getIngestionHistorySymbols, getLiquiditySnapshot, getMarketHeatmap, getMarketHistory, getMarketSnapshot, getMetalsWorkspace, getRegimeCorrelations, getSentimentSnapshot, REGIME_CORRELATION_PAIRS } from './providers.js';
 
 function observationTimestamp(value, fallback) {
   const timestamp = value ? new Date(value) : new Date(fallback);
@@ -207,12 +207,45 @@ export async function ingestLiquiditySnapshot() {
   });
 }
 
+const RESEARCH_WORKSPACES = [
+  { modelId: 'market-heatmap', load: getMarketHeatmap },
+  { modelId: 'metals-workspace', load: getMetalsWorkspace },
+  { modelId: 'fx-workspace', load: getFxWorkspace },
+  { modelId: 'sentiment-snapshot', load: getSentimentSnapshot },
+  { modelId: 'bitcoin-cycle', load: getBitcoinCycleWorkspace },
+  { modelId: 'equity-risk', load: getEquityRiskAppetite },
+];
+
+export async function ingestResearchWorkspaces() {
+  return executeIngestion('research-workspaces', async ({ runId }) => {
+    const persisted = [];
+    const skipped = [];
+    const errors = [];
+    for (const workspace of RESEARCH_WORKSPACES) {
+      try {
+        const output = await workspace.load();
+        if (!output || output.status === 'unavailable') {
+          skipped.push(workspace.modelId);
+          continue;
+        }
+        await persistModelOutput(workspace.modelId, output, [{ provider: 'aggregated-workspace', asOf: output.asOf }], runId);
+        persisted.push(workspace.modelId);
+      } catch (error) {
+        errors.push({ modelId: workspace.modelId, message: error.message });
+      }
+    }
+    if (!persisted.length) throw new Error(`No research workspaces were persisted (skipped: ${skipped.join(', ') || 'none'}; errors: ${errors.map((error) => error.modelId).join(', ') || 'none'})`);
+    return { status: errors.length ? 'partial' : 'completed', details: { persisted, skipped, errors } };
+  });
+}
+
 export async function runAllIngestion() {
   if (!isDatabaseConfigured()) throw new Error('DATABASE_URL is not configured');
   const results = [];
   results.push(await ingestMarketSnapshot());
   results.push(await ingestMarketHistory());
   if (config.fredApiKey) results.push(await ingestLiquiditySnapshot());
+  results.push(await ingestResearchWorkspaces());
   return results;
 }
 
@@ -221,6 +254,7 @@ export function startIngestionScheduler() {
   let marketRunning = false;
   let macroRunning = false;
   let historyRunning = false;
+  let researchRunning = false;
   const activeJobs = new Set();
 
   const track = async (job) => {
@@ -274,20 +308,36 @@ export function startIngestionScheduler() {
     }
   };
 
+  const runResearch = async () => {
+    if (researchRunning) return;
+    researchRunning = true;
+    try {
+      await track(ingestResearchWorkspaces());
+    } catch (error) {
+      console.error('Research workspace ingestion failed:', error.message);
+    } finally {
+      researchRunning = false;
+    }
+  };
+
   void runMarket();
   void runMacro();
   void runHistory({ skipCompletedToday: true });
+  void runResearch();
   const marketTimer = setInterval(runMarket, Math.max(config.marketRefreshMs, config.twelveQuoteRefreshMs));
   const macroTimer = setInterval(runMacro, config.macroRefreshMs);
   const historyTimer = setInterval(() => runHistory({ skipCompletedToday: true }), config.historyRefreshMs);
+  const researchTimer = setInterval(runResearch, config.macroRefreshMs);
   marketTimer.unref();
   macroTimer.unref();
   historyTimer.unref();
+  researchTimer.unref();
 
   return async () => {
     clearInterval(marketTimer);
     clearInterval(macroTimer);
     clearInterval(historyTimer);
+    clearInterval(researchTimer);
     await Promise.allSettled([...activeJobs]);
   };
 }
