@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { buildHeatmapRow, buildLiquidityNarrative, buildWorkspaceNarrative, calculateChangeCorrelations, calculatePositioningModel, calculateCrossMarketRelationship, calculateGlobalLiquidityModel, calculateMacroRegimeModel, calculateRsi, calculateTechnicalSnapshot, calculateUsdStrengthModel, calculateUsLiquidityModel, pearsonCorrelation } from './analytics.js';
+import { buildHeatmapRow, buildLiquidityNarrative, buildWorkspaceNarrative, calculateChangeCorrelations, calculateLeadLag, calculatePositioningModel, calculateCrossMarketRelationship, calculateGlobalLiquidityModel, calculateMacroRegimeModel, calculateRsi, calculateTechnicalSnapshot, calculateUsdStrengthModel, calculateUsLiquidityModel, pearsonCorrelation } from './analytics.js';
 
 test('RSI reaches 100 for an uninterrupted advance', () => {
   const values = Array.from({ length: 30 }, (_, index) => 100 + index);
@@ -362,4 +362,18 @@ test('heatmap rows derive labels from technical and positioning inputs', () => {
   assert.equal(row.crowding, 'Crowded');
   const missing = buildHeatmapRow({ symbol: 'X', name: 'X', group: 'G', technical: null, alignment: null, crowdingPercentile: null });
   assert.equal(missing.status, 'unavailable');
+});
+
+test('lead-lag recovers known shifts between return series', () => {
+  const base = Array.from({ length: 140 }, (_, i) => Math.sin(i / 4.7) + 0.6 * Math.sin(i / 1.9));
+  const x = base.slice(0, 120);
+  const yFollows = x.map((_, i) => (i >= 2 ? base[i - 2] : NaN));
+  const yLeads = base.slice(0, 120).map((_, i) => base[i + 2]);
+  const following = calculateLeadLag(x, yFollows);
+  assert.equal(following.bestLag, 2);
+  assert.equal(following.corrAtBest, 1);
+  assert.equal(following.synchronousCorr === null || typeof following.synchronousCorr === 'number', true);
+  const leading = calculateLeadLag(x, yLeads);
+  assert.equal(leading.bestLag, -2);
+  assert.equal(leading.curve.length, 9);
 });

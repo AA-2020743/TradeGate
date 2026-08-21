@@ -31,6 +31,46 @@ function emaSeries(values, period) {
   return result;
 }
 
+export function calculateLeadLag(seriesX, seriesY, maxLagBars = 4, minObservations = 30) {
+  if (!Array.isArray(seriesX) || !Array.isArray(seriesY)) return null;
+  const curve = [];
+  for (let lag = -maxLagBars; lag <= maxLagBars; lag += 1) {
+    const xs = [];
+    const ys = [];
+    const start = lag >= 0 ? 0 : -lag;
+    for (let index = start; index + Math.max(lag, 0) < seriesX.length && index < seriesY.length; index += 1) {
+      const xValue = seriesX[index];
+      const yValue = seriesY[index + lag];
+      if (Number.isFinite(xValue) && Number.isFinite(yValue)) {
+        xs.push(xValue);
+        ys.push(yValue);
+      }
+    }
+    if (xs.length < minObservations) continue;
+    const meanX = xs.reduce((total, value) => total + value, 0) / xs.length;
+    const meanY = ys.reduce((total, value) => total + value, 0) / ys.length;
+    let covariance = 0;
+    let varianceX = 0;
+    let varianceY = 0;
+    for (let index = 0; index < xs.length; index += 1) {
+      covariance += (xs[index] - meanX) * (ys[index] - meanY);
+      varianceX += (xs[index] - meanX) ** 2;
+      varianceY += (ys[index] - meanY) ** 2;
+    }
+    const corr = varianceX > 0 && varianceY > 0 ? covariance / Math.sqrt(varianceX * varianceY) : 0;
+    curve.push({ lag, corr: Math.round(corr * 1000) / 1000, observations: xs.length });
+  }
+  if (!curve.length) return null;
+  const best = curve.reduce((left, right) => (right.corr > left.corr ? right : left));
+  return {
+    bestLag: best.lag,
+    corrAtBest: best.corr,
+    synchronousCorr: (curve.find((point) => point.lag === 0) ?? {}).corr ?? null,
+    observations: best.observations,
+    curve,
+  };
+}
+
 export function calculateRsi(values, period = 14) {
   if (values.length <= period) return null;
   let averageGain = 0;

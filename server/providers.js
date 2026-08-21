@@ -1,6 +1,6 @@
 import { config } from './config.js';
 import { withCache } from './cache.js';
-import { buildHeatmapRow, buildLiquidityNarrative, buildWorkspaceNarrative, calculateChangeCorrelations, calculatePositioningModel, calculateCrossMarketRelationship, calculateGlobalLiquidityModel, calculateMacroRegimeModel, calculateRsi, calculateTechnicalSnapshot, calculateUsdStrengthModel, calculateUsLiquidityModel } from './analytics.js';
+import { buildHeatmapRow, buildLiquidityNarrative, buildWorkspaceNarrative, calculateChangeCorrelations, calculateLeadLag, calculatePositioningModel, calculateCrossMarketRelationship, calculateGlobalLiquidityModel, calculateMacroRegimeModel, calculateRsi, calculateTechnicalSnapshot, calculateUsdStrengthModel, calculateUsLiquidityModel } from './analytics.js';
 import { getStoredFredSeries, getStoredMarketHistory, getStoredMarketSnapshot, getRecentModelOutputs, isDatabaseConfigured, reserveProviderCredits } from './database.js';
 import { getAllEquityHistorySymbols, getCoreEquityHistorySymbols } from './equityCatalog.js';
 import { isCryptoHistoryStale, isCotReportStale, isDailyCloseStale, isFredSeriesStale, isPbocObservationStale, monthsBetween } from './freshness.js';
@@ -769,17 +769,38 @@ function getSpxConstituents() {
   });
 }
 
-async function getSparkBatch(symbols) {
-  const url = `https://query1.finance.yahoo.com/v7/finance/spark?symbols=${encodeURIComponent(symbols.join(','))}&range=1y&interval=1d`;
+async function getSparkBatch(symbols, { range = '1y', interval = '1d' } = {}) {
+  const url = `https://query1.finance.yahoo.com/v7/finance/spark?symbols=${encodeURIComponent(symbols.join(','))}&range=${range}&interval=${interval}`;
   const payload = await fetchJson(url, 0, 2, BROWSER_HEADERS);
   const rows = payload?.spark?.result ?? [];
   const out = new Map();
   for (const row of rows) {
-    const rawCloses = row?.response?.[0]?.indicators?.quote?.[0]?.close ?? [];
+    const response = row?.response?.[0];
+    const rawCloses = response?.indicators?.quote?.[0]?.close ?? [];
     const values = rawCloses.map((close) => asNumber(close)).filter((value) => value !== null);
-    if (values.length >= 210) out.set(row.symbol, values);
+    if (interval === '1d' ? values.length >= 210 : values.length >= 60) {
+      out.set(row.symbol, interval === '1d' ? values : { closes: values, timestamps: response?.timestamp ?? [] });
+    }
   }
   return out;
+}
+
+async function getIntradayCloses(symbols, range = '5d', interval = '30m') {
+  const settled = await Promise.allSettled(symbols.map((symbol) => getSparkBatch([symbol], { range, interval })));
+  const aligned = new Map();
+  for (const result of settled) {
+    if (result.status !== 'fulfilled') continue;
+    for (const [symbol, payload] of result.value) {
+      const byTimestamp = new Map();
+      payload.timestamps.forEach((timestamp, index) => {
+        const close = payload.closes[index];
+        if (Number.isFinite(timestamp) && Number.isFinite(close)) byTimestamp.set(timestamp, close);
+      });
+      aligned.set(symbol, byTimestamp);
+    }
+  }
+  if (!aligned.size) throw new Error('No intraday spark histories responded');
+  return aligned;
 }
 
 async function getSparkCloses(symbols) {
@@ -1586,6 +1607,48 @@ async function getFredCsvSeries(series) {
     stale: isFredSeriesStale(series.id, observation.date),
     history,
   };
+}
+
+export async function getIntradayRotation() {
+  return withCache('analytics:intraday-rotation', 15 * 60_000, async () => {
+    const symbols = ['BTC-USD', 'ETH-USD', 'SOL-USD'];
+    const names = { 'BTC-USD': 'Bitcoin', 'ETH-USD': 'Ethereum', 'SOL-USD': 'Solana' };
+    const aligned = await getIntradayCloses(symbols);
+    const reference = aligned.get('BTC-USD');
+    if (!reference || reference.size < 60) throw new Error('Intraday bitcoin history unavailable');
+    const sharedTimestamps = [...reference.keys()].filter((timestamp) => symbols.every((symbol) => aligned.get(symbol)?.has(timestamp)));
+    if (sharedTimestamps.length < 60) throw new Error('Aligned intraday histories are too short');
+    const returnsBySymbol = new Map();
+    for (const symbol of symbols) {
+      const series = sharedTimestamps.map((timestamp) => aligned.get(symbol).get(timestamp));
+      const returns = [];
+      for (let index = 1; index < series.length; index += 1) returns.push((series[index] / series[index - 1]) - 1);
+      returnsBySymbol.set(symbol, returns);
+    }
+    const pairs = [];
+    for (const [leader, follower] of [['BTC-USD', 'ETH-USD'], ['BTC-USD', 'SOL-USD'], ['ETH-USD', 'SOL-USD']]) {
+      const result = calculateLeadLag(returnsBySymbol.get(leader), returnsBySymbol.get(follower));
+      if (!result) continue;
+      pairs.push({
+        pair: `${names[leader]} → ${names[follower]}`,
+        bestLagBars: result.bestLag,
+        corrAtBest: result.corrAtBest,
+        synchronousCorr: result.synchronousCorr,
+        observations: result.observations,
+        read: Math.abs(result.bestLag) <= 1 ? 'Synchronous' : result.bestLag > 0 ? `${names[leader]} leads by ${Math.abs(result.bestLag) * 30}m` : `${names[follower]} leads by ${Math.abs(result.bestLag) * 30}m`,
+      });
+    }
+    return {
+      asOf: new Date().toISOString(),
+      version: 'intraday-rotation-v1',
+      status: pairs.length ? 'calculated' : 'unavailable',
+      intervalMinutes: 30,
+      windowDays: 5,
+      bars: sharedTimestamps.length - 1,
+      pairs,
+      methodology: 'Thirty-minute Yahoo spark closes over five days for BTC, ETH, and SOL are aligned on shared timestamps and converted to bar returns. Cross-correlation is scanned across ±4 bars; the peak identifies whether altcoins follow bitcoin or lead it on rotation days.',
+    };
+  });
 }
 
 export async function getStablecoinIssuance() {

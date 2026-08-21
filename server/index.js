@@ -16,7 +16,7 @@ import {
 } from './equityCatalog.js';
 import { getEquityDashboard, getSectorDashboard } from './equities.js';
 import { startIngestionScheduler } from './ingestion.js';
-import { getBitcoinCycleWorkspace, getCryptoGlobal, getDxyBitcoinRelationship, getEquityRiskAppetite, getEquityScreener, getEthereumRotation, getFxWorkspace, getLiquiditySnapshot, getMarketHeatmap, getMarketHistory, getMarketPositioning, getMarketSnapshot, getMetalsWorkspace, getNewsWire, getProviderHealth, getRegimeCorrelations, getSentimentSnapshot, getTechnicalSnapshot } from './providers.js';
+import { getBitcoinCycleWorkspace, getCryptoGlobal, getDxyBitcoinRelationship, getEquityRiskAppetite, getEquityScreener, getEthereumRotation, getFxWorkspace, getIntradayRotation, getLiquiditySnapshot, getMarketHeatmap, getMarketHistory, getMarketPositioning, getMarketSnapshot, getMetalsWorkspace, getNewsWire, getProviderHealth, getRegimeCorrelations, getSentimentSnapshot, getTechnicalSnapshot } from './providers.js';
 
 const app = express();
 const rootDirectory = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -147,12 +147,13 @@ app.get('/api/analytics/sentiment', async (_request, response, next) => {
 
 app.get('/api/analytics/bitcoin', async (_request, response, next) => {
   try {
-    const [workspace, ethRotation, cryptoGlobal] = await Promise.all([
+    const [workspace, ethRotation, cryptoGlobal, intraday] = await Promise.all([
       getBitcoinCycleWorkspace(),
       getEthereumRotation().catch(() => null),
       getCryptoGlobal().catch(() => null),
+      getIntradayRotation().catch(() => null),
     ]);
-    response.json({ ...workspace, ethRotation, cryptoGlobal });
+    response.json({ ...workspace, ethRotation, cryptoGlobal, intraday });
   } catch (error) {
     next(error);
   }

@@ -1063,6 +1063,13 @@ function CryptoDashboard({ data }) {
         </div>
         <p className="model-footnote">{data.bitcoin?.ethRotation?.methodology ?? 'Ethereum rotation publishes once Yahoo ETH-USD and BTC-USD histories respond.'}</p>
       </article>
+      <article className={`crypto-tailwind-panel panel ${data.bitcoin?.intraday?.status === 'calculated' ? '' : 'preview-section'}`}><div className="panel-title"><div><p className="section-kicker">INTRADAY ROTATION TIMING · CALCULATED</p><h3>{data.bitcoin?.intraday?.status === 'calculated' ? `${data.bitcoin.intraday.bars} aligned 30m bars` : 'Awaiting intraday histories'}</h3></div><span className="data-pill">{data.bitcoin?.intraday?.version ?? 'Unavailable'}</span></div>
+        <div className="btc-cycle-grid">
+          {(data.bitcoin?.intraday?.pairs ?? []).map((pair) => <div className="btc-cycle-cell" key={pair.pair}><small>{pair.pair}</small><b>{pair.read}</b><span>{`ρ ${pair.corrAtBest.toFixed(2)}${pair.synchronousCorr !== null && pair.bestLagBars !== 0 ? ` (sync ${pair.synchronousCorr.toFixed(2)})` : ''} · ${pair.observations} bars`}</span></div>)}
+          {!data.bitcoin?.intraday?.pairs?.length && <div className="btc-cycle-cell"><small>Lead/lag</small><b>—</b><span>Five days of 30-minute closes for BTC, ETH, and SOL are required.</span></div>}
+        </div>
+        <p className="model-footnote">{data.bitcoin?.intraday?.methodology ?? 'Lead/lag publishes once five-day 30-minute spark histories align across the three assets.'}</p>
+      </article>
       <article className={`crypto-tailwind-panel panel ${data.bitcoin?.cryptoGlobal?.status === 'calculated' ? '' : 'preview-section'}`}><div className="panel-title"><div><p className="section-kicker">GLOBAL CRYPTO LIQUIDITY · CALCULATED</p><h3>{Number.isFinite(data.bitcoin?.cryptoGlobal?.mcapChange24hPct) ? `${data.bitcoin.cryptoGlobal.mcapChange24hPct >= 0 ? 'Expanding' : 'Contracting'} ${Math.abs(data.bitcoin.cryptoGlobal.mcapChange24hPct).toFixed(2)}% today` : 'Awaiting CoinGecko'}</h3></div><span className="data-pill">{data.bitcoin?.cryptoGlobal?.version ?? 'Unavailable'}</span></div>
         <div className="btc-cycle-grid">
           <div className="btc-cycle-cell"><small>Total market cap</small><b>{Number.isFinite(data.bitcoin?.cryptoGlobal?.totalMcapUsd) ? formatLiquidityValue(data.bitcoin.cryptoGlobal.totalMcapUsd / 1e6) : '—'}</b><span>All tracked crypto assets</span></div>
