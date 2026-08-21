@@ -259,7 +259,7 @@ export async function ingestResearchWorkspaces() {
         errors.push({ modelId: workspace.modelId, message: error.message });
       }
     }
-    if (!persisted.length) throw new Error(`No research workspaces were persisted (skipped: ${skipped.join(', ') || 'none'}; errors: ${errors.map((error) => error.modelId).join(', ') || 'none'})`);
+    if (!persisted.length) throw new Error(`No research workspaces were persisted (skipped: ${skipped.join(', ') || 'none'}; errors: ${errors.map((error) => `${error.modelId}: ${error.message}`).join(' | ') || 'none'})`);
     return { status: errors.length ? 'partial' : 'completed', details: { persisted, skipped, alertsRaised, errors } };
   });
 }
