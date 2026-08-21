@@ -11,6 +11,8 @@ const navItems = [
   ['▦', 'Screener', 'Preview'],
   ['◫', 'Watchlists', 'Preview'],
   ['◔', 'Macro'],
+  ['⇄', 'Forex'],
+  ['₿', 'Crypto'],
 ];
 
 const watchlist = [
@@ -56,15 +58,6 @@ const heatmapColumns = [
   ['alignment', 'Alignment'],
 ];
 
-
-const metalFlows = [
-  ['Gold ETF holdings', '83.2M oz', '+0.18M', 'positive'],
-  ['Silver ETF holdings', '675M oz', '+1.4M', 'positive'],
-  ['Daily ETF flows', '$184M', 'Net inflow', 'positive'],
-  ['Institutional demand', 'Firm', 'Allocators adding', 'positive'],
-  ['Central-bank purchases', 'High', 'Persistent buyer base', 'positive'],
-  ['Central-bank sales', 'Low', 'No material supply', 'neutral'],
-];
 
 const physicalMarket = [
   ['LBMA vs futures', 'Normal', 'No dislocation', 'positive'],
@@ -328,7 +321,7 @@ function App() {
         </header>
 
         <div className="dashboard">
-          {activeNav === 'Macro' ? <MacroDashboard data={platformData} /> : activeNav === 'Markets' ? <MarketsDashboard data={platformData} /> : activeNav === 'Equities' ? <EquitiesDashboard platformData={platformData} /> : activeNav === 'Metals' ? <MetalsDashboard data={platformData} /> : ['Screener', 'Watchlists'].includes(activeNav) ? <PreviewWorkspace name={activeNav} /> : <>
+          {activeNav === 'Macro' ? <MacroDashboard data={platformData} /> : activeNav === 'Forex' ? <ForexDashboard data={platformData} /> : activeNav === 'Crypto' ? <CryptoDashboard data={platformData} /> : activeNav === 'Markets' ? <MarketsDashboard data={platformData} /> : activeNav === 'Equities' ? <EquitiesDashboard platformData={platformData} /> : activeNav === 'Metals' ? <MetalsDashboard data={platformData} /> : ['Screener', 'Watchlists'].includes(activeNav) ? <PreviewWorkspace name={activeNav} /> : <>
           <section className="welcome-row">
             <div><p className="eyebrow">{new Intl.DateTimeFormat('en-US', { weekday: 'long', month: 'long', day: 'numeric' }).format(new Date()).toUpperCase()}</p><h1>Good morning, Alex.</h1><p className="intro">Here is your market pulse for today.</p></div>
             <div className={`market-status ${platformData.status}`}><span className="live-dot"></span><span>{platformData.status === 'live' ? 'Data feeds connected' : platformData.status === 'partial' ? 'Partial data coverage' : 'Data API unavailable'}</span><strong>{formatTimestamp(platformData.markets?.asOf)}</strong></div>
@@ -545,6 +538,7 @@ function EquitiesDashboard({ platformData }) {
               <div className="btc-cycle-cell"><small>RSP/SPY 50d slope</small><b>{risk.equalWeight?.status === 'calculated' ? `${risk.equalWeight.slope50 > 0 ? '+' : ''}${risk.equalWeight.slope50}%` : '—'}</b><span>{risk.equalWeight?.read ?? risk.equalWeight?.reason}</span></div>
               <div className="btc-cycle-cell"><small>HY OAS</small><b>{risk.creditStress?.status === 'calculated' ? `${risk.creditStress.level}%` : '—'}</b><span>{risk.creditStress?.status === 'calculated' ? `${risk.creditStress.change20d >= 0 ? '+' : ''}${risk.creditStress.change20d} 20d · ${risk.creditStress.read}` : risk.creditStress?.reason}</span></div>
               <div className="btc-cycle-cell"><small>ERP proxy</small><b>{risk.riskPremium?.status === 'calculated' ? `${risk.riskPremium.spread > 0 ? '+' : ''}${risk.riskPremium.spread}%` : '—'}</b><span>{risk.riskPremium?.status === 'calculated' ? `EY ${risk.riskPremium.earningsYield}% − real ${risk.riskPremium.realYield10y}% · ${risk.riskPremium.read}` : risk.riskPremium?.reason}</span></div>
+              <div className="btc-cycle-cell"><small>VIX term structure</small><b>{risk.vixTermStructure?.status === 'calculated' ? risk.vixTermStructure.vixVix3m : '—'}</b><span>{risk.vixTermStructure?.status === 'calculated' ? `VIX ${risk.vixTermStructure.vix} / 3M ${risk.vixTermStructure.vix3m} · ${risk.vixTermStructure.percentile}th pct · ${risk.vixTermStructure.state}` : risk.vixTermStructure?.reason}</span></div>
             </div>
             {risk.sectorRotation?.status === 'calculated' && <>
               <div className="equity-rotation-head sentiment-head" style={{ marginTop: 14 }}><span>Sector SPDR relative strength vs SPY</span><span>3M RS</span></div>
@@ -712,7 +706,7 @@ function MetalsDashboard({ data }) {
     <section className="metals-section-heading"><div><p className="section-kicker">POSITIONING AND FLOWS</p><h2>Who owns the trade, and where is demand coming from?</h2></div><span className="data-pill">{cot ? 'COT calculated' : 'Flows preview'}</span></section>
     <section className="metals-flow-grid">
       <article className={`positioning-panel panel ${cot ? '' : 'preview-section'}`}><div className="panel-title"><div><p className="section-kicker">CFTC COT · GOLD · CALCULATED</p><h3>Leveraged-fund exposure</h3></div><span className="positioning-percentile">{cot && Number.isFinite(cot.percentile) ? cot.percentile : '—'}<span>th pct.</span></span></div><div className="positioning-rows"><div><span>Managed Money</span><i><b className="managed" style={{ width: `${Math.min(workspace?.cotDetail?.managedMoney?.percentile ?? 0, 100)}%` }}></b></i><small>{Number.isFinite(workspace?.cotDetail?.managedMoney?.net) ? `${workspace.cotDetail.managedMoney.net.toLocaleString()} (${workspace.cotDetail.managedMoney.percentile}th)` : '—'}</small></div><div><span>Producers / Merchants</span><i><b className="producer" style={{ width: `${Math.min(Math.abs(workspace?.cotDetail?.producers?.percentile ?? 0), 100)}%` }}></b></i><small>{Number.isFinite(workspace?.cotDetail?.producers?.net) ? `${workspace.cotDetail.producers.net.toLocaleString()} (${workspace.cotDetail.producers.percentile}th)` : '—'}</small></div><div><span>Swap Dealers</span><i><b className="swap" style={{ width: `${Math.min(Math.abs(workspace?.cotDetail?.swapDealers?.percentile ?? 0), 100)}%` }}></b></i><small>{Number.isFinite(workspace?.cotDetail?.swapDealers?.net) ? `${workspace.cotDetail.swapDealers.net.toLocaleString()} (${workspace.cotDetail.swapDealers.percentile}th)` : '—'}</small></div><div><span>Net non-commercial</span><i><b className="commercial" style={{ width: `${Math.min(((cot?.percentile ?? 0)), 100)}%` }}></b></i><small>{Number.isFinite(cot?.netNoncomm) ? `${cot.netNoncomm.toLocaleString()} · ${cot.crowd}` : '—'}</small></div><div><span>Weekly change (MM)</span><i><b className="speculator" style={{ width: `${Math.min(Math.abs(workspace?.cotDetail?.managedMoney?.weeklyChange ?? 0) / 200, 100)}%` }}></b></i><small>{Number.isFinite(workspace?.cotDetail?.managedMoney?.weeklyChange) ? `${workspace.cotDetail.managedMoney.weeklyChange >= 0 ? '+' : ''}${workspace.cotDetail.managedMoney.weeklyChange.toLocaleString()}` : '—'}</small></div></div><div className="positioning-note"><b>Positioning percentile</b><span>{cot ? `Three-year ranks of net disaggregated and legacy speculative positions as of ${workspace?.cotDetail?.asOf ?? cot.asOf}.` : 'CFTC commitment histories are required before positioning can publish.'}</span></div></article>
-      <article className="metal-flows-panel panel preview-section"><div className="panel-title"><div><p className="section-kicker">FLOWS AND OFFICIAL DEMAND</p><h3>ETF and central-bank demand</h3></div><PreviewBadge /></div>{metalFlows.map(([name, value, detail, tone]) => <div className="metal-flow-row" key={name}><div><b>{name}</b><small>{detail}</small></div><span className={tone}>{value}</span></div>)}</article>
+      <article className={`metal-flows-panel panel ${workspace?.ratios?.goldSilver?.status === 'calculated' || workspace?.ratios?.goldCopper?.status === 'calculated' ? '' : 'preview-section'}`}><div className="panel-title"><div><p className="section-kicker">CROSS RATIOS · CALCULATED</p><h3>Relative monetary vs industrial demand</h3></div><span className="data-pill">1Y percentile</span></div><div className="metal-flow-row" key="gs"><div><b>Gold / Silver</b><small>{workspace?.ratios?.goldSilver?.status === 'calculated' ? `${workspace.ratios.goldSilver.change20d >= 0 ? '+' : ''}${workspace.ratios.goldSilver.change20d}% 20d · ${workspace.ratios.goldSilver.observations} obs` : workspace?.ratios?.goldSilver?.reason}</small></div><span className="neutral">{workspace?.ratios?.goldSilver?.status === 'calculated' ? `${workspace.ratios.goldSilver.ratio} · ${workspace.ratios.goldSilver.percentile}th` : '—'}</span></div><div className="metal-flow-row" key="gc"><div><b>Gold / Copper</b><small>{workspace?.ratios?.goldCopper?.status === 'calculated' ? `${workspace.ratios.goldCopper.change20d >= 0 ? '+' : ''}${workspace.ratios.goldCopper.change20d}% 20d · ${workspace.ratios.goldCopper.read}` : workspace?.ratios?.goldCopper?.reason}</small></div><span className="neutral">{workspace?.ratios?.goldCopper?.status === 'calculated' ? `${workspace.ratios.goldCopper.ratio} · ${workspace.ratios.goldCopper.percentile}th` : '—'}</span></div><div className="cost-callout"><span>What matters next</span><p>A rising gold/silver ratio signals a monetary bid dominating industrial demand; the gold/copper ratio is a compact risk-appetite gauge for the metals complex.</p></div></article>
       <article className="physical-market-panel panel preview-section"><div className="panel-title"><div><p className="section-kicker">PHYSICAL VS PAPER</p><h3>Market plumbing is orderly.</h3></div><PreviewBadge /></div>{physicalMarket.map(([name, value, detail, tone]) => <div className="physical-row" key={name}><div><b>{name}</b><small>{detail}</small></div><span className={tone}>{value}</span></div>)}</article>
     </section>
 
@@ -736,50 +730,13 @@ function MacroDashboard({ data }) {
   const usdDrivers = Object.fromEntries((usdStrength?.drivers ?? []).map((driver) => [driver.key, driver]));
   const liquidityHistory = normalizeSparkline(liquidityModel?.history?.map((point) => point.value) ?? []);
   const globalLiquidityHistory = normalizeSparkline(globalLiquidity?.history?.map((point) => point.value) ?? []);
-  const dxyBtcModel = data.dxyBtc?.model;
-  const dxyBtcCorrelationValue = dxyBtcModel?.correlations?.[correlationWindow];
-  const dxyHistory = normalizeSparkline(dxyBtcModel?.history?.left ?? []);
-  const bitcoinHistory = normalizeSparkline(dxyBtcModel?.history?.right ?? []);
   const regimeCorrelations = data.regimeCorrelations;
-  const fxWorkspace = data.fx;
   const rcPairs = regimeCorrelations?.pairs ?? [];
   const rcValue = (pair) => pair?.correlations?.[correlationWindow];
   const calculatedPairs = rcPairs.filter((pair) => pair.status === 'calculated' && Number.isFinite(rcValue(pair)));
   const strongestPair = calculatedPairs.length ? calculatedPairs.reduce((best, pair) => Math.abs(rcValue(pair)) > Math.abs(rcValue(best)) ? pair : best) : null;
   const weakestPair = calculatedPairs.length ? calculatedPairs.reduce((worst, pair) => Math.abs(rcValue(pair)) < Math.abs(rcValue(worst)) ? pair : worst) : null;
   const rcByKey = Object.fromEntries(rcPairs.map((pair) => [pair.key, pair]));
-  const fredCurrencyRows = [
-    { key: 'eurUsd', currency: 'EUR', name: 'Euro', driver: 'FRED H.10 DEXUSEU' },
-    { key: 'yenPerUsd', currency: 'JPY', name: 'Yen', driver: 'FRED H.10 DEXJPUS' },
-    { key: 'yuanPerUsd', currency: 'CNH', name: 'Yuan', driver: 'PBoC liquidity and fixings' },
-  ].map(({ key, currency, name, driver }) => {
-    const values = (data.liquidity?.series?.find((series) => series.key === key)?.history ?? []).map((point) => point.value).filter(Number.isFinite);
-    const latest = values.at(-1);
-    const past = values.at(-21);
-    const rateChange = Number.isFinite(latest) && Number.isFinite(past) && past ? ((latest / past) - 1) * 100 : null;
-    const strengthChange = rateChange === null ? null : key === 'eurUsd' ? rateChange : -rateChange;
-    return {
-      currency,
-      name,
-      change: strengthChange,
-      bias: strengthChange === null ? 'Unavailable' : strengthChange > 0.5 ? 'USD weak' : strengthChange < -0.5 ? 'USD strong' : 'Range',
-      score: strengthChange === null ? null : Math.round(Math.max(0, Math.min(100, 50 + (strengthChange * 8)))),
-      driver,
-    };
-  });
-  const fxCurrencyRows = (fxWorkspace?.pairs ?? []).map((pair) => ({
-    currency: pair.key.toUpperCase(),
-    name: pair.name,
-    change: pair.momentum20d,
-    bias: pair.momentum20d === null || pair.momentum20d === undefined ? 'Unavailable' : pair.momentum20d > 0.5 ? 'USD weak' : pair.momentum20d < -0.5 ? 'USD strong' : 'Range',
-    score: pair.score ?? null,
-    driver: pair.cot ? `COT ${pair.cot.percentile}th pct · ${pair.cot.crowd}` : 'CFTC pending',
-  }));
-  const currencyMomentum = [
-    ...fxCurrencyRows,
-    ...fredCurrencyRows.filter((row) => !fxCurrencyRows.some((fxRow) => fxRow.currency === row.currency)),
-  ];
-  const calculatedCurrencies = currencyMomentum.filter((row) => row.score !== null);
   const narrative = data.liquidity?.narrative;
   const sensitivityTone = (value) => !Number.isFinite(value) ? 'Unavailable' : Math.abs(value) >= 0.5 ? 'High' : Math.abs(value) >= 0.25 ? 'Medium' : 'Low';
   const sensitivityRows = [
@@ -794,7 +751,7 @@ function MacroDashboard({ data }) {
   return <div className="macro-dashboard">
     <section className="macro-intro">
       <div><p className="eyebrow">MACRO RESEARCH SYSTEM</p><h1>Liquidity leads. Risk confirms.</h1><p className="intro">A cross-asset view of the forces shaping capital availability and market regime.</p></div>
-      <div className="model-tabs"><button className={activeModel === 'Liquidity' ? 'active' : ''} onClick={() => setActiveModel('Liquidity')}>US liquidity</button><button className={activeModel === 'Global' ? 'active' : ''} onClick={() => setActiveModel('Global')}>Global liquidity</button><button className={activeModel === 'Risk' ? 'active' : ''} onClick={() => setActiveModel('Risk')}>Macro regime</button><button className={activeModel === 'Correlations' ? 'active' : ''} onClick={() => setActiveModel('Correlations')}>Correlations {regimeCorrelations?.status !== 'calculated' && <small className="tab-preview">Preview</small>}</button><button className={activeModel === 'FX' ? 'active' : ''} onClick={() => setActiveModel('FX')}>USD &amp; FX {fxWorkspace?.status !== 'calculated' && <small className="tab-preview">Preview mix</small>}</button></div>
+      <div className="model-tabs"><button className={activeModel === 'Liquidity' ? 'active' : ''} onClick={() => setActiveModel('Liquidity')}>US liquidity</button><button className={activeModel === 'Global' ? 'active' : ''} onClick={() => setActiveModel('Global')}>Global liquidity</button><button className={activeModel === 'Risk' ? 'active' : ''} onClick={() => setActiveModel('Risk')}>Macro regime</button><button className={activeModel === 'Correlations' ? 'active' : ''} onClick={() => setActiveModel('Correlations')}>Correlations {regimeCorrelations?.status !== 'calculated' && <small className="tab-preview">Preview</small>}</button><button className={activeModel === 'FX' ? 'active' : ''} onClick={() => setActiveModel('FX')}>USD &amp; FX</button></div>
     </section>
     <DataDisclosure data={data} message="US liquidity, USD strength, macro regime, and DXY/BTC are versioned calculations. Every remaining designed value is labeled Preview at its tab or section." />
     {data.liquidity?.series?.length ? <section className="official-data-strip panel"><div><p className="section-kicker">OFFICIAL FRED OBSERVATIONS</p><b>Latest released data</b></div>{data.liquidity.series.slice(0, 5).map((series) => <div key={series.id}><span>{series.name}</span><strong>{formatMacroValue(series)}</strong><small>{series.date}{series.stale ? ' · stale' : series.stored ? ' · stored' : ' · live'}</small></div>)}</section> : <section className="provider-setup-note"><b>Live macro feed unavailable</b><span>The server could not reach FRED (API or public CSV endpoint) and no stored observations exist yet.</span></section>}
@@ -832,7 +789,7 @@ function MacroDashboard({ data }) {
       </article>
     </section>
 
-    <section className="macro-section-heading"><div><p className="section-kicker">{activeModel === 'Liquidity' ? 'NET US LIQUIDITY' : activeModel === 'Global' ? 'GLOBAL CENTRAL-BANK LIQUIDITY' : activeModel === 'Risk' ? 'CROSS-ASSET CONFIRMATION' : activeModel === 'Correlations' ? 'RELATIONSHIP INTELLIGENCE' : 'FOREX MACRO PREDICTORS'}</p><h2>{activeModel === 'Liquidity' ? 'The calculated drivers behind the impulse' : activeModel === 'Global' ? 'World central-bank liquidity in dollars' : activeModel === 'Risk' ? 'What markets are pricing now' : activeModel === 'Correlations' ? 'Correlations through the current regime' : 'Where macro points for each currency'} {((activeModel === 'FX' && fxWorkspace?.status !== 'calculated') || (activeModel === 'Correlations' && regimeCorrelations?.status !== 'calculated')) && <PreviewBadge label="Contains previews" />}</h2></div>{activeModel === 'Liquidity' && <span className="data-pill">13W calculated window</span>}{activeModel === 'Global' && <span className="data-pill">13W calculated window</span>}{activeModel === 'Correlations' && <div className="window-buttons">{['20D', '60D', '1Y'].map((item) => <button className={correlationWindow === item ? 'selected' : ''} key={item} onClick={() => setCorrelationWindow(item)}>{item}</button>)}</div>}{activeModel === 'FX' && <span className="data-pill">20-session momentum</span>}</section>
+    <section className="macro-section-heading"><div><p className="section-kicker">{activeModel === 'Liquidity' ? 'NET US LIQUIDITY' : activeModel === 'Global' ? 'GLOBAL CENTRAL-BANK LIQUIDITY' : activeModel === 'Risk' ? 'CROSS-ASSET CONFIRMATION' : activeModel === 'Correlations' ? 'RELATIONSHIP INTELLIGENCE' : 'USD MACRO ENGINE'}</p><h2>{activeModel === 'Liquidity' ? 'The calculated drivers behind the impulse' : activeModel === 'Global' ? 'World central-bank liquidity in dollars' : activeModel === 'Risk' ? 'What markets are pricing now' : activeModel === 'Correlations' ? 'Correlations through the current regime' : 'Where macro points for the dollar'} {activeModel === 'Correlations' && regimeCorrelations?.status !== 'calculated' && <PreviewBadge label="Contains previews" />}</h2></div>{activeModel === 'Liquidity' && <span className="data-pill">13W calculated window</span>}{activeModel === 'Global' && <span className="data-pill">13W calculated window</span>}{activeModel === 'Correlations' && <div className="window-buttons">{['20D', '60D', '1Y'].map((item) => <button className={correlationWindow === item ? 'selected' : ''} key={item} onClick={() => setCorrelationWindow(item)}>{item}</button>)}</div>}{activeModel === 'FX' && <span className="data-pill">FRED driver stack</span>}</section>
 
     {activeModel === 'Liquidity' ? <section className="liquidity-detail-grid">
       <article className="driver-panel panel"><div className="driver-panel-head"><span>Indicator</span><span>Impulse</span><span>13W change</span></div>{liquidityModel?.drivers?.length ? liquidityModel.drivers.map((driver) => { const tone = driver.impulse > 0.05 ? 'positive' : driver.impulse < -0.05 ? 'negative' : 'neutral'; return <div className="driver-row" key={driver.key}><span>{driver.name}</span><b className={tone}>{driver.impulse > 0.05 ? 'Supportive' : driver.impulse < -0.05 ? 'Restrictive' : 'Neutral'}</b><strong>{driver.changePercent >= 0 ? '+' : ''}{driver.changePercent.toFixed(2)}%</strong></div>; }) : <div className="calculation-empty">No calculated FRED drivers are available.</div>}<p className="model-footnote"><code>us-liquidity-v1</code> uses 55% Fed net liquidity, 25% US M2 growth, and 20% inverse dollar transmission. Inputs retain provider dates and units.</p></article>
@@ -857,32 +814,9 @@ function MacroDashboard({ data }) {
         <p>The relationship map publishes only when both legs of each pair have stored, fresh history. Missing: {regimeCorrelations?.missingInputs?.join(', ') || 'all pairs pending input configuration'}.</p>
       </>}</article>
       <article className={`correlation-notes panel ${regimeCorrelations?.status === 'calculated' ? '' : 'preview-section'}`}><p className="section-kicker">HOW TO READ THIS</p><div>{rcPairs.slice(0, 3).map((pair) => <p key={pair.key}><b>{pair.left} / {pair.right}</b><span>{pair.note}</span></p>)}</div><button onClick={() => setActiveModel('Liquidity')}>Open liquidity drivers →</button></article>
-      <article className="dxy-btc-panel panel"><div className="panel-title"><div><p className="section-kicker">DXY VS BITCOIN · CALCULATED</p><h3>{dxyBtcModel?.interpretation ?? 'Awaiting synchronized histories'}</h3></div><span className="data-pill">{Number.isFinite(dxyBtcCorrelationValue) ? `${correlationWindow} r ${dxyBtcCorrelationValue.toFixed(2)}` : 'Unavailable'}</span></div><div className="dxy-btc-chart"><div><span><i className="dxy-key"></i>{data.dxyBtc?.source?.left?.startsWith('DXY') ? 'DXY' : 'Broad dollar proxy'}</span>{dxyHistory.length ? <Sparkline color="#d3a454" values={dxyHistory} /> : <div className="model-chart-empty">No dollar history</div>}</div><div><span><i className="btc-key"></i>Bitcoin</span>{bitcoinHistory.length ? <Sparkline color="#70c26b" values={bitcoinHistory} /> : <div className="model-chart-empty">No BTC history</div>}</div></div><div className="dxy-btc-diagnostics"><span>Correlation regime <b>{dxyBtcModel?.regime ?? 'Unavailable'}</b></span><span>Momentum relationship <b>{dxyBtcModel?.divergence ?? 'Unavailable'}</b></span><span>Breakout read <b>{dxyBtcModel?.interpretation ?? 'Unavailable'}</b></span></div><p>{dxyBtcModel ? `${dxyBtcModel.version} · ${dxyBtcModel.observations} aligned daily observations · ${data.dxyBtc.source.left} and ${data.dxyBtc.source.right}` : 'Configure Twelve Data or FRED and retain Bitcoin history to calculate this relationship.'}</p></article>
-      {(() => {
-        const btc = data.bitcoin;
-        const hasBtc = Boolean(btc?.calculatedCount);
-        return <article className={`dxy-btc-panel panel ${hasBtc ? '' : 'preview-section'}`}><div className="panel-title"><div><p className="section-kicker">BITCOIN CYCLE &amp; CROWDING · CALCULATED</p><h3>{btc?.trend?.status === 'calculated' ? `Spot $${Math.round(btc.trend.price).toLocaleString()} · ${btc.trend.pctVsSma200w > 0 ? '+' : ''}${btc.trend.pctVsSma200w}% vs 200W` : 'Cycle dashboard'}</h3></div><span className="data-pill">{btc ? `${btc.calculatedCount}/${btc.totalLegs} legs` : 'Unavailable'}</span></div>
-          {hasBtc ? <>
-            <div className="btc-cycle-grid">
-              <div className="btc-cycle-cell"><small>Trend regime</small><b>{btc.trend?.status === 'calculated' ? `${btc.trend.pctVsSma200d > 0 ? '+' : ''}${btc.trend.pctVsSma200d}% / ${btc.trend.pctVsSma200w > 0 ? '+' : ''}${btc.trend.pctVsSma200w}%` : '—'}</b><span>vs 200D / 200W SMA</span></div>
-              <div className="btc-cycle-cell"><small>MVRV Z-Score</small><b>{btc.valuation?.status === 'calculated' ? btc.valuation.mvrvZ : '—'}</b><span>{btc.valuation?.status === 'calculated' ? `${btc.valuation.band} · ${btc.valuation.percentile}th pct` : btc.valuation?.reason}</span></div>
-              <div className="btc-cycle-cell"><small>STH realized price</small><b>{btc.shortTermHolder?.status === 'calculated' ? `$${btc.shortTermHolder.sthRealizedPrice.toLocaleString()}` : '—'}</b><span>{btc.shortTermHolder?.status === 'calculated' ? `${btc.shortTermHolder.premiumPercent > 0 ? '+' : ''}${btc.shortTermHolder.premiumPercent}% · ${btc.shortTermHolder.state}` : btc.shortTermHolder?.reason}</span></div>
-              <div className="btc-cycle-cell"><small>Funding (agg.)</small><b>{btc.leverage?.status === 'calculated' ? `${btc.leverage.annualizedPercent}% APR` : '—'}</b><span>{btc.leverage?.status === 'calculated' ? `${btc.leverage.percentile}th pct · ${btc.leverage.note}` : btc.leverage?.reason}</span></div>
-              <div className="btc-cycle-cell"><small>OI vs price (7d)</small><b>{btc.positioning?.status === 'calculated' ? btc.positioning.quadrant : '—'}</b><span>{btc.positioning?.status === 'calculated' ? `OI ${btc.positioning.oiChange7d > 0 ? '+' : ''}${btc.positioning.oiChange7d.toFixed(1)}% vs price ${btc.positioning.priceChange7d > 0 ? '+' : ''}${btc.positioning.priceChange7d.toFixed(1)}%` : btc.positioning?.reason}</span></div>
-              <div className="btc-cycle-cell"><small>Stablecoin supply</small><b>{btc.stablecoins?.status === 'calculated' ? `$${btc.stablecoins.supplyUsdBillions}B` : '—'}</b><span>{btc.stablecoins?.status === 'calculated' ? `${btc.stablecoins.change30dUsdBillions > 0 ? '+' : ''}${btc.stablecoins.change30dUsdBillions}B 30d (${btc.stablecoins.state})` : btc.stablecoins?.reason}</span></div>
-              <div className="btc-cycle-cell"><small>Spot ETF flows</small><b>—</b><span>{btc.etfFlows?.reason}</span></div>
-            </div>
-            <p className="model-footnote">{btc.methodology}</p>
-          </> : <div className="calculation-empty">Bitcoin cycle legs publish as their sources respond; ETF flows require a licensed feed.</div>}
-        </article>;
-      })()}
     </section> : <section className="fx-detail-grid">
-      <article className={`fx-outlook-panel panel ${calculatedCurrencies.length ? '' : 'preview-section'}`}><div className="panel-title"><div><p className="section-kicker">20-SESSION RELATIVE-VALUE OUTLOOK · CALCULATED</p><h3>Currency momentum versus the dollar</h3></div><span className="data-pill">{calculatedCurrencies.length ? `${calculatedCurrencies.length} of ${currencyMomentum.length} calculated` : 'Awaiting rates'}</span></div><div className="fx-outlook-head"><span>Currency</span><span>Bias</span><span>Score</span><span>Dominant driver</span></div>{currencyMomentum.map((row) => <div className="fx-outlook-row" key={row.currency}><b>{row.currency}</b><span className={row.bias === 'USD weak' ? 'positive' : row.bias === 'USD strong' ? 'negative' : 'neutral'}>{row.bias}</span><strong>{row.score ?? '—'}</strong><small>{Number.isFinite(row.change) ? `${row.change > 0 ? '+' : ''}${row.change.toFixed(2)}% 20-session` : row.driver}</small></div>)}<p className="model-footnote">Six currencies come from the calculated FX workspace (Yahoo crosses oriented for currency strength, technical-v1 scores, CFTC COT percentiles); CNH derives from stored FRED H.10 rates. Per-USD quotes are inverted so positive change means currency strength.</p></article>
       <article className="fx-predictor-panel panel"><div className="panel-title"><div><p className="section-kicker">USD STRENGTH ENGINE · {usdStrength?.status?.toUpperCase() ?? 'UNAVAILABLE'}</p><h3>Connected FRED driver stack</h3></div><span className="data-pill">{usdStrength ? `${usdStrength.score}/100` : 'Unavailable'}</span></div>{(usdStrength?.drivers ?? []).map((driver) => <div className="fx-predictor-row" key={driver.key}><div><b>{driver.name}</b><small>{driver.source}{Number.isFinite(driver.change) ? ` · change ${driver.change >= 0 ? '+' : ''}${driver.change.toFixed(2)}` : ''}</small></div><span className={scoreTone(driver.score)}>{driver.score ?? '—'}</span></div>)}{!usdStrength && <div className="calculation-empty">Broad-dollar history is required before this model can publish.</div>}<div className="dollar-smile"><b>Dollar Smile <span>{usdStrength?.dollarSmile ?? 'Unavailable'}</span></b><p>{usdStrength?.proxy ?? 'FRED broad-dollar and macro inputs are not available.'}</p><div><span>Global stress</span><i></i><span>Real-yield support</span></div></div></article>
-      <article className={`fx-positioning-panel panel ${fxWorkspace?.pairs?.some((pair) => pair.cot) || fxWorkspace?.usdCot ? '' : 'preview-section'}`}><div className="panel-title"><div><p className="section-kicker">FX POSITIONING · CALCULATED</p><h3>CFTC net speculative exposure</h3></div><span className="data-pill">3Y percentile</span></div>{fxWorkspace?.usdCot && <div className="fx-position-row" key="usd"><div><b>US Dollar Index</b><small>{fxWorkspace.usdCot.stance}{Number.isFinite(fxWorkspace.usdCot.weeklyChange) ? ` · weekly ${fxWorkspace.usdCot.weeklyChange >= 0 ? '+' : ''}${fxWorkspace.usdCot.weeklyChange.toLocaleString()}` : ''} · {fxWorkspace.usdCot.asOf} · ICE</small></div><i><b style={{ width: `${Math.min(fxWorkspace.usdCot.percentile ?? 0, 100)}%` }}></b></i><strong>{Number.isFinite(fxWorkspace.usdCot.netNoncomm) ? `${Math.round(fxWorkspace.usdCot.netNoncomm / 1000)}k` : '—'}</strong><span>{fxWorkspace.usdCot.crowd}</span></div>}{(fxWorkspace?.pairs ?? []).filter((pair) => pair.cot).map((pair) => <div className="fx-position-row" key={pair.key}><div><b>{pair.name}</b><small>{pair.cot.stance}{Number.isFinite(pair.cot.weeklyChange) ? ` · weekly ${pair.cot.weeklyChange >= 0 ? '+' : ''}${pair.cot.weeklyChange.toLocaleString()}` : ''} · {pair.cot.asOf}</small></div><i><b style={{ width: `${Math.min(pair.cot.percentile ?? 0, 100)}%` }}></b></i><strong>{Number.isFinite(pair.cot.netNoncomm) ? `${Math.round(pair.cot.netNoncomm / 1000)}k` : '—'}</strong><span>{pair.cot.crowd}</span></div>)}{!(fxWorkspace?.pairs ?? []).some((pair) => pair.cot) && !fxWorkspace?.usdCot && <div className="calculation-empty">CFTC currency contracts are required before positioning can publish.</div>}<p className="model-footnote">{fxWorkspace?.methodology ?? 'Awaiting FX workspace.'}</p></article>
       <article className="fx-scenarios-panel panel preview-section"><p className="section-kicker">USD SCENARIO MAP</p><h3>Three paths, one framework.</h3><div><span>Global stress</span><b>USD, CHF, JPY bid</b></div><div><span>Strong U.S. growth</span><b>USD carry strengthens</b></div><div><span>Weak global growth</span><b>USD defensive premium</b></div><p>Central-bank stance, real rates, and funding stress determine the path weighting. Scenario probabilities remain a qualitative framework until a policy-rules feed is connected.</p></article>
-      <article className={`fx-commodity-panel panel ${(fxWorkspace?.links ?? []).length ? '' : 'preview-section'}`}><div className="panel-title"><div><p className="section-kicker">FX COMMODITY LINKS · CALCULATED</p><h3>60-day change correlations</h3></div><span className="data-pill">{fxWorkspace?.riskRegime ?? '—'}</span></div><div className="fx-commodity-head"><span>FX</span><span>Linked market</span><span>r</span><span>State</span><span>Momentum</span></div>{(fxWorkspace?.links ?? []).map((link) => <div className="fx-commodity-row" key={`${link.currency}-${link.market}`}><b>{link.currency}</b><span>{link.market}</span><strong>{Number.isFinite(link.correlation60d) ? `${link.correlation60d > 0 ? '+' : ''}${link.correlation60d}` : '—'}</strong><i className={link.state === 'Aligned' ? 'positive' : link.state === 'Inverse' ? 'caution' : 'neutral'}>{link.state}</i><small>{Number.isFinite(link.currencyMomentum20d) && Number.isFinite(link.marketMomentum20d) ? `${link.currencyMomentum20d > 0 ? '+' : ''}${link.currencyMomentum20d}% / ${link.marketMomentum20d > 0 ? '+' : ''}${link.marketMomentum20d}%` : '—'}</small></div>)}{!(fxWorkspace?.links ?? []).length && <div className="calculation-empty">Currency and commodity histories are required before links can publish.</div>}</article>
-      <article className={`fx-rotation-panel panel ${(fxWorkspace?.rotationSignals ?? []).some((signal) => signal.status !== 'Unavailable') ? '' : 'preview-section'}`}><p className="section-kicker">FX ROTATION SIGNALS · CALCULATED</p><h3>20-session momentum handoffs {fxWorkspace?.riskRegime ? `· ${fxWorkspace.riskRegime}` : ''}</h3>{(fxWorkspace?.rotationSignals ?? []).map((signal) => <div className="fx-rotation-row" key={signal.signal}><div><b>{signal.signal}</b><small>{signal.detail}{Number.isFinite(signal.left) && Number.isFinite(signal.right) ? ` · ${signal.left > 0 ? '+' : ''}${signal.left}% vs ${signal.right > 0 ? '+' : ''}${signal.right}%` : ''}</small></div><span className={signal.status === 'Confirmed' ? fxWorkspace?.riskRegime === 'Risk-off' ? 'riskoff' : 'riskon' : signal.status === 'Diverged' ? 'neutral' : 'neutral'}>{signal.status}</span></div>)}<p>Confirmation compares 20-session momenta by sign; divergences flag potential rotations in risk appetite. Lead/lag timing remains unavailable without intraday histories.</p></article>
     </section>}
 
     <section className="macro-bottom-grid">
@@ -893,6 +827,114 @@ function MacroDashboard({ data }) {
     <p className="independence-note">TradeGate is an independent market research platform and is not affiliated with Tradegate AG.</p>
     {liquidityChartOpen && <LiquidityChartDialog history={liquidityModel?.history ?? []} title="Calculated net US liquidity" description="Move across the chart to inspect a date. Click or tap to pin the observation for comparison." onClose={() => setLiquidityChartOpen(false)} />}
     {globalChartOpen && <LiquidityChartDialog history={globalLiquidity?.history ?? []} title="Calculated global central-bank liquidity" description="US net liquidity plus ECB and BoJ balance sheets in USD. Move across the chart to inspect a date; click to pin." label="global central-bank liquidity" onClose={() => setGlobalChartOpen(false)} />}
+  </div>;
+}
+
+function ForexDashboard({ data }) {
+  const fxWorkspace = data.fx;
+  const fredCurrencyRows = [
+    { key: 'eurUsd', currency: 'EUR', name: 'Euro', driver: 'FRED H.10 DEXUSEU' },
+    { key: 'yenPerUsd', currency: 'JPY', name: 'Yen', driver: 'FRED H.10 DEXJPUS' },
+    { key: 'yuanPerUsd', currency: 'CNH', name: 'Yuan', driver: 'PBoC liquidity and fixings' },
+  ].map(({ key, currency, name, driver }) => {
+    const values = (data.liquidity?.series?.find((series) => series.key === key)?.history ?? []).map((point) => point.value).filter(Number.isFinite);
+    const latest = values.at(-1);
+    const past = values.at(-21);
+    const rateChange = Number.isFinite(latest) && Number.isFinite(past) && past ? ((latest / past) - 1) * 100 : null;
+    const strengthChange = rateChange === null ? null : key === 'eurUsd' ? rateChange : -rateChange;
+    return {
+      currency,
+      name,
+      change: strengthChange,
+      bias: strengthChange === null ? 'Unavailable' : strengthChange > 0.5 ? 'USD weak' : strengthChange < -0.5 ? 'USD strong' : 'Range',
+      score: strengthChange === null ? null : Math.round(Math.max(0, Math.min(100, 50 + (strengthChange * 8)))),
+      driver,
+    };
+  });
+  const fxCurrencyRows = (fxWorkspace?.pairs ?? []).map((pair) => ({
+    currency: pair.key.toUpperCase(),
+    name: pair.name,
+    change: pair.momentum20d,
+    bias: pair.momentum20d === null || pair.momentum20d === undefined ? 'Unavailable' : pair.momentum20d > 0.5 ? 'USD weak' : pair.momentum20d < -0.5 ? 'USD strong' : 'Range',
+    score: pair.score ?? null,
+    driver: pair.cot ? `COT ${pair.cot.percentile}th pct · ${pair.cot.crowd}` : 'CFTC pending',
+  }));
+  const currencyMomentum = [
+    ...fxCurrencyRows,
+    ...fredCurrencyRows.filter((row) => !fxCurrencyRows.some((fxRow) => fxRow.currency === row.currency)),
+  ];
+  const calculatedCurrencies = currencyMomentum.filter((row) => row.score !== null);
+
+  return <div className="forex-dashboard">
+    <section className="macro-intro">
+      <div><p className="eyebrow">FOREX RESEARCH SYSTEM</p><h1>Currencies trade the dollar cycle.</h1><p className="intro">Momentum, speculative positioning, and cross-market links for the major currencies versus the dollar.</p></div>
+      <div className="model-tabs"><button className="active">Live workspace</button></div>
+    </section>
+    <DataDisclosure data={data} message="Currency momentum, CFTC positioning, commodity links, and rotation signals are versioned calculations from Yahoo crosses, CFTC COT futures data, and stored FRED H.10 rates." />
+    <section className="macro-section-heading"><div><p className="section-kicker">POSITIONING AND MOMENTUM</p><h2>Where currencies stand against the dollar</h2></div><span className="data-pill">20-session momentum</span></section>
+    <section className="forex-grid">
+      <article className={`fx-outlook-panel panel ${calculatedCurrencies.length ? '' : 'preview-section'}`}><div className="panel-title"><div><p className="section-kicker">20-SESSION RELATIVE-VALUE OUTLOOK · CALCULATED</p><h3>Currency momentum versus the dollar</h3></div><span className="data-pill">{calculatedCurrencies.length ? `${calculatedCurrencies.length} of ${currencyMomentum.length} calculated` : 'Awaiting rates'}</span></div><div className="fx-outlook-head"><span>Currency</span><span>Bias</span><span>Score</span><span>Dominant driver</span></div>{currencyMomentum.map((row) => <div className="fx-outlook-row" key={row.currency}><b>{row.currency}</b><span className={row.bias === 'USD weak' ? 'positive' : row.bias === 'USD strong' ? 'negative' : 'neutral'}>{row.bias}</span><strong>{row.score ?? '—'}</strong><small>{Number.isFinite(row.change) ? `${row.change > 0 ? '+' : ''}${row.change.toFixed(2)}% 20-session` : row.driver}</small></div>)}<p className="model-footnote">Six currencies come from the calculated FX workspace (Yahoo crosses oriented for currency strength, technical-v1 scores, CFTC COT percentiles); CNH derives from stored FRED H.10 rates. Per-USD quotes are inverted so positive change means currency strength.</p></article>
+      <article className={`fx-positioning-panel panel ${fxWorkspace?.pairs?.some((pair) => pair.cot) || fxWorkspace?.usdCot ? '' : 'preview-section'}`}><div className="panel-title"><div><p className="section-kicker">FX POSITIONING · CALCULATED</p><h3>CFTC net speculative exposure</h3></div><span className="data-pill">3Y percentile</span></div>{fxWorkspace?.usdCot && <div className="fx-position-row" key="usd"><div><b>US Dollar Index</b><small>{fxWorkspace.usdCot.stance}{Number.isFinite(fxWorkspace.usdCot.weeklyChange) ? ` · weekly ${fxWorkspace.usdCot.weeklyChange >= 0 ? '+' : ''}${fxWorkspace.usdCot.weeklyChange.toLocaleString()}` : ''} · {fxWorkspace.usdCot.asOf} · ICE</small></div><i><b style={{ width: `${Math.min(fxWorkspace.usdCot.percentile ?? 0, 100)}%` }}></b></i><strong>{Number.isFinite(fxWorkspace.usdCot.netNoncomm) ? `${Math.round(fxWorkspace.usdCot.netNoncomm / 1000)}k` : '—'}</strong><span>{fxWorkspace.usdCot.crowd}</span></div>}{(fxWorkspace?.pairs ?? []).filter((pair) => pair.cot).map((pair) => <div className="fx-position-row" key={pair.key}><div><b>{pair.name}</b><small>{pair.cot.stance}{Number.isFinite(pair.cot.weeklyChange) ? ` · weekly ${pair.cot.weeklyChange >= 0 ? '+' : ''}${pair.cot.weeklyChange.toLocaleString()}` : ''} · {pair.cot.asOf}</small></div><i><b style={{ width: `${Math.min(pair.cot.percentile ?? 0, 100)}%` }}></b></i><strong>{Number.isFinite(pair.cot.netNoncomm) ? `${Math.round(pair.cot.netNoncomm / 1000)}k` : '—'}</strong><span>{pair.cot.crowd}</span></div>)}{!(fxWorkspace?.pairs ?? []).some((pair) => pair.cot) && !fxWorkspace?.usdCot && <div className="calculation-empty">CFTC currency contracts are required before positioning can publish.</div>}<p className="model-footnote">{fxWorkspace?.methodology ?? 'Awaiting FX workspace.'}</p></article>
+      <article className={`fx-commodity-panel panel ${(fxWorkspace?.links ?? []).length ? '' : 'preview-section'}`}><div className="panel-title"><div><p className="section-kicker">FX COMMODITY LINKS · CALCULATED</p><h3>60-day change correlations</h3></div><span className="data-pill">{fxWorkspace?.riskRegime ?? '—'}</span></div><div className="fx-commodity-head"><span>FX</span><span>Linked market</span><span>r</span><span>State</span><span>Momentum</span></div>{(fxWorkspace?.links ?? []).map((link) => <div className="fx-commodity-row" key={`${link.currency}-${link.market}`}><b>{link.currency}</b><span>{link.market}</span><strong>{Number.isFinite(link.correlation60d) ? `${link.correlation60d > 0 ? '+' : ''}${link.correlation60d}` : '—'}</strong><i className={link.state === 'Aligned' ? 'positive' : link.state === 'Inverse' ? 'caution' : 'neutral'}>{link.state}</i><small>{Number.isFinite(link.currencyMomentum20d) && Number.isFinite(link.marketMomentum20d) ? `${link.currencyMomentum20d > 0 ? '+' : ''}${link.currencyMomentum20d}% / ${link.marketMomentum20d > 0 ? '+' : ''}${link.marketMomentum20d}%` : '—'}</small></div>)}{!(fxWorkspace?.links ?? []).length && <div className="calculation-empty">Currency and commodity histories are required before links can publish.</div>}</article>
+      <article className={`fx-rotation-panel panel ${(fxWorkspace?.rotationSignals ?? []).some((signal) => signal.status !== 'Unavailable') ? '' : 'preview-section'}`}><p className="section-kicker">FX ROTATION SIGNALS · CALCULATED</p><h3>20-session momentum handoffs {fxWorkspace?.riskRegime ? `· ${fxWorkspace.riskRegime}` : ''}</h3>{(fxWorkspace?.rotationSignals ?? []).map((signal) => <div className="fx-rotation-row" key={signal.signal}><div><b>{signal.signal}</b><small>{signal.detail}{Number.isFinite(signal.left) && Number.isFinite(signal.right) ? ` · ${signal.left > 0 ? '+' : ''}${signal.left}% vs ${signal.right > 0 ? '+' : ''}${signal.right}%` : ''}</small></div><span className={signal.status === 'Confirmed' ? fxWorkspace?.riskRegime === 'Risk-off' ? 'riskoff' : 'riskon' : signal.status === 'Diverged' ? 'neutral' : 'neutral'}>{signal.status}</span></div>)}<p>Confirmation compares 20-session momenta by sign; divergences flag potential rotations in risk appetite. Lead/lag timing remains unavailable without intraday histories.</p></article>
+    </section>
+    <p className="independence-note">TradeGate is an independent market research platform and is not affiliated with Tradegate AG.</p>
+  </div>;
+}
+
+function CryptoDashboard({ data }) {
+  const [correlationWindow, setCorrelationWindow] = React.useState('60D');
+  const dxyBtcModel = data.dxyBtc?.model;
+  const dxyBtcCorrelationValue = dxyBtcModel?.correlations?.[correlationWindow];
+  const dxyHistory = normalizeSparkline(dxyBtcModel?.history?.left ?? []);
+  const bitcoinHistory = normalizeSparkline(dxyBtcModel?.history?.right ?? []);
+  const btc = data.bitcoin;
+  const hasBtc = Boolean(btc?.calculatedCount);
+  const usdStrength = data.liquidity?.usdStrength;
+  const liquidityModel = data.liquidity?.model;
+  const usdMomentum = usdStrength?.indicators?.momentum20d;
+  const corr60 = dxyBtcModel?.correlations?.['60D'];
+  const votes = [];
+  if (Number.isFinite(usdMomentum)) votes.push(usdMomentum < -0.3 ? 1 : usdMomentum > 0.3 ? -1 : 0);
+  if (Number.isFinite(usdStrength?.score)) votes.push(usdStrength.score < 48 ? 1 : usdStrength.score > 55 ? -1 : 0);
+  const tailwindScore = votes.reduce((total, vote) => total + vote, 0);
+  const hasDollarInputs = votes.length > 0 || Number.isFinite(corr60);
+  const tailwindLabel = !hasDollarInputs ? 'Awaiting dollar inputs' : tailwindScore >= 1 ? 'Dollar tailwind' : tailwindScore <= -1 ? 'Dollar headwind' : 'Neutral dollar';
+
+  return <div className="crypto-dashboard">
+    <section className="macro-intro">
+      <div><p className="eyebrow">CRYPTO RESEARCH SYSTEM</p><h1>Bitcoin trades liquidity, not headlines.</h1><p className="intro">Cycle valuation, leverage crowding, and the dollar transmission that sets the tailwind or headwind.</p></div>
+      <div className="model-tabs"><button className="active">Cycle &amp; crowding</button></div>
+    </section>
+    <DataDisclosure data={data} message="Trend, MVRV-Z, short-term-holder cost basis, funding, open interest, stablecoins, and the DXY/BTC relationship are versioned calculations. Spot ETF flows remain unavailable without a licensed source." />
+    <section className="macro-section-heading"><div><p className="section-kicker">DOLLAR TRANSMISSION · CALCULATED</p><h2>{tailwindLabel} for bitcoin</h2></div><span className="data-pill">Favorability read</span></section>
+    <section className="crypto-grid">
+      <article className={`crypto-tailwind-panel panel ${hasDollarInputs ? '' : 'preview-section'}`}><div className="panel-title"><div><p className="section-kicker">IS THE DOLLAR A TAILWIND?</p><h3>{tailwindLabel}</h3></div><span className="data-pill">{hasDollarInputs ? `${tailwindScore > 0 ? '+' : ''}${tailwindScore} signal` : 'Unavailable'}</span></div>
+        <div className="btc-cycle-grid">
+          <div className="btc-cycle-cell"><small>Broad-dollar momentum</small><b>{formatPercent(usdMomentum)}</b><span>20-session change · {usdStrength?.regime ?? 'regime unavailable'}</span></div>
+          <div className="btc-cycle-cell"><small>Dollar strength score</small><b>{usdStrength?.score ?? '—'}</b><span>{usdStrength ? `${usdStrength.coverage}% coverage · a weaker dollar favors BTC` : 'Awaiting FRED broad-dollar history'}</span></div>
+          <div className="btc-cycle-cell"><small>DXY ↔ BTC link</small><b>{Number.isFinite(corr60) ? corr60.toFixed(2) : '—'}</b><span>{dxyBtcModel ? `${dxyBtcModel.regime} · an inverse link means a falling dollar lifts BTC` : 'Awaiting synchronized histories'}</span></div>
+          <div className="btc-cycle-cell"><small>Liquidity impulse</small><b>{liquidityModel?.momentum ?? '—'}</b><span>{liquidityModel ? `Net US liquidity regime: ${liquidityModel.regime}` : 'Awaiting FRED'}</span></div>
+        </div>
+        <p className="model-footnote">Favorability combines broad-dollar direction and level with the measured DXY/BTC correlation: a falling, weak dollar against an inverse link reads as a tailwind; a rising, strong dollar reads as a headwind.</p>
+      </article>
+      <article className={`dxy-btc-panel panel ${hasBtc ? '' : 'preview-section'}`}><div className="panel-title"><div><p className="section-kicker">BITCOIN CYCLE &amp; CROWDING · CALCULATED</p><h3>{btc?.trend?.status === 'calculated' ? `Spot $${Math.round(btc.trend.price).toLocaleString()} · ${btc.trend.pctVsSma200w > 0 ? '+' : ''}${btc.trend.pctVsSma200w}% vs 200W` : 'Cycle dashboard'}</h3></div><span className="data-pill">{btc ? `${btc.calculatedCount}/${btc.totalLegs} legs` : 'Unavailable'}</span></div>
+        {hasBtc ? <>
+          <div className="btc-cycle-grid">
+            <div className="btc-cycle-cell"><small>Trend regime</small><b>{btc.trend?.status === 'calculated' ? `${btc.trend.pctVsSma200d > 0 ? '+' : ''}${btc.trend.pctVsSma200d}% / ${btc.trend.pctVsSma200w > 0 ? '+' : ''}${btc.trend.pctVsSma200w}%` : '—'}</b><span>vs 200D / 200W SMA</span></div>
+            <div className="btc-cycle-cell"><small>MVRV Z-Score</small><b>{btc.valuation?.status === 'calculated' ? btc.valuation.mvrvZ : '—'}</b><span>{btc.valuation?.status === 'calculated' ? `${btc.valuation.band} · ${btc.valuation.percentile}th pct` : btc.valuation?.reason}</span></div>
+            <div className="btc-cycle-cell"><small>STH realized price</small><b>{btc.shortTermHolder?.status === 'calculated' ? `$${btc.shortTermHolder.sthRealizedPrice.toLocaleString()}` : '—'}</b><span>{btc.shortTermHolder?.status === 'calculated' ? `${btc.shortTermHolder.premiumPercent > 0 ? '+' : ''}${btc.shortTermHolder.premiumPercent}% · ${btc.shortTermHolder.state}` : btc.shortTermHolder?.reason}</span></div>
+            <div className="btc-cycle-cell"><small>Funding (agg.)</small><b>{btc.leverage?.status === 'calculated' ? `${btc.leverage.annualizedPercent}% APR` : '—'}</b><span>{btc.leverage?.status === 'calculated' ? `${btc.leverage.percentile}th pct · ${btc.leverage.note}` : btc.leverage?.reason}</span></div>
+            <div className="btc-cycle-cell"><small>OI vs price (7d)</small><b>{btc.positioning?.status === 'calculated' ? btc.positioning.quadrant : '—'}</b><span>{btc.positioning?.status === 'calculated' ? `OI ${btc.positioning.oiChange7d > 0 ? '+' : ''}${btc.positioning.oiChange7d.toFixed(1)}% vs price ${btc.positioning.priceChange7d > 0 ? '+' : ''}${btc.positioning.priceChange7d.toFixed(1)}%` : btc.positioning?.reason}</span></div>
+            <div className="btc-cycle-cell"><small>Stablecoin supply</small><b>{btc.stablecoins?.status === 'calculated' ? `$${btc.stablecoins.supplyUsdBillions}B` : '—'}</b><span>{btc.stablecoins?.status === 'calculated' ? `${btc.stablecoins.change30dUsdBillions > 0 ? '+' : ''}${btc.stablecoins.change30dUsdBillions}B 30d (${btc.stablecoins.state})` : btc.stablecoins?.reason}</span></div>
+            <div className="btc-cycle-cell"><small>Spot ETF flows</small><b>—</b><span>{btc.etfFlows?.reason}</span></div>
+          </div>
+          <p className="model-footnote">{btc.methodology}</p>
+        </> : <div className="calculation-empty">Bitcoin cycle legs publish as their sources respond; ETF flows require a licensed feed.</div>}
+      </article>
+      <article className="dxy-btc-panel panel"><div className="panel-title"><div><p className="section-kicker">DXY VS BITCOIN · CALCULATED</p><h3>{dxyBtcModel?.interpretation ?? 'Awaiting synchronized histories'}</h3></div><span className="data-pill">{Number.isFinite(dxyBtcCorrelationValue) ? `${correlationWindow} r ${dxyBtcCorrelationValue.toFixed(2)}` : 'Unavailable'}</span></div><div className="window-buttons dxy-window-buttons">{['20D', '60D', '1Y'].map((item) => <button className={correlationWindow === item ? 'selected' : ''} key={item} onClick={() => setCorrelationWindow(item)}>{item}</button>)}</div><div className="dxy-btc-chart"><div><span><i className="dxy-key"></i>{data.dxyBtc?.source?.left?.startsWith('DXY') ? 'DXY' : 'Broad dollar proxy'}</span>{dxyHistory.length ? <Sparkline color="#d3a454" values={dxyHistory} /> : <div className="model-chart-empty">No dollar history</div>}</div><div><span><i className="btc-key"></i>Bitcoin</span>{bitcoinHistory.length ? <Sparkline color="#70c26b" values={bitcoinHistory} /> : <div className="model-chart-empty">No BTC history</div>}</div></div><div className="dxy-btc-diagnostics"><span>Correlation regime <b>{dxyBtcModel?.regime ?? 'Unavailable'}</b></span><span>Momentum relationship <b>{dxyBtcModel?.divergence ?? 'Unavailable'}</b></span><span>Breakout read <b>{dxyBtcModel?.interpretation ?? 'Unavailable'}</b></span></div><p>{dxyBtcModel ? `${dxyBtcModel.version} · ${dxyBtcModel.observations} aligned daily observations · ${data.dxyBtc.source.left} and ${data.dxyBtc.source.right}` : 'Configure Twelve Data or FRED and retain Bitcoin history to calculate this relationship.'}</p></article>
+    </section>
+    <p className="independence-note">TradeGate is an independent market research platform and is not affiliated with Tradegate AG.</p>
   </div>;
 }
 

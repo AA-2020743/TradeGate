@@ -818,13 +818,33 @@ export function alignedRatioSeries(left, right) {
 
 export async function getEquityRiskAppetite() {
   return withCache('analytics:equity-risk', 6 * 3_600_000, async () => {
-    const [constituentsResult, fredResult] = await Promise.allSettled([
+    const [constituentsResult, fredResult, vixResult] = await Promise.allSettled([
       getSpxConstituents(),
       Promise.all([
         getFredCsvSeries({ id: 'BAMLH0A0HYM2', key: 'highYieldSpread', name: 'US high-yield OAS' }),
         getFredCsvSeries({ id: 'DFII10', key: 'realYield10y', name: '10-year real yield' }),
       ]),
+      getSparkBatch(['^VIX', '^VIX9D', '^VIX3M']),
     ]);
+
+    let vixTermStructure = { status: 'unavailable', reason: `Yahoo VIX index histories are required: ${vixResult.reason?.message ?? vixResult.reason}` };
+    if (vixResult.status === 'fulfilled') {
+      const vix = vixResult.value.get('^VIX');
+      const vix9d = vixResult.value.get('^VIX9D');
+      const vix3m = vixResult.value.get('^VIX3M');
+      const ratios = alignedRatioSeries(vix ?? [], vix3m ?? []);
+      const ratio = ratios.at(-1) ?? null;
+      vixTermStructure = Number.isFinite(ratio) ? {
+        status: 'calculated',
+        vix: Math.round(vix.at(-1) * 100) / 100,
+        vix9d: vix9d ? Math.round(vix9d.at(-1) * 100) / 100 : null,
+        vix3m: Math.round(vix3m.at(-1) * 100) / 100,
+        vixVix3m: Math.round(ratio * 100) / 100,
+        percentile: percentileOf(ratios, ratio),
+        state: ratio >= 1 ? 'Backwardation — stress pricing' : ratio >= 0.92 ? 'Flat curve' : 'Contango — calm regime',
+        observations: ratios.length,
+      } : { status: 'unavailable', reason: 'VIX index histories were incomplete.' };
+    }
 
     let spxBreadth = { status: 'unavailable', reason: `Constituent list unavailable: ${constituentsResult.reason?.message ?? constituentsResult.reason}` };
     let equalWeight = { status: 'unavailable', reason: 'RSP/SPY histories are required.' };
@@ -953,7 +973,7 @@ export async function getEquityRiskAppetite() {
       creditStress = { status: 'unavailable', reason: `FRED CSV unreachable: ${fredResult.reason?.message ?? fredResult.reason}` };
     }
 
-    const legs = [spxBreadth, equalWeight, creditStress, riskPremium, sectorRotation];
+    const legs = [spxBreadth, equalWeight, creditStress, riskPremium, sectorRotation, vixTermStructure];
     const calculatedCount = legs.filter((leg) => leg.status === 'calculated').length;
     return {
       asOf: new Date().toISOString(),
@@ -966,7 +986,8 @@ export async function getEquityRiskAppetite() {
       creditStress,
       riskPremium,
       sectorRotation,
-      methodology: 'Breadth computes 200-day and 50-day simple averages per constituent from Wikipedia\'s S&P 500 list and Yahoo batch spark closes. Equal-weight participation uses the RSP/SPY ratio 50-session slope. Credit stress reads FRED BAMLH0A0HYM2 with a 20-observation change. The risk-premium proxy subtracts the 10-year TIPS real yield from the trailing earnings yield on multpl.com. Sector rotation ranks 11 SPDRs by 3-month relative strength versus SPY.',
+      vixTermStructure,
+      methodology: 'Breadth computes 200-day and 50-day simple averages per constituent from Wikipedia\'s S&P 500 list and Yahoo batch spark closes. Equal-weight participation uses the RSP/SPY ratio 50-session slope. Credit stress reads FRED BAMLH0A0HYM2 with a 20-observation change. The risk-premium proxy subtracts the 10-year TIPS real yield from the trailing earnings yield on multpl.com. Sector rotation ranks 11 SPDRs by 3-month relative strength versus SPY. The VIX term structure divides spot VIX by VIX3M from Yahoo index histories.',
     };
   });
 }
@@ -1096,6 +1117,28 @@ export async function getMetalsWorkspace() {
     const minerResults = await Promise.allSettled(METALS_MINERS.map(async (entry) => ({ entry, summary: summarizeMetalHistory(entry.name, await fetchSeries(entry.symbol)) })));
     const assets = spotResults.flatMap((result) => result.status === 'fulfilled' && result.value.summary ? [{ symbol: result.value.entry.symbol, ...result.value.summary }] : []);
     const miners = minerResults.flatMap((result) => result.status === 'fulfilled' && result.value.summary ? [{ symbol: result.value.entry.symbol, ...result.value.summary }] : []);
+
+    const ratioResults = await Promise.allSettled([getYahooHistory('GC=F'), getYahooHistory('SI=F'), getYahooHistory('HG=F')]);
+    const buildRatioLeg = (goldPoints, otherPoints, format, readFor) => {
+      if (!Array.isArray(goldPoints) || !Array.isArray(otherPoints)) return { status: 'unavailable', reason: 'Futures history is required.' };
+      const ratios = alignedRatioSeries(goldPoints.map((point) => point.value), otherPoints.map((point) => point.value));
+      const ratio = ratios.at(-1);
+      if (!Number.isFinite(ratio)) return { status: 'unavailable', reason: 'Ratio series was incomplete.' };
+      return {
+        status: 'calculated',
+        ratio: Math.round(ratio * format) / format,
+        percentile: percentileOf(ratios, ratio),
+        change20d: ratios.length > 25 ? Math.round(((ratio / ratios.at(-21)) - 1) * 10000) / 100 : null,
+        observations: ratios.length,
+        ...readFor(ratio, ratios.length > 30 ? percentileOf(ratios, ratio) : null),
+      };
+    };
+    const goldSilverRatio = buildRatioLeg(ratioResults[0].status === 'fulfilled' ? ratioResults[0].value : null, ratioResults[1].status === 'fulfilled' ? ratioResults[1].value : null, 10, (ratio, percentile) => ({
+      read: percentile === null ? 'Building history' : percentile >= 80 ? 'Gold favored — monetary bid' : percentile <= 20 ? 'Silver favored — industrial bid' : 'Balanced',
+    }));
+    const goldCopperRatio = buildRatioLeg(ratioResults[0].status === 'fulfilled' ? ratioResults[0].value : null, ratioResults[2].status === 'fulfilled' ? ratioResults[2].value : null, 1000, (value, percentile) => ({
+      read: percentile === null ? 'Building history' : percentile >= 60 ? 'Risk-off tilt — gold outpacing copper' : percentile <= 40 ? 'Risk-on tilt — copper keeping pace' : 'Balanced',
+    }));
     return {
       asOf: new Date().toISOString(),
       version: 'metals-workspace-v1',
@@ -1106,8 +1149,9 @@ export async function getMetalsWorkspace() {
       miners,
       cot: goldContract ? { percentile: goldContract.percentile, netNoncomm: goldContract.netNoncomm, weeklyChange: goldContract.weeklyChange, crowd: goldContract.crowd, stance: goldContract.stance, asOf: goldContract.asOf } : null,
       cotDetail,
+      ratios: { goldSilver: goldSilverRatio, goldCopper: goldCopperRatio },
       macro: liquidity?.usdStrength && liquidity?.globalLiquidity ? { dollar: { score: liquidity.usdStrength.score, regime: liquidity.usdStrength.regime }, globalLiquidity: { score: liquidity.globalLiquidity.score, regime: liquidity.globalLiquidity.regime } } : null,
-      methodology: 'Spot metals use front CME/COMEX futures (GC, SI, PL, PA) and miners use ETF close histories from Yahoo Finance; scores are technical-v1 with 20-day annualized volatility and 20-session momentum. COT figures reuse the platform gold contract percentile.',
+      methodology: 'Spot metals use front CME/COMEX futures (GC, SI, PL, PA) and miners use ETF close histories from Yahoo Finance; scores are technical-v1 with 20-day annualized volatility and 20-session momentum. COT figures reuse the platform gold contract percentile. Cross-ratios divide aligned GC/SI and GC/HG futures closes, percentile-ranked over the shared one-year window.',
     };
   });
 }
