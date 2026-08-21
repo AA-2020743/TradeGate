@@ -990,6 +990,7 @@ function WatchlistsDashboard({ data }) {
   });
   const [activeList, setActiveList] = React.useState(() => Object.keys(DEFAULT_WATCHLISTS)[0]);
   const [draftSymbol, setDraftSymbol] = React.useState('');
+  const [syncState, setSyncState] = React.useState('idle');
   const serverSyncedRef = React.useRef(false);
   const syncTimerRef = React.useRef(null);
 
@@ -998,7 +999,11 @@ function WatchlistsDashboard({ data }) {
     if (!serverSyncedRef.current) return;
     if (syncTimerRef.current) clearTimeout(syncTimerRef.current);
     syncTimerRef.current = setTimeout(() => {
-      fetch('/api/watchlists', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(lists) }).catch(() => {});
+      setSyncState('syncing');
+      fetch('/api/watchlists', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(lists) })
+        .then((response) => response.json())
+        .then((payload) => setSyncState(payload?.saved ? 'synced' : 'local'))
+        .catch(() => setSyncState('failed'));
     }, 1500);
     return () => clearTimeout(syncTimerRef.current);
   }, [lists]);
@@ -1006,7 +1011,7 @@ function WatchlistsDashboard({ data }) {
   React.useEffect(() => {
     let active = true;
     fetch('/api/watchlists').then((response) => response.json()).then((payload) => {
-      if (!active || payload?.status !== 'calculated') return;
+      if (!active || payload?.status !== 'calculated') { if (active) setSyncState('local'); return; }
       const hasLocal = Boolean(window.localStorage.getItem('tradegate-watchlists'));
       if (!hasLocal && Array.isArray(payload.lists) && payload.lists.length) {
         const adopted = {};
@@ -1017,7 +1022,8 @@ function WatchlistsDashboard({ data }) {
         }
       }
       serverSyncedRef.current = true;
-    }).catch(() => {});
+      setSyncState('synced');
+    }).catch(() => { if (active) setSyncState('local'); });
     return () => { active = false; };
   }, []);
 
@@ -1046,8 +1052,8 @@ function WatchlistsDashboard({ data }) {
 
   return <div className="watchlists-dashboard">
     <section className="macro-intro">
-      <div><p className="eyebrow">WATCHLIST WORKSPACE</p><h1>Your names, calculated.</h1><p className="intro">Live provider histories, technical scores, and regimes for the symbols you track. Lists persist in this browser.</p></div>
-      <div className="model-tabs"><button className="active">Local lists</button></div>
+      <div><p className="eyebrow">WATCHLIST WORKSPACE</p><h1>Your names, calculated.</h1><p className="intro">Live provider histories, technical scores, and regimes for the symbols you track. Lists persist in this browser{syncState === 'synced' ? ' and mirror to the server database.' : '.'}</p></div>
+      <div className="model-tabs">{syncState !== 'idle' && syncState !== 'local' && <span className="watch-sync-pill" data-state={syncState}>{syncState === 'syncing' ? 'SYNCING…' : syncState === 'failed' ? 'LOCAL ONLY · SYNC FAILED' : 'SERVER SYNCED'}</span>}<button className="active">Local lists</button></div>
     </section>
     <DataDisclosure data={data} message="Each row pulls live market history and the technical-v1 snapshot from the server. Nothing is fabricated; unavailable providers show blanks." />
     <section className="screener-controls-row">

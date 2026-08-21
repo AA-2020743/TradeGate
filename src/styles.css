@@ -106,3 +106,4 @@ html[data-theme='dark'] .screener-search { background: #1a221d; border-color: #3
 
 .wire-tone { font-style: normal; font-size: 8px; padding: 1px 5px; border-radius: 3px; margin-left: 5px; }.wire-positive { color: #37733d; background: #eaf4e6; }.wire-negative { color: #9c5649; background: #f7eae6; }html[data-theme='dark'] .wire-positive { background: #223326; color: #add5a6; }html[data-theme='dark'] .wire-negative { background: #3a2a26; color: #dd9c8b; }
 .panel-title-side { display: flex; align-items: center; gap: 8px; }
+.watch-sync-pill { align-self: center; margin-right: 8px; padding: 5px 9px; border-radius: 20px; font: 700 9px 'DM Mono', monospace; letter-spacing: .6px; color: #2a7a3f; background: #e6f4dc; border: 1px solid #cfe8c2; }.watch-sync-pill[data-state='syncing'] { color: #8a6d2f; background: #f4ecd8; border-color: #e4d4ac; }.watch-sync-pill[data-state='failed'] { color: #a35342; background: #f6e4df; border-color: #eccfc7; }
