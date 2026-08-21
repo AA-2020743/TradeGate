@@ -837,23 +837,47 @@ export async function getEquityRiskAppetite() {
 
         let above200 = 0;
         let above50 = 0;
+        let advancing = 0;
+        let newHighs = 0;
+        let newLows = 0;
         let counted = 0;
+        const thrustValues = [];
         for (const symbol of symbols) {
           const closes = closesBySymbol.get(symbol);
           if (!closes || closes.length < 200) continue;
           counted += 1;
-          const last = closes.at(-1);
-          if (last > smaOf(closes, 200)) above200 += 1;
-          if (closes.length >= 50 && last > smaOf(closes, 50)) above50 += 1;
+          const latest = closes.at(-1);
+          if (latest > smaOf(closes, 200)) above200 += 1;
+          if (closes.length >= 50 && latest > smaOf(closes, 50)) above50 += 1;
+          const past20 = closes.at(-21);
+          if (Number.isFinite(past20) && past20 > 0 && ((latest / past20) - 1) > 0) advancing += 1;
+          const window60 = closes.slice(-60);
+          if (latest >= Math.max(...window60) * 0.98) newHighs += 1;
+          if (latest <= Math.min(...window60) * 1.02) newLows += 1;
+          const sma50Past = closes.length >= 70 ? closes.slice(-70, -20).reduce((sum, value) => sum + value, 0) / 50 : null;
+          const sma50Now = smaOf(closes, 50);
+          if (Number.isFinite(sma50Past) && sma50Past > 0 && Number.isFinite(sma50Now)) thrustValues.push(((sma50Now / sma50Past) - 1) * 100);
         }
         if (counted >= symbols.length * 0.8) {
+          const pctAbove200 = Math.round((above200 / counted) * 100);
+          const pctAbove50 = Math.round((above50 / counted) * 100);
+          const participation = (pctAbove50 * 0.6) + (pctAbove200 * 0.4);
+          const thrust20 = thrustValues.length ? Number((thrustValues.reduce((total, value) => total + value, 0) / thrustValues.length).toFixed(2)) : null;
           spxBreadth = {
             status: 'calculated',
+            version: 'spx-constituent-breadth-v1',
+            source: 'S&P 500 constituent participation via Yahoo spark closes',
             universeSize: symbols.length,
             counted,
-            pctAbove200: Math.round((above200 / counted) * 100),
-            pctAbove50: Math.round((above50 / counted) * 100),
-            read: above200 / counted >= 0.6 ? 'Broad participation' : above200 / counted <= 0.4 ? 'Narrow market' : 'Mixed breadth',
+            pctAbove200,
+            pctAbove50,
+            advancersPct: Math.round((advancing / counted) * 100),
+            newHighs,
+            newLows,
+            thrust20,
+            topRisk: Math.round(100 - participation),
+            bottomScore: Math.round(((100 - participation) * 0.7) + (Math.max(thrust20 ?? 0, 0) * 3)),
+            read: pctAbove200 >= 60 ? 'Broad participation' : pctAbove200 <= 40 ? 'Narrow market' : 'Mixed breadth',
           };
         } else {
           spxBreadth = { status: 'unavailable', reason: `Only ${counted} of ${symbols.length} constituents returned usable history.` };

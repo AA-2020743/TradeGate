@@ -10,7 +10,7 @@ import {
   sentimentRequirements,
   subsectorCatalog,
 } from './equityCatalog.js';
-import { getLiquiditySnapshot } from './providers.js';
+import { getEquityRiskAppetite, getLiquiditySnapshot, getMarketHistory, getTechnicalSnapshot } from './providers.js';
 import { isDailyCloseStale } from './freshness.js';
 
 const unavailableBreadth = {
@@ -58,16 +58,25 @@ export async function getEquityDashboard(requestedSymbol = 'SPY') {
   const index = indexCatalog.find((item) => item.symbol === symbol);
   if (!index) throw new Error(`Unsupported equity index proxy: ${symbol}`);
 
-  const [technicalResult, liquidityResult] = await Promise.allSettled([
+  const [technicalResult, liquidityResult, riskAppetiteResult, liveTechnicalResult] = await Promise.allSettled([
     getStoredTechnicalSnapshot(symbol),
     getLiquiditySnapshot(),
+    getEquityRiskAppetite(),
+    getMarketHistory(symbol, '1Y', { preferStored: false }),
   ]);
   const technical = technicalResult.status === 'fulfilled' ? technicalResult.value : null;
   const liquidity = liquidityResult.status === 'fulfilled' ? liquidityResult.value : null;
-  const usableTechnical = technical?.stale ? null : technical?.model;
-  const regime = calculateEquityRegime({ technical: usableTechnical, liquidity: liquidity?.model, breadth: unavailableBreadth });
-  const topRisk = calculateTopRisk({ technical: usableTechnical, breadth: unavailableBreadth, liquidity: liquidity?.model });
-  const bottomSignal = calculateBottomSignal({ technical: usableTechnical, breadth: unavailableBreadth, liquidity: liquidity?.model });
+  const riskAppetite = riskAppetiteResult.status === 'fulfilled' ? riskAppetiteResult.value : null;
+  let usableTechnical = technical?.stale ? null : technical?.model;
+  if (!usableTechnical && liveTechnicalResult.status === 'fulfilled' && liveTechnicalResult.value?.points?.length) {
+    usableTechnical = calculateTechnicalSnapshot(liveTechnicalResult.value.points);
+  }
+  const constituentBreadth = riskAppetite?.spxBreadth?.status === 'calculated'
+    ? { ...riskAppetite.spxBreadth }
+    : unavailableBreadth;
+  const regime = calculateEquityRegime({ technical: usableTechnical, liquidity: liquidity?.model, breadth: constituentBreadth });
+  const topRisk = calculateTopRisk({ technical: usableTechnical, breadth: constituentBreadth, liquidity: liquidity?.model });
+  const bottomSignal = calculateBottomSignal({ technical: usableTechnical, breadth: constituentBreadth, liquidity: liquidity?.model });
 
   return {
     version: 'equity-dashboard-v1',
@@ -77,7 +86,7 @@ export async function getEquityDashboard(requestedSymbol = 'SPY') {
     regime,
     topRisk,
     bottomSignal,
-    breadth: unavailableBreadth,
+    breadth: constituentBreadth.status === 'calculated' ? constituentBreadth : unavailableBreadth,
     sentiment: unavailableDataset('Sentiment', sentimentRequirements),
     positioning: unavailableDataset('Positioning', positioningRequirements),
     flows: unavailableDataset('Flows', ['ETF flows', 'Mutual-fund flows', 'Institutional flows', 'Retail flows', 'Options flows']),

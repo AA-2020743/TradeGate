@@ -227,7 +227,7 @@ The metals COT panel also publishes the disaggregated report (dataset `72hh-3qpy
 
 `equity-risk-v1` publishes S&P 500 breadth (% of constituents above 200-day and 50-day averages from Wikipedia's constituent list plus Yahoo batch spark closes), RSP/SPY equal-weight participation slope, FRED high-yield OAS with a 20-observation change, an equity-risk-premium proxy (trailing earnings yield from multpl.com minus the 10-year TIPS real yield), and 3-month relative strength for all 11 sector SPDRs versus SPY. A CNN Fear & Greed snapshot card sits alongside CFTC positioning on the equities tab.
 
-The home news card aggregates live RSS wires (`news-wire-v1`): Federal Reserve press releases, CNBC top news, and MarketWatch top stories, sorted newest first. The last remaining previews are source-blocked: spot ETF flows (Farside is Cloudflare-blocked), metals ETF holdings/physical premia/producer cost curves, and dealer-gamma options positioning (CBOE is Akamai-blocked).
+The home news card aggregates live RSS wires (`news-wire-v1`): Federal Reserve press releases, CNBC top news, and MarketWatch top stories, sorted newest first. Constituent breadth (`spx-constituent-breadth-v1`) feeds the index-level top-risk and bottom-detection models directly, with the live provider technical snapshot as fallback when stored histories are absent, so those signals publish without a database. The last remaining previews are source-blocked: spot ETF flows (Farside is Cloudflare-blocked), metals ETF holdings/physical premia/producer cost curves, and dealer-gamma options positioning (CBOE is Akamai-blocked).
 
 ## Reliability Rules
 
