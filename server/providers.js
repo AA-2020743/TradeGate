@@ -1,5 +1,6 @@
 import { config } from './config.js';
 import { withCache } from './cache.js';
+import { settle, unwrap } from './settled.js';
 import { buildHeatmapRow, buildLiquidityNarrative, buildWorkspaceNarrative, calculateChangeCorrelations, calculateLeadLag, calculatePositioningModel, calculateCrossMarketRelationship, calculateGlobalLiquidityModel, calculateMacroRegimeModel, calculateRsi, calculateScreenerScores, calculateTechnicalSnapshot, calculateTrendQuality, classifyHeadlineSentiment, calculateUsdStrengthModel, calculateUsLiquidityModel } from './analytics.js';
 import { getStoredFredSeries, getStoredMarketHistory, getStoredMarketSnapshot, getRecentModelOutputs, isDatabaseConfigured, reserveProviderCredits } from './database.js';
 import { getAllEquityHistorySymbols, getCoreEquityHistorySymbols } from './equityCatalog.js';
@@ -1376,7 +1377,9 @@ export async function getTechnicalSnapshot(symbol) {
 
 export async function getDxyBitcoinRelationship() {
   return withCache('analytics:dxy-btc', 15 * 60_000, async () => {
-    const bitcoinPromise = getMarketHistory('BTC', '1Y');
+    // Settled up front: the dollar branch below can throw, and an abandoned
+    // in-flight history would otherwise reject with no handler attached.
+    const bitcoinPromise = settle(getMarketHistory('BTC', '1Y'));
     let dollarPoints = [];
     let dollarSource = null;
 
@@ -1396,7 +1399,7 @@ export async function getDxyBitcoinRelationship() {
       dollarSource = dollarPoints.length ? 'FRED DTWEXBGS broad-dollar proxy' : null;
     }
 
-    const bitcoin = await bitcoinPromise;
+    const bitcoin = unwrap(await bitcoinPromise);
     const model = dollarPoints.length && !bitcoin.stale ? calculateCrossMarketRelationship(dollarPoints, bitcoin.points) : null;
     return {
       source: { left: dollarSource, right: bitcoin.source },

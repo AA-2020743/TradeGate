@@ -436,6 +436,14 @@ const startedDirectly = process.argv[1] !== undefined
   && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url);
 
 if (startedDirectly) {
+  // This platform fans out to a dozen keyless public providers, several of
+  // which the README already documents as intermittently 403ing. A background
+  // rejection that slips past a request handler must be logged and survived,
+  // not answered by terminating every in-flight request on the box.
+  process.on('unhandledRejection', (reason) => {
+    console.error('Unhandled rejection (server continuing):', reason instanceof Error ? reason.stack ?? reason.message : reason);
+  });
+
   const server = app.listen(config.port, config.host, () => {
     console.log(`TradeGate API listening on http://${config.host}:${config.port}`);
   });
