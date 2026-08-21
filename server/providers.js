@@ -74,9 +74,9 @@ function wait(milliseconds) {
   return new Promise((resolve) => setTimeout(resolve, milliseconds));
 }
 
-async function fetchJson(url, attempt = 0, maxRetries = 2) {
+async function fetchJson(url, attempt = 0, maxRetries = 2, extraHeaders = null) {
   const response = await fetch(url, {
-    headers: { Accept: 'application/json', 'User-Agent': 'TradeGateResearch/0.1' },
+    headers: { Accept: 'application/json', 'User-Agent': 'TradeGateResearch/0.1', ...(extraHeaders ?? {}) },
     signal: AbortSignal.timeout(12_000),
   });
 
@@ -84,7 +84,7 @@ async function fetchJson(url, attempt = 0, maxRetries = 2) {
     const retryAfterHeader = response.headers.get('retry-after');
     const retryAfter = retryAfterHeader === null ? Number.NaN : Number(retryAfterHeader);
     await wait(Number.isFinite(retryAfter) ? Math.min(retryAfter * 1000, 30_000) : 5_000 * (attempt + 1));
-    return fetchJson(url, attempt + 1, maxRetries);
+    return fetchJson(url, attempt + 1, maxRetries, extraHeaders);
   }
   if (!response.ok) throw new Error(`Upstream request failed with ${response.status}`);
   return response.json();
@@ -184,6 +184,11 @@ const INGESTION_HISTORY_SYMBOLS = new Set(['BTC', ...TWELVE_SYMBOLS.map((asset) 
 function asNumber(value) {
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : null;
+}
+
+function percentileOf(values, value) {
+  if (!Array.isArray(values) || !values.length || !Number.isFinite(value)) return null;
+  return Math.round((values.filter((item) => item <= value).length / values.length) * 100);
 }
 
 function normalizeTimestamp(value) {
@@ -376,8 +381,8 @@ async function getTwelveHistory(symbol, range, usage) {
   });
 }
 
-async function getYahooHistory(symbol) {
-  const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}?range=1y&interval=1d`;
+async function getYahooHistory(symbol, yahooRange = '1y') {
+  const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}?range=${encodeURIComponent(yahooRange)}&interval=1d`;
   const payload = await fetchJson(url);
   const result = payload?.chart?.result?.[0];
   const timestamps = result?.timestamp ?? [];
@@ -581,7 +586,6 @@ async function getCotDisaggregatedGold() {
     };
   }).filter((row) => row.date && Number.isFinite(row.managedMoneyNet));
   if (!history.length) throw new Error('CFTC disaggregated report returned no usable gold rows');
-  const percentileOf = (values, value) => Math.round((values.filter((item) => item <= value).length / values.length) * 100);
   const buildLeg = (field) => {
     const series = history.map((row) => row[field]);
     const latest = series[0];
@@ -599,6 +603,202 @@ async function getCotDisaggregatedGold() {
     producers: buildLeg('producerNet'),
     swapDealers: buildLeg('swapNet'),
   };
+}
+
+const CNN_FEAR_GREED_HEADERS = {
+  'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36',
+  Accept: 'application/json, text/plain, */*',
+  Referer: 'https://edition.cnn.com/markets/fear-and-greed',
+};
+
+export async function getSentimentSnapshot() {
+  return withCache('analytics:sentiment-snapshot', 30 * 60_000, async () => {
+    const payload = await fetchJson('https://production.dataviz.cnn.io/index/fearandgreed/graphdata', 0, 2, CNN_FEAR_GREED_HEADERS);
+    const current = payload?.fear_and_greed;
+    const score = asNumber(current?.score);
+    if (!Number.isFinite(score)) throw new Error('CNN Fear & Greed payload missing current score');
+    const historical = Array.isArray(payload?.fear_and_greed_historical) ? payload.fear_and_greed_historical : [];
+    const historicalScores = historical.map((entry) => asNumber(entry?.y)).filter((value) => Number.isFinite(value));
+    const oneYearAgoCutoff = Date.now() - 365 * 86_400_000;
+    const yearScores = historicalScores.filter((value, index) => Number(historical[index]?.x ?? 0) >= oneYearAgoCutoff);
+    const pool = yearScores.length > 60 ? yearScores : historicalScores;
+    const ratingLabel = typeof current?.rating === 'string' ? current.rating : score >= 75 ? 'Extreme Greed' : score >= 55 ? 'Greed' : score > 45 ? 'Neutral' : score > 25 ? 'Fear' : 'Extreme Fear';
+    return {
+      asOf: new Date().toISOString(),
+      version: 'sentiment-snapshot-v1',
+      status: 'calculated',
+      fearGreed: {
+        score: Math.round(score * 10) / 10,
+        rating: ratingLabel,
+        previousClose: asNumber(current?.previous_close),
+        oneWeekAgo: asNumber(current?.previous_1_week),
+        oneMonthAgo: asNumber(current?.previous_1_month),
+        oneYearAgo: asNumber(current?.previous_1_year),
+        percentile1y: pool.length > 30 ? percentileOf(pool, score) : null,
+        observations: pool.length,
+      },
+      methodology: 'CNN Fear & Greed composite (unofficial JSON endpoint; seven equity-sentiment inputs). Percentile ranks the current reading within the trailing-year published history.',
+    };
+  });
+}
+
+function smaOf(values, window) {
+  if (values.length < window) return null;
+  const slice = values.slice(-window);
+  return slice.reduce((sum, value) => sum + value, 0) / window;
+}
+
+async function getBinanceFundingLeg() {
+  const [current, bybit, history] = await Promise.all([
+    fetchJson('https://fapi.binance.com/fapi/v1/premiumIndex?symbol=BTCUSDT'),
+    fetchJson('https://api.bybit.com/v5/market/tickers?category=linear&symbol=BTCUSDT'),
+    fetchJson('https://fapi.binance.com/fapi/v1/fundingRate?symbol=BTCUSDT&limit=1000'),
+  ]);
+  const binanceRate = asNumber(current?.lastFundingRate);
+  const bybitRate = asNumber(bybit?.result?.list?.[0]?.fundingRate);
+  const rates = [binanceRate, bybitRate].filter((value) => Number.isFinite(value));
+  if (!rates.length) throw new Error('No funding-rate venue responded');
+  const aggregate = rates.reduce((sum, value) => sum + value, 0) / rates.length;
+  const historicalRates = (Array.isArray(history) ? history : []).map((row) => asNumber(row?.fundingRate)).filter((value) => Number.isFinite(value));
+  return {
+    binanceRate,
+    bybitRate,
+    venues: rates.length,
+    aggregate8h: aggregate,
+    annualizedPercent: Math.round(aggregate * 3 * 365 * 10000) / 100,
+    percentile: historicalRates.length > 60 ? percentileOf(historicalRates, aggregate) : null,
+    observations: historicalRates.length,
+    windowDays: Math.round(historicalRates.length / 3),
+  };
+}
+
+async function getBinancePositioningLeg() {
+  const rows = await fetchJson('https://fapi.binance.com/futures/data/openInterestHist?symbol=BTCUSDT&period=1d&limit=30');
+  if (!Array.isArray(rows) || rows.length < 9) throw new Error('Binance open-interest history unavailable');
+  const oi = rows.map((row) => asNumber(row.sumOpenInterest)).filter((value) => Number.isFinite(value));
+  const price = rows.map((row) => asNumber(row.sumOpenInterestValue)).filter((value) => Number.isFinite(value));
+  const oiChange7d = oi.at(-1) && oi.at(-8) ? ((oi.at(-1) / oi.at(-8)) - 1) * 100 : null;
+  const priceChange7d = price.at(-1) && price.at(-8) ? ((price.at(-1) / price.at(-8)) - 1) * 100 : null;
+  if (!Number.isFinite(oiChange7d) || !Number.isFinite(priceChange7d)) throw new Error('Open-interest series incomplete');
+  let quadrant;
+  if (priceChange7d >= 0 && oiChange7d >= 0) quadrant = 'Levered expansion';
+  else if (priceChange7d >= 0 && oiChange7d < 0) quadrant = 'Spot-led advance';
+  else if (priceChange7d < 0 && oiChange7d >= 0) quadrant = 'Levered pressure';
+  else quadrant = 'Deleveraging washout';
+  return { openInterest: oi.at(-1), oiChange7d, priceChange7d, quadrant };
+}
+
+let bitcoinOnchainMemo = null;
+let bitcoinDerivativesMemo = null;
+
+export async function getBitcoinCycleWorkspace() {
+  return withCache('analytics:bitcoin-cycle', 30 * 60_000, async () => {
+    const onchainLoader = async () => {
+      await wait(1_500);
+      const mvrvZ = await fetchJson('https://bitcoin-data.com/v1/mvrv-zscore');
+      await wait(1_500);
+      const sth = await fetchJson('https://bitcoin-data.com/v1/sth-realized-price');
+      bitcoinOnchainMemo = { mvrvZ, sth };
+      return { mvrvZ, sth, memoized: false };
+    };
+    const derivativesLoader = async () => {
+      const funding = await getBinanceFundingLeg();
+      const positioning = await getBinancePositioningLeg();
+      bitcoinDerivativesMemo = { funding, positioning };
+      return { funding, positioning, memoized: false };
+    };
+    const [priceResult, onchainResult, derivativesResult, stablecoinsResult] = await Promise.allSettled([
+      getYahooHistory('BTC-USD', '10y'),
+      onchainLoader(),
+      derivativesLoader(),
+      fetchJson('https://stablecoins.llama.fi/stablecoincharts/all'),
+    ]);
+    const onchainData = onchainResult.status === 'fulfilled' ? onchainResult.value : bitcoinOnchainMemo;
+    const derivativesData = derivativesResult.status === 'fulfilled' ? derivativesResult.value : bitcoinDerivativesMemo;
+    const mvrvRaw = onchainData?.mvrvZ ?? [];
+    const sthRaw = onchainData?.sth ?? [];
+
+    const priceHistory = priceResult.status === 'fulfilled' ? priceResult.value : [];
+    const closes = priceHistory.map((point) => point.value);
+    const spot = closes.at(-1) ?? null;
+    const sma200d = smaOf(closes, 200);
+    const sma200w = smaOf(closes, 1400);
+
+    const trend = spot !== null && sma200d !== null ? {
+      status: 'calculated',
+      price: spot,
+      sma200d: Math.round(sma200d),
+      sma200w: sma200w !== null ? Math.round(sma200w) : null,
+      pctVsSma200d: Math.round(((spot / sma200d) - 1) * 1000) / 10,
+      pctVsSma200w: sma200w !== null ? Math.round(((spot / sma200w) - 1) * 1000) / 10 : null,
+      observations: closes.length,
+    } : { status: 'unavailable', reason: 'Yahoo BTC-USD 10-year history is required for the 200-day and 200-week averages.' };
+
+    const mvrvSeries = Array.isArray(mvrvRaw) ? mvrvRaw : [];
+    const mvrvLatest = mvrvSeries.at(-1);
+    const mvrvScore = asNumber(mvrvLatest?.mvrvZscore);
+    const valuation = mvrvScore !== null ? {
+      status: 'calculated',
+      mvrvZ: mvrvScore,
+      band: mvrvScore <= 0 ? 'Historic value zone' : mvrvScore <= 2 ? 'Early cycle' : mvrvScore <= 5 ? 'Mid cycle' : 'Late cycle',
+      percentile: percentileOf(mvrvSeries.map((row) => asNumber(row.mvrvZscore)).filter((value) => Number.isFinite(value)), mvrvScore),
+      asOf: mvrvLatest.d,
+      observations: mvrvSeries.length,
+    } : { status: 'unavailable', reason: `bitcoin-data.com MVRV Z-score feed is required: ${onchainResult.reason?.message ?? onchainResult.reason ?? 'payload missing'}` };
+
+    const sthSeries = Array.isArray(sthRaw) ? sthRaw : [];
+    const sthLatest = sthSeries.at(-1);
+    const sthPrice = asNumber(sthLatest?.sthRealizedPrice);
+    const shortTermHolder = sthPrice !== null && spot !== null ? {
+      status: 'calculated',
+      sthRealizedPrice: Math.round(sthPrice),
+      premiumPercent: Math.round(((spot / sthPrice) - 1) * 1000) / 10,
+      state: spot >= sthPrice ? 'Recent buyers in profit' : 'Recent buyers underwater',
+      asOf: sthLatest.d,
+    } : { status: 'unavailable', reason: `bitcoin-data.com STH realized-price feed is required: ${onchainResult.reason?.message ?? onchainResult.reason ?? 'payload missing'}` };
+
+    const fundingResult = derivativesResult.status === 'fulfilled' ? { status: 'fulfilled', value: derivativesResult.value.funding } : derivativesResult;
+    const positioningResult = derivativesResult.status === 'fulfilled' ? { status: 'fulfilled', value: derivativesResult.value.positioning } : derivativesResult;
+
+    const leverage = fundingResult.status === 'fulfilled' ? {
+      status: 'calculated',
+      ...fundingResult.value,
+      note: `Aggregate of ${fundingResult.value.venues} venues; percentile over ~${fundingResult.value.windowDays}-day Binance history.`,
+    } : { status: 'unavailable', reason: `Perpetual funding endpoints are unreachable: ${fundingResult.reason?.message ?? fundingResult.reason}` };
+
+    const positioning = positioningResult.status === 'fulfilled' ? { status: 'calculated', ...positioningResult.value } : { status: 'unavailable', reason: `Binance open-interest history is unreachable: ${positioningResult.reason?.message ?? positioningResult.reason}` };
+
+    const etfFlows = { status: 'unavailable', reason: 'Farside is Cloudflare-blocked from this environment; no keyless ETF-flow source is available.' };
+
+    const stableRows = stablecoinsResult.status === 'fulfilled' && Array.isArray(stablecoinsResult.value) ? stablecoinsResult.value : [];
+    const supplyNow = asNumber(stableRows.at(-1)?.totalCirculating?.peggedUSD);
+    const supply30dAgo = asNumber(stableRows.at(-31)?.totalCirculating?.peggedUSD);
+    const stablecoins = supplyNow !== null && supply30dAgo !== null ? {
+      status: 'calculated',
+      supplyUsdBillions: Math.round(supplyNow / 100_000_000) / 10,
+      change30dUsdBillions: Math.round((supplyNow - supply30dAgo) / 100_000_000) / 10,
+      change30dPercent: Math.round(((supplyNow / supply30dAgo) - 1) * 1000) / 10,
+      state: supplyNow >= supply30dAgo ? 'Dry powder building' : 'Supply contracting',
+    } : { status: 'unavailable', reason: 'DefiLlama stablecoin history is required.' };
+
+    const legs = [trend, valuation, shortTermHolder, leverage, positioning, etfFlows, stablecoins];
+    const calculatedCount = legs.filter((leg) => leg.status === 'calculated').length;
+    return {
+      asOf: new Date().toISOString(),
+      version: 'bitcoin-cycle-v1',
+      status: calculatedCount ? 'calculated' : 'unavailable',
+      calculatedCount,
+      totalLegs: legs.length,
+      trend,
+      valuation,
+      shortTermHolder,
+      leverage,
+      positioning,
+      etfFlows,
+      stablecoins,
+      methodology: 'Trend uses Yahoo BTC-USD daily closes (200-day and 200-week simple averages). Valuation and short-term-holder cost basis come from bitcoin-data.com on-chain series. Funding aggregates Binance and Bybit perpetual rates with a Binance-history percentile; the OI/price quadrant uses 7-day changes in Binance futures open interest versus price. Stablecoin supply is DefiLlama aggregate circulating value. Spot ETF flows remain unavailable without a licensed source.',
+    };
+  });
 }
 
 export async function getMetalsWorkspace() {

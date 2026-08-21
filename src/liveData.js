@@ -18,6 +18,8 @@ export function usePlatformData() {
     heatmap: null,
     metals: null,
     fx: null,
+    sentiment: null,
+    bitcoin: null,
     error: null,
   });
 
@@ -25,7 +27,7 @@ export function usePlatformData() {
     let active = true;
 
     const load = async () => {
-      const [health, markets, liquidity, dxyBtc, regimeCorrelations, positioning, heatmap, metals, fx] = await Promise.allSettled([
+      const [health, markets, liquidity, dxyBtc, regimeCorrelations, positioning, heatmap, metals, fx, sentiment, bitcoin] = await Promise.allSettled([
         requestJson('/api/health'),
         requestJson('/api/markets/snapshot'),
         requestJson('/api/macro/liquidity'),
@@ -35,6 +37,8 @@ export function usePlatformData() {
         requestJson('/api/analytics/heatmap'),
         requestJson('/api/analytics/metals'),
         requestJson('/api/analytics/fx'),
+        requestJson('/api/analytics/sentiment'),
+        requestJson('/api/analytics/bitcoin'),
       ]);
       if (!active) return;
 
@@ -47,6 +51,8 @@ export function usePlatformData() {
       const heatmapData = heatmap.status === 'fulfilled' ? heatmap.value : null;
       const metalsData = metals.status === 'fulfilled' ? metals.value : null;
       const fxData = fx.status === 'fulfilled' ? fx.value : null;
+      const sentimentData = sentiment.status === 'fulfilled' ? sentiment.value : null;
+      const bitcoinData = bitcoin.status === 'fulfilled' ? bitcoin.value : null;
       const hasQuotes = Boolean(marketData?.assets?.length);
       const hasUnconfiguredProviders = Object.values(healthData?.providers ?? {}).some((provider) => !provider.configured || (provider.connected === false && provider.mode === 'unavailable') || provider.migrated === false && provider.configured);
       const hasErrors = [health, markets, liquidity, dxyBtc].some((result) => result.status === 'rejected') || Boolean(marketData?.errors?.length) || Boolean(liquidityData?.errors?.length) || hasUnconfiguredProviders;
@@ -62,6 +68,8 @@ export function usePlatformData() {
         heatmap: heatmapData,
         metals: metalsData,
         fx: fxData,
+        sentiment: sentimentData,
+        bitcoin: bitcoinData,
         error: !healthData ? 'The data API is unavailable.' : hasErrors ? 'Some data providers are unavailable.' : null,
       });
     };
