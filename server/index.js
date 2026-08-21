@@ -3,7 +3,7 @@ import { existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import { config } from './config.js';
-import { closeDatabase, getDatabaseHealth, getIngestionStatus, getRecentModelAlerts, getStoredSeriesCoverage, getWatchlists, isDatabaseConfigured, replaceWatchlists } from './database.js';
+import { closeDatabase, getDatabaseHealth, getIngestionStatus, getRecentModelAlerts, getRecentModelOutputs, getStoredSeriesCoverage, getWatchlists, insertModelAlerts, isDatabaseConfigured, persistModelOutput, replaceWatchlists } from './database.js';
 import {
   attachSeriesCoverage,
   breadthRequirements,
@@ -169,9 +169,34 @@ app.get('/api/analytics/intraday', async (request, response, next) => {
   }
 });
 
+let lastPersistedScreenerAsOf = null;
+
 app.get('/api/analytics/screener', async (_request, response, next) => {
   try {
-    response.json(await getEquityScreener());
+    const payload = await getEquityScreener();
+    let alertsRaised;
+    if (isDatabaseConfigured() && payload?.status === 'calculated' && payload.asOf !== lastPersistedScreenerAsOf) {
+      try {
+        const breakouts = (payload.rows ?? []).filter((row) => row.breakout).map((row) => row.symbol);
+        const previous = await getRecentModelOutputs('screener-v1', 1);
+        const previousBreakouts = Array.isArray(previous[0]?.output?.breakouts) ? previous[0].output.breakouts : null;
+        if (Array.isArray(previousBreakouts)) {
+          const fresh = breakouts.filter((symbol) => !previousBreakouts.includes(symbol)).slice(0, 25);
+          if (fresh.length) {
+            const bySymbol = new Map((payload.rows ?? []).map((row) => [row.symbol, row]));
+            alertsRaised = await insertModelAlerts('screener-v1', fresh.map((symbol) => {
+              const row = bySymbol.get(symbol);
+              return { key: symbol, text: `${symbol}${row?.sector ? ` (${row.sector})` : ''} cleared its 200-day average · screener score ${row?.score ?? 'n/a'}` };
+            }));
+          }
+        }
+        await persistModelOutput('screener-v1', { version: payload.version ?? 'screener-v1', asOf: payload.asOf, breakouts }, ['equity:spx-universe', 'analytics:screener']);
+        lastPersistedScreenerAsOf = payload.asOf;
+      } catch (persistenceError) {
+        console.error('Screener persistence failed:', persistenceError.message);
+      }
+    }
+    response.json(alertsRaised === undefined ? payload : { ...payload, alertsRaised });
   } catch (error) {
     next(error);
   }
