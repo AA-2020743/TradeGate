@@ -754,7 +754,7 @@ function MacroDashboard({ data }) {
       <div><p className="eyebrow">MACRO RESEARCH SYSTEM</p><h1>Liquidity leads. Risk confirms.</h1><p className="intro">A cross-asset view of the forces shaping capital availability and market regime.</p></div>
       <div className="model-tabs"><button className={activeModel === 'Liquidity' ? 'active' : ''} onClick={() => setActiveModel('Liquidity')}>US liquidity</button><button className={activeModel === 'Global' ? 'active' : ''} onClick={() => setActiveModel('Global')}>Global liquidity</button><button className={activeModel === 'Risk' ? 'active' : ''} onClick={() => setActiveModel('Risk')}>Macro regime</button><button className={activeModel === 'Correlations' ? 'active' : ''} onClick={() => setActiveModel('Correlations')}>Correlations {regimeCorrelations?.status !== 'calculated' && <small className="tab-preview">Preview</small>}</button><button className={activeModel === 'FX' ? 'active' : ''} onClick={() => setActiveModel('FX')}>USD &amp; FX</button></div>
     </section>
-    <DataDisclosure data={data} message="US liquidity, USD strength, macro regime, and DXY/BTC are versioned calculations. Every remaining designed value is labeled Preview at its tab or section." />
+    <DataDisclosure data={data} message="Every model here is a versioned calculation from keyless public sources; only panels whose sources are confirmed blocked remain preview-labeled." />
     {data.liquidity?.series?.length ? <section className="official-data-strip panel"><div><p className="section-kicker">OFFICIAL FRED OBSERVATIONS</p><b>Latest released data</b></div>{data.liquidity.series.slice(0, 5).map((series) => <div key={series.id}><span>{series.name}</span><strong>{formatMacroValue(series)}</strong><small>{series.date}{series.stale ? ' · stale' : series.stored ? ' · stored' : ' · live'}</small></div>)}</section> : <section className="provider-setup-note"><b>Live macro feed unavailable</b><span>The server could not reach FRED (API or public CSV endpoint) and no stored observations exist yet.</span></section>}
 
     <section className="model-overview-grid">
@@ -788,6 +788,16 @@ function MacroDashboard({ data }) {
         <div className="fx-preview"><span>20D momentum</span><b>{formatPercent(usdStrength?.indicators?.momentum20d)}</b><span>Real-yield impulse</span><b className={scoreTone(usdDrivers.realYield?.score)}>{usdDrivers.realYield?.score ?? '—'}</b><span>Dollar smile</span><b>{usdStrength?.dollarSmile ?? 'Unavailable'}</b></div>
         <div className="model-action"><span>{usdStrength?.version ?? 'No model output'}</span><button onClick={() => setActiveModel('FX')}>Open model →</button></div>
       </article>
+    </section>
+
+    <section className="workspace-pulse panel">
+      <div className="panel-title"><div><p className="section-kicker">WORKSPACE PULSE · CALCULATED</p><h3>Headlines from every calculated workspace</h3></div><span className="data-pill">Live</span></div>
+      <div className="btc-cycle-grid">
+        <div className="btc-cycle-cell"><small>Screener momentum</small><b>{(() => { const leader = screenerLeader(data.screener?.rows); return leader ? `${leader.symbol} ${leader.mom20 > 0 ? '+' : ''}${leader.mom20}%` : '—'; })()}</b><span>{data.screener?.status === 'calculated' ? `Leader of ${data.screener.calculatedCount} constituents by 20D momentum` : 'Screener histories pending'}</span></div>
+        <div className="btc-cycle-cell"><small>Crypto aggregate</small><b>{Number.isFinite(data.bitcoin?.cryptoGlobal?.mcapChange24hPct) ? `${data.bitcoin.cryptoGlobal.mcapChange24hPct > 0 ? '+' : ''}${data.bitcoin.cryptoGlobal.mcapChange24hPct.toFixed(2)}%` : '—'}</b><span>Total crypto market cap, 24 hours</span></div>
+        <div className="btc-cycle-cell"><small>Fear &amp; Greed</small><b>{Number.isFinite(data.sentiment?.fearGreed?.score) ? data.sentiment.fearGreed.score : '—'}</b><span>{data.sentiment?.fearGreed?.rating ?? 'Sentiment feed pending'}</span></div>
+        <div className="btc-cycle-cell"><small>Equity breadth</small><b>{Number.isFinite(data.equityRisk?.spxBreadth?.pctAbove200) ? `${data.equityRisk.spxBreadth.pctAbove200}%` : '—'}</b><span>{data.equityRisk?.spxBreadth?.status === 'calculated' ? data.equityRisk.spxBreadth.read : 'Breadth histories pending'}</span></div>
+      </div>
     </section>
 
     <section className="macro-section-heading"><div><p className="section-kicker">{activeModel === 'Liquidity' ? 'NET US LIQUIDITY' : activeModel === 'Global' ? 'GLOBAL CENTRAL-BANK LIQUIDITY' : activeModel === 'Risk' ? 'CROSS-ASSET CONFIRMATION' : activeModel === 'Correlations' ? 'RELATIONSHIP INTELLIGENCE' : 'USD MACRO ENGINE'}</p><h2>{activeModel === 'Liquidity' ? 'The calculated drivers behind the impulse' : activeModel === 'Global' ? 'World central-bank liquidity in dollars' : activeModel === 'Risk' ? 'What markets are pricing now' : activeModel === 'Correlations' ? 'Correlations through the current regime' : 'Where macro points for the dollar'} {activeModel === 'Correlations' && regimeCorrelations?.status !== 'calculated' && <PreviewBadge label="Contains previews" />}</h2></div>{activeModel === 'Liquidity' && <span className="data-pill">13W calculated window</span>}{activeModel === 'Global' && <span className="data-pill">13W calculated window</span>}{activeModel === 'Correlations' && <div className="window-buttons">{['20D', '60D', '1Y'].map((item) => <button className={correlationWindow === item ? 'selected' : ''} key={item} onClick={() => setCorrelationWindow(item)}>{item}</button>)}</div>}{activeModel === 'FX' && <span className="data-pill">FRED driver stack</span>}</section>
@@ -965,6 +975,12 @@ function WatchlistsDashboard({ data }) {
     </section>
     <p className="independence-note">TradeGate is an independent market research platform and is not affiliated with Tradegate AG.</p>
   </div>;
+}
+
+function screenerLeader(rows) {
+  let best = null;
+  for (const row of rows ?? []) if (Number.isFinite(row.mom20) && (!best || row.mom20 > best.mom20)) best = row;
+  return best;
 }
 
 function ForexDashboard({ data }) {
