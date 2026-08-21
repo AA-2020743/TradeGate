@@ -17,6 +17,7 @@ import {
 import { getEquityDashboard, getSectorDashboard } from './equities.js';
 import { startIngestionScheduler } from './ingestion.js';
 import { getBitcoinCycleWorkspace, getBlockedSources, getCryptoGlobal, getDxyBitcoinRelationship, getEquityRiskAppetite, getEquityScreener, getEthereumRotation, getFxWorkspace, getIntradayRotation, getLiquiditySnapshot, getMarketHeatmap, getMarketHistory, getMarketPositioning, getMarketSnapshot, getMetalsWorkspace, getNewsWire, getProviderHealth, getRegimeCorrelations, getSentimentSnapshot, getTechnicalSnapshot } from './providers.js';
+import { buildAtomFeed } from './analytics.js';
 
 const app = express();
 const rootDirectory = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -255,6 +256,72 @@ app.get('/api/alerts', async (_request, response, next) => {
       return;
     }
     response.json({ asOf: new Date().toISOString(), status: 'calculated', alerts: await getRecentModelAlerts(50) });
+  } catch (error) {
+    next(error);
+  }
+});
+
+const MODEL_FEED_LABELS = {
+  'market-heatmap': 'Heatmap',
+  'metals-workspace': 'Metals',
+  'fx-workspace': 'FX',
+  'sentiment-snapshot': 'Sentiment',
+  'bitcoin-cycle': 'Bitcoin cycle',
+  'equity-risk': 'Equity risk',
+  'liquidity-states': 'Liquidity states',
+  'dollar-transmission': 'Dollar transmission',
+  'screener-v1': 'Screener',
+};
+
+function respondAtom(response, feed, entries) {
+  response.set('Content-Type', 'application/atom+xml; charset=utf-8');
+  response.send(buildAtomFeed(feed, entries));
+}
+
+app.get('/api/alerts/feed', async (_request, response, next) => {
+  try {
+    if (!isDatabaseConfigured()) {
+      response.status(503).json({ status: 'unconfigured' });
+      return;
+    }
+    const alerts = await getRecentModelAlerts(50);
+    const updated = alerts[0]?.detectedAt ?? new Date().toISOString();
+    respondAtom(response, {
+      title: 'TradeGate model alerts',
+      id: 'urn:tradegate:feed:alerts',
+      updated,
+      link: '/api/alerts/feed',
+    }, alerts.map((alert) => ({
+      title: `${MODEL_FEED_LABELS[alert.modelId] ?? alert.modelId}: ${alert.text.slice(0, 80)}`,
+      id: `urn:tradegate:alert:${alert.modelId}:${alert.key}:${new Date(alert.detectedAt).toISOString()}`,
+      updated: new Date(alert.detectedAt).toISOString(),
+      content: alert.text,
+    })));
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.get('/api/news/feed', async (_request, response, next) => {
+  try {
+    const wire = await getNewsWire();
+    const items = wire?.items ?? [];
+    if (wire?.status !== 'calculated') {
+      response.status(503).json({ status: wire?.status ?? 'unavailable' });
+      return;
+    }
+    const updated = items[0]?.publishedAt ?? new Date().toISOString();
+    respondAtom(response, {
+      title: 'TradeGate news wire',
+      id: 'urn:tradegate:feed:news',
+      updated,
+      link: '/api/news/feed',
+    }, items.map((item, index) => ({
+      title: item.title,
+      id: `urn:tradegate:news:${Buffer.from(String(item.title)).toString('base64url').slice(0, 40)}:${item.publishedAt ?? index}`,
+      updated: item.publishedAt ?? updated,
+      content: `${item.tone ? `Tone: ${item.tone}. ` : ''}${item.title}`,
+    })));
   } catch (error) {
     next(error);
   }

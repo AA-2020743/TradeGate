@@ -697,6 +697,27 @@ const WORKSPACE_VITALS = {
   ],
 };
 
+export function escapeXml(value) {
+  return String(value).replace(/[&<>"']/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&apos;' }[char]));
+}
+
+export function buildAtomFeed(feed, entries) {
+  const items = entries.map((entry) => `  <entry>
+    <title>${escapeXml(entry.title)}</title>
+    <id>${escapeXml(entry.id)}</id>
+    <updated>${entry.updated}</updated>
+    <content type="text">${escapeXml(entry.content)}</content>
+  </entry>`);
+  return `<?xml version="1.0" encoding="utf-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom">
+  <title>${escapeXml(feed.title)}</title>
+  <id>${escapeXml(feed.id)}</id>
+  <updated>${feed.updated}</updated>
+  <link href="${escapeXml(feed.link)}" rel="self"/>
+${items.join('\n')}
+</feed>`;
+}
+
 export function buildWorkspaceNarrative(outputsByKey = {}) {
   const entries = [];
   let hasPairs = false;

@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { buildHeatmapRow, buildLiquidityNarrative, buildWorkspaceNarrative, calculateChangeCorrelations, calculateLeadLag, calculatePositioningModel, calculateCrossMarketRelationship, calculateGlobalLiquidityModel, calculateMacroRegimeModel, calculateRsi, calculateScreenerScores, calculateTechnicalSnapshot, classifyHeadlineSentiment, calculateUsdStrengthModel, calculateUsLiquidityModel, pearsonCorrelation } from './analytics.js';
+import { buildAtomFeed, buildHeatmapRow, buildLiquidityNarrative, buildWorkspaceNarrative, calculateChangeCorrelations, calculateLeadLag, calculatePositioningModel, calculateCrossMarketRelationship, calculateGlobalLiquidityModel, calculateMacroRegimeModel, calculateRsi, calculateScreenerScores, calculateTechnicalSnapshot, classifyHeadlineSentiment, calculateUsdStrengthModel, calculateUsLiquidityModel, escapeXml, pearsonCorrelation } from './analytics.js';
 
 test('RSI reaches 100 for an uninterrupted advance', () => {
   const values = Array.from({ length: 30 }, (_, index) => 100 + index);
@@ -374,6 +374,19 @@ test('Dollar transmission vitals raise alerts on backdrop flips', () => {
     ],
   });
   assert.equal(unchanged.status, 'stable');
+});
+
+test('Atom feed builder escapes content and produces valid structure', () => {
+  assert.equal(escapeXml('A & B <tag> "quoted" \'single\''), 'A &amp; B &lt;tag&gt; &quot;quoted&quot; &apos;single&apos;');
+  const xml = buildAtomFeed(
+    { title: 'TradeGate alerts & wire', id: 'urn:tradegate:feed:alerts', updated: '2026-08-21T00:00:00Z', link: '/api/alerts/feed' },
+    [{ title: 'Regime <shift>', id: 'urn:tradegate:alert:1', updated: '2026-08-20T12:00:00Z', content: 'US net-liquidity regime rose 2 to Expansion.' }],
+  );
+  assert.ok(xml.startsWith('<?xml version="1.0" encoding="utf-8"?>'));
+  assert.ok(xml.includes('<feed xmlns="http://www.w3.org/2005/Atom">'));
+  assert.ok(xml.includes('<title>TradeGate alerts &amp; wire</title>'));
+  assert.ok(xml.includes('<title>Regime &lt;shift&gt;</title>'));
+  assert.ok(xml.includes('<content type="text">US net-liquidity regime rose 2 to Expansion.</content>'));
 });
 test('COT positioning ranks net speculative exposure', () => {
   const history = Array.from({ length: 60 }, (_, index) => ({
