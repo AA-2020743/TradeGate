@@ -1825,11 +1825,14 @@ export function getProviderHealth() {
     bitcoinData: { configured: true, mode: 'keyless-public', serialized: true, purpose: 'MVRV Z-score and short-term holder realized price' },
     multpl: { configured: true, mode: 'keyless-public', purpose: 'Trailing S&P 500 earnings yield for the equity risk-premium proxy' },
     rssWires: { configured: true, mode: 'keyless-public', purpose: 'Federal Reserve, CNBC, and MarketWatch headlines for the news wire' },
-    blockedPreviews: [
-      { source: 'Farside UK', reason: 'Cloudflare 403', preview: 'Spot bitcoin ETF flows' },
-      { source: 'CBOE / cdn.cboe.com', reason: 'Akamai 403', preview: 'Dealer gamma and options positioning' },
-      { source: 'Coin Metrics community API', reason: '403', preview: 'Institutional on-chain series' },
-      { source: 'AAII', reason: 'Paywall', preview: 'Sentiment survey' },
-    ],
   };
+}
+
+export function getBlockedSources() {
+  return [
+    { source: 'Farside UK', reason: 'Cloudflare 403', preview: 'Spot bitcoin ETF flows' },
+    { source: 'CBOE / cdn.cboe.com', reason: 'Akamai 403', preview: 'Dealer gamma and options positioning' },
+    { source: 'Coin Metrics community API', reason: '403', preview: 'Institutional on-chain series' },
+    { source: 'AAII', reason: 'Paywall', preview: 'Sentiment survey' },
+  ];
 }

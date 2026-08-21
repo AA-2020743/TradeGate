@@ -16,7 +16,7 @@ import {
 } from './equityCatalog.js';
 import { getEquityDashboard, getSectorDashboard } from './equities.js';
 import { startIngestionScheduler } from './ingestion.js';
-import { getBitcoinCycleWorkspace, getCryptoGlobal, getDxyBitcoinRelationship, getEquityRiskAppetite, getEquityScreener, getEthereumRotation, getFxWorkspace, getIntradayRotation, getLiquiditySnapshot, getMarketHeatmap, getMarketHistory, getMarketPositioning, getMarketSnapshot, getMetalsWorkspace, getNewsWire, getProviderHealth, getRegimeCorrelations, getSentimentSnapshot, getTechnicalSnapshot } from './providers.js';
+import { getBitcoinCycleWorkspace, getBlockedSources, getCryptoGlobal, getDxyBitcoinRelationship, getEquityRiskAppetite, getEquityScreener, getEthereumRotation, getFxWorkspace, getIntradayRotation, getLiquiditySnapshot, getMarketHeatmap, getMarketHistory, getMarketPositioning, getMarketSnapshot, getMetalsWorkspace, getNewsWire, getProviderHealth, getRegimeCorrelations, getSentimentSnapshot, getTechnicalSnapshot } from './providers.js';
 
 const app = express();
 const rootDirectory = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -63,7 +63,7 @@ rateLimitCleanup.unref();
 app.get('/api/health', async (_request, response) => {
   const database = await getDatabaseHealth();
   const databaseDegraded = database.configured && (!database.connected || !database.migrated);
-  response.json({ status: databaseDegraded ? 'degraded' : 'ok', asOf: new Date().toISOString(), providers: { ...getProviderHealth(), database } });
+  response.json({ status: databaseDegraded ? 'degraded' : 'ok', asOf: new Date().toISOString(), providers: { ...getProviderHealth(), database }, blockedSources: getBlockedSources() });
 });
 
 app.get('/api/markets/snapshot', async (_request, response, next) => {
