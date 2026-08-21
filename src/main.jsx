@@ -66,25 +66,11 @@ const fxRotationSignals = [
 const heatmapColumns = [
   ['score', 'Score'],
   ['regime', 'Regime'],
-  ['alignment', 'Alignment'],
   ['trend', 'Trend'],
-  ['crowding', 'Crowding'],
+  ['momentum', 'Momentum'],
   ['volatility', 'Volatility'],
-  ['liquidity', 'Liquidity'],
-];
-
-const heatmapAssets = [
-  { symbol: 'BTC', name: 'Bitcoin', group: 'Crypto', score: 81, regime: 'Risk-on', regimeTone: 'positive', alignment: 'High', alignmentTone: 'positive', trend: 'Uptrend', trendTone: 'positive', crowding: 'Elevated', crowdingTone: 'caution', volatility: 'High', volatilityTone: 'caution', liquidity: 'Deep', liquidityTone: 'positive', note: 'Liquidity-sensitive beta remains well supported.' },
-  { symbol: 'SPX', name: 'S&P 500', group: 'US indices', score: 74, regime: 'Risk-on', regimeTone: 'positive', alignment: 'High', alignmentTone: 'positive', trend: 'Uptrend', trendTone: 'positive', crowding: 'High', crowdingTone: 'caution', volatility: 'Low', volatilityTone: 'positive', liquidity: 'Deep', liquidityTone: 'positive', note: 'Breadth and credit remain aligned with the advance.' },
-  { symbol: 'NDX', name: 'Nasdaq 100', group: 'US indices', score: 77, regime: 'Risk-on', regimeTone: 'positive', alignment: 'High', alignmentTone: 'positive', trend: 'Uptrend', trendTone: 'positive', crowding: 'High', crowdingTone: 'caution', volatility: 'Moderate', volatilityTone: 'neutral', liquidity: 'Deep', liquidityTone: 'positive', note: 'AI leadership persists, though positioning is extended.' },
-  { symbol: 'SX5E', name: 'Euro Stoxx 50', group: 'European indices', score: 58, regime: 'Constructive', regimeTone: 'positive', alignment: 'Medium', alignmentTone: 'neutral', trend: 'Uptrend', trendTone: 'positive', crowding: 'Balanced', crowdingTone: 'neutral', volatility: 'Low', volatilityTone: 'positive', liquidity: 'Deep', liquidityTone: 'positive', note: 'Improving growth impulse offsets a softer rate outlook.' },
-  { symbol: 'NKY', name: 'Nikkei 225', group: 'Japan', score: 66, regime: 'Constructive', regimeTone: 'positive', alignment: 'High', alignmentTone: 'positive', trend: 'Uptrend', trendTone: 'positive', crowding: 'Balanced', crowdingTone: 'neutral', volatility: 'Moderate', volatilityTone: 'neutral', liquidity: 'Deep', liquidityTone: 'positive', note: 'Currency policy and corporate reform remain supportive.' },
-  { symbol: 'CSI', name: 'CSI 300', group: 'China', score: 49, regime: 'Neutral', regimeTone: 'neutral', alignment: 'Low', alignmentTone: 'negative', trend: 'Range', trendTone: 'neutral', crowding: 'Light', crowdingTone: 'positive', volatility: 'Moderate', volatilityTone: 'neutral', liquidity: 'Deep', liquidityTone: 'positive', note: 'The credit impulse is improving, but follow-through is uneven.' },
-  { symbol: 'IBOV', name: 'Ibovespa', group: 'LatAm', score: 55, regime: 'Constructive', regimeTone: 'positive', alignment: 'Medium', alignmentTone: 'neutral', trend: 'Range', trendTone: 'neutral', crowding: 'Light', crowdingTone: 'positive', volatility: 'High', volatilityTone: 'caution', liquidity: 'Moderate', liquidityTone: 'neutral', note: 'Commodity support is balanced by dollar sensitivity.' },
-  { symbol: 'XAU', name: 'Gold', group: 'Metals', score: 68, regime: 'Constructive', regimeTone: 'positive', alignment: 'High', alignmentTone: 'positive', trend: 'Uptrend', trendTone: 'positive', crowding: 'Elevated', crowdingTone: 'caution', volatility: 'Moderate', volatilityTone: 'neutral', liquidity: 'Deep', liquidityTone: 'positive', note: 'Real-rate and central-bank demand support the trend.' },
-  { symbol: 'XAG', name: 'Silver', group: 'Metals', score: 62, regime: 'Constructive', regimeTone: 'positive', alignment: 'Medium', alignmentTone: 'neutral', trend: 'Uptrend', trendTone: 'positive', crowding: 'Balanced', crowdingTone: 'neutral', volatility: 'High', volatilityTone: 'caution', liquidity: 'Moderate', liquidityTone: 'neutral', note: 'Industrial demand provides a higher-beta gold expression.' },
-  { symbol: 'DXY', name: 'U.S. Dollar', group: 'FX', score: 64, regime: 'Strength', regimeTone: 'positive', alignment: 'High', alignmentTone: 'positive', trend: 'Uptrend', trendTone: 'positive', crowding: 'Elevated', crowdingTone: 'caution', volatility: 'Low', volatilityTone: 'positive', liquidity: 'Deep', liquidityTone: 'positive', note: 'Rate differentials and safe-haven asymmetry remain supportive.' },
-  { symbol: 'SPX OPT', name: 'SPX options positioning', group: 'Options', score: 43, regime: 'Guarded', regimeTone: 'negative', alignment: 'Low', alignmentTone: 'negative', trend: 'Range', trendTone: 'neutral', crowding: 'High', crowdingTone: 'caution', volatility: 'Suppressed', volatilityTone: 'caution', liquidity: 'Deep', liquidityTone: 'positive', note: 'Dealer gamma is supportive, but leaves little room for a volatility shock.' },
+  ['crowding', 'Crowding'],
+  ['alignment', 'Alignment'],
 ];
 
 const preciousMetalAssets = [
@@ -628,45 +614,61 @@ function formatMacroValue(series) {
   return new Intl.NumberFormat('en-US', { maximumFractionDigits: 2 }).format(series.value);
 }
 
-function heatmapCellTone(asset, key) {
-  if (key === 'score') return asset.score >= 65 ? 'positive' : asset.score >= 50 ? 'neutral' : 'negative';
-  return asset[`${key}Tone`] ?? 'neutral';
-}
-
 function MarketsDashboard({ data }) {
   const [group, setGroup] = React.useState('All');
-  const [timeframe, setTimeframe] = React.useState('1W');
   const [activeMetric, setActiveMetric] = React.useState('score');
-  const [selectedSymbol, setSelectedSymbol] = React.useState('BTC');
-  const groups = ['All', 'Crypto', 'US indices', 'European indices', 'Japan', 'China', 'LatAm', 'Metals', 'FX', 'Options'];
-  const visibleAssets = group === 'All' ? heatmapAssets : heatmapAssets.filter((asset) => asset.group === group);
-  const selectedAsset = heatmapAssets.find((asset) => asset.symbol === selectedSymbol) ?? heatmapAssets[0];
-  const activeColumn = heatmapColumns.find(([key]) => key === activeMetric) ?? heatmapColumns[0];
+  const [selectedSymbol, setSelectedSymbol] = React.useState('SPY');
+  const heatmap = data.heatmap;
+  const assets = (heatmap?.assets ?? []).filter((asset) => asset.status === 'calculated');
+  const groups = ['All', ...[...new Set(assets.map((asset) => asset.group))]];
+  const visibleAssets = group === 'All' ? assets : assets.filter((asset) => asset.group === group);
+  const selectedAsset = assets.find((asset) => asset.symbol === selectedSymbol) ?? visibleAssets[0] ?? assets[0];
+  const cellValue = (asset, key) => key === 'momentum' ? (Number.isFinite(asset.momentum20d) ? `${asset.momentum20d > 0 ? '+' : ''}${asset.momentum20d}%` : '—') : asset[key];
+  const cellTone = (asset, key) => {
+    const value = asset[key];
+    if (value === 'Unavailable' || value === null || value === undefined) return 'neutral';
+    if (key === 'score' || key === 'regime') return asset.score >= 55 ? 'positive' : asset.score <= 35 ? 'negative' : 'neutral';
+    if (key === 'trend') return ['Uptrend', 'Recovering'].includes(value) ? 'positive' : value === 'Downtrend' ? 'negative' : 'neutral';
+    if (key === 'momentum') return asset.momentum20d > 0 ? 'positive' : asset.momentum20d < 0 ? 'negative' : 'neutral';
+    if (key === 'volatility') return value === 'Low' ? 'positive' : value === 'High' ? 'caution' : 'neutral';
+    if (key === 'crowding') return ['Crowded', 'Elevated'].includes(value) ? 'caution' : value === 'Light' ? 'positive' : 'neutral';
+    if (key === 'alignment') return value === 'High' ? 'positive' : value === 'Low' ? 'negative' : 'neutral';
+    return 'neutral';
+  };
+  const avgScore = assets.length ? Math.round(assets.reduce((total, asset) => total + asset.score, 0) / assets.length) : null;
+  const riskOnCount = assets.filter((asset) => asset.score >= 55).length;
+  const neutralCount = assets.filter((asset) => asset.score > 35 && asset.score < 55).length;
+  const stressCount = assets.filter((asset) => asset.score <= 35).length;
+  const alignedAssets = assets.filter((asset) => Number.isFinite(asset.alignmentValue));
+  const avgAlignment = alignedAssets.length ? Math.round((alignedAssets.reduce((total, asset) => total + Math.abs(asset.alignmentValue), 0) / alignedAssets.length) * 100) : null;
+  const crowdedAssets = assets.filter((asset) => Number.isFinite(asset.crowdingPercentile));
+  const peakCrowding = crowdedAssets.length ? Math.max(...crowdedAssets.map((asset) => asset.crowdingPercentile)) : null;
+  const backdrop = heatmap?.liquidityBackdrop;
 
   return <div className="markets-dashboard">
     <section className="markets-intro">
       <div><p className="eyebrow">MULTI-ASSET INTELLIGENCE</p><h1>See the market before it moves.</h1><p className="intro">A single scorecard for regime, participation, positioning, and market quality.</p></div>
-      <div className="markets-status"><PreviewBadge /><div><b>11 designed markets</b><small>Values are not live signals</small></div></div>
+      <div className="markets-status">{heatmap?.status !== 'calculated' && <PreviewBadge />}<div><b>{heatmap?.calculatedCount ? `${heatmap.calculatedCount} of ${heatmap.universeSize} markets calculated` : 'Awaiting stored histories'}</b><small>technical-v1 · COT crowding · 60D alignment</small></div></div>
     </section>
-    <DataDisclosure data={data} message="This heatmap is still a model preview. Live prices are connected at the platform layer; regime, alignment, crowding, volatility, and liquidity calculations are next in the pipeline." />
+    <DataDisclosure data={data} message={heatmap?.status === 'calculated' ? 'Heatmap scores are calculated by technical-v1 on stored close histories; alignment correlates 60-day changes versus SPY and crowding uses CFTC COT percentiles where a matching contract exists.' : 'The heatmap publishes once stored market histories are available for the tracked universe.'} />
 
     <section className="heatmap-summary-grid">
-      <article className="heatmap-hero panel preview-section"><div><p className="section-kicker">CROSS-ASSET REGIME</p><h2>Broadly constructive <span className="status-dot"></span></h2><p>Risk assets, metals, and the dollar remain mostly aligned. Crowding is the constraint.</p></div><div className="regime-distribution"><span className="positive">5</span><span className="neutral">4</span><span className="negative">2</span><small>Constructive</small><small>Neutral</small><small>Guarded</small></div></article>
-      <article className="heatmap-stat panel preview-section"><p className="section-kicker">ALIGNMENT</p><b>73<span>/100</span></b><p>Trend and macro agreement</p><i><span style={{ width: '73%' }}></span></i></article>
-      <article className="heatmap-stat panel preview-section"><p className="section-kicker">CROWDING</p><b>61<span>/100</span></b><p>Risk appetite is elevated</p><i className="amber"><span style={{ width: '61%' }}></span></i></article>
-      <article className="heatmap-stat panel preview-section"><p className="section-kicker">MARKET QUALITY</p><b>76<span>/100</span></b><p>Liquidity remains resilient</p><i><span style={{ width: '76%' }}></span></i></article>
+      <article className={`heatmap-hero panel ${heatmap?.status === 'calculated' ? '' : 'preview-section'}`}><div><p className="section-kicker">CROSS-ASSET REGIME</p><h2>{avgScore === null ? 'Awaiting inputs' : avgScore >= 55 ? 'Broadly constructive' : avgScore <= 35 ? 'Broadly guarded' : 'Mixed tape'} <span className="status-dot"></span></h2><p>Universe-average technical score of {avgScore ?? '—'}/100 across {assets.length} calculated markets.</p></div><div className="regime-distribution"><span className="positive">{riskOnCount}</span><span className="neutral">{neutralCount}</span><span className="negative">{stressCount}</span><small>Risk-on</small><small>Neutral</small><small>Stress</small></div></article>
+      <article className={`heatmap-stat panel ${avgAlignment === null ? 'preview-section' : ''}`}><p className="section-kicker">ALIGNMENT</p><b>{avgAlignment ?? '—'}<span>/100</span></b><p>Average absolute 60-day correlation versus SPY</p><i><span style={{ width: `${avgAlignment ?? 0}%` }}></span></i></article>
+      <article className={`heatmap-stat panel ${peakCrowding === null ? 'preview-section' : ''}`}><p className="section-kicker">PEAK CROWDING</p><b>{peakCrowding ?? '—'}<span>th pct</span></b><p>Highest CFTC positioning percentile in the universe</p><i className="amber"><span style={{ width: `${peakCrowding ?? 0}%` }}></span></i></article>
+      <article className={`heatmap-stat panel ${backdrop ? '' : 'preview-section'}`}><p className="section-kicker">LIQUIDITY BACKDROP</p><b>{backdrop?.score ?? '—'}<span>/100</span></b><p>Global liquidity regime: {backdrop?.regime ?? 'unavailable'}</p><i><span style={{ width: `${backdrop?.score ?? 0}%` }}></span></i></article>
     </section>
 
-    <section className="heatmap-heading"><div><p className="section-kicker">MARKET MATRIX</p><h2>Multi-asset heatmap <PreviewBadge /></h2></div><div className="heatmap-controls"><div className="group-filter">{groups.map((item) => <button className={group === item ? 'active' : ''} key={item} onClick={() => setGroup(item)}>{item}</button>)}</div><div className="window-buttons">{['1D', '1W', '1M'].map((item) => <button className={timeframe === item ? 'selected' : ''} key={item} onClick={() => setTimeframe(item)}>{item}</button>)}</div></div></section>
+    <section className="heatmap-heading"><div><p className="section-kicker">MARKET MATRIX · CALCULATED</p><h2>Multi-asset heatmap {heatmap?.status !== 'calculated' && <PreviewBadge />}</h2></div><div className="heatmap-controls"><div className="group-filter">{groups.map((item) => <button className={group === item ? 'active' : ''} key={item} onClick={() => setGroup(item)}>{item}</button>)}</div></div></section>
 
     <section className="heatmap-workspace">
-      <article className="heatmap-panel panel preview-section"><div className="heatmap-legend"><span><i className="positive"></i>Supportive</span><span><i className="neutral"></i>Mixed</span><span><i className="negative"></i>Guarded</span><small>{timeframe} model window</small></div><div className="heatmap-scroll"><div className="heatmap-table"><div className="heatmap-table-head"><span>Market</span>{heatmapColumns.map(([key, label]) => <button className={activeMetric === key ? 'metric-active' : ''} key={key} onClick={() => setActiveMetric(key)}>{label}</button>)}</div>{visibleAssets.map((asset) => <button className={`heatmap-row ${selectedAsset.symbol === asset.symbol ? 'asset-selected' : ''}`} onClick={() => setSelectedSymbol(asset.symbol)} key={asset.symbol}><span className="heatmap-asset"><b>{asset.symbol}</b><small>{asset.name}</small></span>{heatmapColumns.map(([key]) => <span className={`heatmap-cell ${heatmapCellTone(asset, key)} ${activeMetric === key ? 'metric-active' : ''}`} key={key}>{key === 'score' ? asset.score : asset[key]}</span>)}</button>)}</div></div></article>
-      <article className="heatmap-detail panel preview-section"><div className="panel-title"><div><p className="section-kicker">SELECTED MARKET</p><h3>{selectedAsset.name}</h3></div><span className={`market-symbol ${selectedAsset.group.toLowerCase().replace(' ', '-')}`}>{selectedAsset.symbol}</span></div><div className="detail-score"><span>{activeColumn[1]} signal</span><b className={heatmapCellTone(selectedAsset, activeMetric)}>{activeMetric === 'score' ? selectedAsset.score : selectedAsset[activeMetric]}</b><small>{selectedAsset.regime} regime</small></div><div className="detail-metrics">{heatmapColumns.filter(([key]) => key !== activeMetric).map(([key, label]) => <div key={key}><span>{label}</span><b className={heatmapCellTone(selectedAsset, key)}>{key === 'score' ? selectedAsset.score : selectedAsset[key]}</b></div>)}</div><div className="heatmap-callout"><span>Model read</span><p>{selectedAsset.note}</p></div><button className="source-link">Open {selectedAsset.symbol} research →</button></article>
+      <article className={`heatmap-panel panel ${heatmap?.status === 'calculated' ? '' : 'preview-section'}`}><div className="heatmap-legend"><span><i className="positive"></i>Supportive</span><span><i className="neutral"></i>Mixed</span><span><i className="negative"></i>Guarded</span><small>60D alignment window</small></div><div className="heatmap-scroll"><div className="heatmap-table"><div className="heatmap-table-head"><span>Market</span>{heatmapColumns.map(([key, label]) => <button className={activeMetric === key ? 'metric-active' : ''} key={key} onClick={() => setActiveMetric(key)}>{label}</button>)}</div>{visibleAssets.map((asset) => <button className={`heatmap-row ${selectedAsset?.symbol === asset.symbol ? 'asset-selected' : ''}`} onClick={() => setSelectedSymbol(asset.symbol)} key={asset.symbol}><span className="heatmap-asset"><b>{asset.symbol}</b><small>{asset.name}</small></span>{heatmapColumns.map(([key]) => <span className={`heatmap-cell ${cellTone(asset, key)} ${activeMetric === key ? 'metric-active' : ''}`} key={key}>{cellValue(asset, key)}</span>)}</button>)}{!visibleAssets.length && <div className="equity-empty">No calculated markets yet — stored close histories are required.</div>}</div></div></article>
+      {selectedAsset && <article className="heatmap-detail panel"><div className="panel-title"><div><p className="section-kicker">SELECTED MARKET</p><h3>{selectedAsset.name}</h3></div><span className="market-symbol us-indices">{selectedAsset.symbol}</span></div><div className="detail-score"><span>Technical score</span><b className={cellTone(selectedAsset, 'score')}>{selectedAsset.score}</b><small>{selectedAsset.regime} regime · as of {String(selectedAsset.asOf ?? '').slice(0, 10)}</small></div><div className="detail-metrics">{[['trend', 'Trend'], ['momentum', 'Momentum'], ['volatility', 'Volatility'], ['crowding', 'Crowding'], ['alignment', 'Alignment']].map(([key, label]) => <div key={key}><span>{label}</span><b className={cellTone(selectedAsset, key)}>{cellValue(selectedAsset, key)}</b></div>)}</div><div className="heatmap-callout"><span>Model read</span><p>{selectedAsset.trend} against a {selectedAsset.volatility.toLowerCase()} volatility profile; equity-market alignment is {String(selectedAsset.alignmentValue ?? '—')}{Number.isFinite(selectedAsset.crowdingPercentile) ? ` with leveraged-fund positioning at the ${selectedAsset.crowdingPercentile}th percentile` : ''}.</p></div><button className="source-link">Open {selectedAsset.symbol} research →</button></article>}
     </section>
 
     <section className="heatmap-bottom-grid">
-      <article className="heatmap-method panel preview-section"><p className="section-kicker">MODEL DISCIPLINES</p><h3>One screen, seven lenses.</h3><p>Scores combine trend, cross-market alignment, positioning, volatility, and liquidity rather than relying on price direction alone.</p><div><span>Score</span><span>Regime</span><span>Alignment</span><span>Trend</span><span>Crowding</span><span>Volatility</span><span>Liquidity</span></div></article>
-      <article className="heatmap-alert panel preview-section"><p className="section-kicker">WATCHLIST ALERT</p><h3>Options positioning is the weak link.</h3><p>Suppressed volatility and elevated dealer gamma can turn a quiet market into an unstable one if the index breaks its range.</p><button>Review positioning →</button></article>
+      <article className={`heatmap-method panel ${heatmap?.status === 'calculated' ? '' : 'preview-section'}`}><p className="section-kicker">MODEL DISCIPLINES</p><h3>One screen, seven lenses.</h3><p>Scores combine trend, cross-market alignment, positioning, volatility, and liquidity rather than relying on price direction alone.</p><div><span>Score</span><span>Regime</span><span>Alignment</span><span>Trend</span><span>Crowding</span><span>Volatility</span><span>Liquidity</span></div></article>
+      <article className="heatmap-alert panel preview-section"><p className="section-kicker">WATCHLIST ALERT</p><h3>Options positioning is the weak link.</h3><p>Suppressed volatility and elevated dealer gamma can turn a quiet market into an unstable one if the index breaks its range. Dealer-gamma feeds remain unplanned previews until an options source is connected.</p><button>Review positioning →</button></article>
     </section>
     <p className="independence-note">TradeGate is an independent market research platform and is not affiliated with Tradegate AG.</p>
   </div>;

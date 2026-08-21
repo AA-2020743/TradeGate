@@ -211,6 +211,12 @@ FRED histories are ingested with up to 2,500 observations per series, so weekly 
 
 The sector dashboard also publishes a calculated macro-sensitivity matrix: for every sector and subsector ETF it correlates 60-day daily changes against stored FRED broad-dollar, 10-year real-yield, VIX, and high-yield-spread histories. Volume, valuation, positioning, and ETF flows are not inferred from price data and remain labeled unavailable until a licensed source is connected.
 
+### Multi-asset heatmap
+
+`market-heatmap-v1` scores a 19-asset universe (crypto, US/European/Asian/LatAm index ETFs, EM, metals) with `technical-v1` on stored close histories. Alignment is the absolute 60-day change correlation versus SPY; crowding reuses CFTC COT three-year percentiles where a matching contract exists (SPY/QQQ/gold complex); the summary cards add universe-average score with a risk-on/neutral/stress distribution, peak crowding percentile, and the global liquidity backdrop. Cells without sufficient history stay explicitly unavailable.
+
+Market close histories work without any API key: Twelve Data is preferred when configured, and otherwise Yahoo Finance's public chart endpoint supplies one year of daily closes (BTC continues to use CoinGecko). Source labels reflect whichever provider served the response.
+
 ## Reliability Rules
 
 - Missing provider data returns unavailable; it is never silently replaced with a sample value.

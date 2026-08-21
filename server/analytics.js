@@ -460,6 +460,34 @@ export function calculateGlobalLiquidityModel(seriesList) {
   };
 }
 
+export function buildHeatmapRow({ symbol, name, group, technical, alignment, crowdingPercentile }) {
+  if (!technical) return { symbol, name, group, status: 'unavailable' };
+  const vol = technical.indicators?.annualizedVolatility20d;
+  const trendParts = technical.indicators ?? {};
+  const trend = !Number.isFinite(trendParts.sma50) ? 'Unavailable'
+    : trendParts.sma50 > trendParts.sma200 ? 'Uptrend'
+      : technical.latest > trendParts.sma50 ? 'Recovering'
+        : technical.latest < trendParts.sma200 ? 'Downtrend' : 'Range';
+  return {
+    symbol,
+    name,
+    group,
+    status: 'calculated',
+    asOf: technical.asOf,
+    score: technical.score,
+    regime: technical.score >= 65 ? 'Risk-on' : technical.score >= 55 ? 'Constructive' : technical.score <= 35 ? 'Stress' : 'Neutral',
+    trend,
+    momentum20d: Number.isFinite(technical.indicators?.momentum20d) ? Number((technical.indicators.momentum20d).toFixed(1)) : null,
+    volatility: Number.isFinite(vol) ? vol < 15 ? 'Low' : vol < 25 ? 'Moderate' : 'High' : 'Unavailable',
+    annualizedVolatility: Number.isFinite(vol) ? Number(vol.toFixed(1)) : null,
+    alignment: Number.isFinite(alignment) ? Math.abs(alignment) >= 0.6 ? 'High' : Math.abs(alignment) >= 0.3 ? 'Medium' : 'Low' : 'Unavailable',
+    alignmentValue: Number.isFinite(alignment) ? Number(alignment.toFixed(2)) : null,
+    crowding: crowdingPercentile === null || crowdingPercentile === undefined ? 'Unavailable'
+      : crowdingPercentile >= 90 ? 'Crowded' : crowdingPercentile >= 70 ? 'Elevated' : crowdingPercentile <= 10 ? 'Light' : 'Balanced',
+    crowdingPercentile: crowdingPercentile ?? null,
+  };
+}
+
 export function calculatePositioningModel(reports) {
   const usable = reports.filter((report) => Array.isArray(report.history) && report.history.length >= 26);
   const contracts = usable.map((report) => {

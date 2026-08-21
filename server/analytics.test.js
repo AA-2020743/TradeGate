@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { buildLiquidityNarrative, calculateChangeCorrelations, calculatePositioningModel, calculateCrossMarketRelationship, calculateGlobalLiquidityModel, calculateMacroRegimeModel, calculateRsi, calculateTechnicalSnapshot, calculateUsdStrengthModel, calculateUsLiquidityModel, pearsonCorrelation } from './analytics.js';
+import { buildHeatmapRow, buildLiquidityNarrative, calculateChangeCorrelations, calculatePositioningModel, calculateCrossMarketRelationship, calculateGlobalLiquidityModel, calculateMacroRegimeModel, calculateRsi, calculateTechnicalSnapshot, calculateUsdStrengthModel, calculateUsLiquidityModel, pearsonCorrelation } from './analytics.js';
 
 test('RSI reaches 100 for an uninterrupted advance', () => {
   const values = Array.from({ length: 30 }, (_, index) => 100 + index);
@@ -313,4 +313,21 @@ test('COT positioning ranks net speculative exposure', () => {
   assert.equal(sp.stance, 'Leveraged funds net long');
   assert.equal(sp.weeklyChange, 1000);
   assert.equal(model.coverage, 50);
+});
+test('heatmap rows derive labels from technical and positioning inputs', () => {
+  const technical = {
+    asOf: '2026-08-20',
+    score: 68,
+    latest: 110,
+    indicators: { sma50: 105, sma200: 100, momentum20d: 3.2, annualizedVolatility20d: 12.4 },
+  };
+  const row = buildHeatmapRow({ symbol: 'SPY', name: 'S&P 500', group: 'US indices', technical, alignment: 0.72, crowdingPercentile: 93 });
+  assert.equal(row.status, 'calculated');
+  assert.equal(row.regime, 'Risk-on');
+  assert.equal(row.trend, 'Uptrend');
+  assert.equal(row.volatility, 'Low');
+  assert.equal(row.alignment, 'High');
+  assert.equal(row.crowding, 'Crowded');
+  const missing = buildHeatmapRow({ symbol: 'X', name: 'X', group: 'G', technical: null, alignment: null, crowdingPercentile: null });
+  assert.equal(missing.status, 'unavailable');
 });

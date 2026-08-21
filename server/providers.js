@@ -1,6 +1,6 @@
 import { config } from './config.js';
 import { withCache } from './cache.js';
-import { buildLiquidityNarrative, calculateChangeCorrelations, calculatePositioningModel, calculateCrossMarketRelationship, calculateGlobalLiquidityModel, calculateMacroRegimeModel, calculateTechnicalSnapshot, calculateUsdStrengthModel, calculateUsLiquidityModel } from './analytics.js';
+import { buildHeatmapRow, buildLiquidityNarrative, calculateChangeCorrelations, calculatePositioningModel, calculateCrossMarketRelationship, calculateGlobalLiquidityModel, calculateMacroRegimeModel, calculateTechnicalSnapshot, calculateUsdStrengthModel, calculateUsLiquidityModel } from './analytics.js';
 import { getStoredFredSeries, getStoredMarketHistory, getStoredMarketSnapshot, getRecentModelOutputs, isDatabaseConfigured, reserveProviderCredits } from './database.js';
 import { getAllEquityHistorySymbols, getCoreEquityHistorySymbols } from './equityCatalog.js';
 import { isCryptoHistoryStale, isCotReportStale, isDailyCloseStale, isFredSeriesStale, isPbocObservationStale, monthsBetween } from './freshness.js';
@@ -376,6 +376,19 @@ async function getTwelveHistory(symbol, range, usage) {
   });
 }
 
+async function getYahooHistory(symbol) {
+  const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}?range=1y&interval=1d`;
+  const payload = await fetchJson(url);
+  const result = payload?.chart?.result?.[0];
+  const timestamps = result?.timestamp ?? [];
+  const closes = result?.indicators?.quote?.[0]?.close ?? [];
+  return timestamps.flatMap((seconds, index) => {
+    const value = asNumber(closes[index]);
+    if (value === null || !Number.isFinite(seconds)) return [];
+    return [{ timestamp: new Date(seconds * 1000).toISOString(), value }];
+  });
+}
+
 export function getSupportedHistorySymbols() {
   return [...HISTORY_SYMBOLS];
 }
@@ -412,10 +425,22 @@ export async function getMarketHistory(symbol, requestedRange, options = {}) {
 
     let points;
     let providerError = null;
+    let sourceLabel = normalizedSymbol === 'BTC' ? 'CoinGecko' : config.twelveDataApiKey ? 'Twelve Data' : 'Yahoo Finance';
     try {
-      points = normalizedSymbol === 'BTC'
-        ? await getBitcoinHistory(range)
-        : await getTwelveHistory(normalizedSymbol, range, options.usage);
+      if (normalizedSymbol === 'BTC') {
+        points = await getBitcoinHistory(range);
+      } else {
+        try {
+          points = await getTwelveHistory(normalizedSymbol, range, options.usage);
+        } catch (twelveError) {
+          if (options.preferStored === false && config.twelveDataApiKey) throw twelveError;
+          points = [];
+        }
+        if (!points.length) {
+          points = await getYahooHistory(normalizedSymbol);
+          sourceLabel = 'Yahoo Finance';
+        }
+      }
       points = filterHistoryRange(points, range);
     } catch (error) {
       if (options.preferStored === false) throw error;
@@ -431,11 +456,65 @@ export async function getMarketHistory(symbol, requestedRange, options = {}) {
       symbol: normalizedSymbol,
       range,
       asOf,
-      source: providerError ? 'PostgreSQL (last known good)' : normalizedSymbol === 'BTC' ? 'CoinGecko' : 'Twelve Data',
-      configured: normalizedSymbol === 'BTC' || Boolean(config.twelveDataApiKey),
+      source: providerError ? 'PostgreSQL (last known good)' : sourceLabel,
+      configured: normalizedSymbol === 'BTC' || Boolean(config.twelveDataApiKey) || sourceLabel === 'Yahoo Finance',
       stored: Boolean(providerError),
       stale,
       points,
+    };
+  });
+}
+
+const HEATMAP_UNIVERSE = [
+  { symbol: 'BTC', name: 'Bitcoin', group: 'Crypto' },
+  { symbol: 'SPY', name: 'S&P 500', group: 'US indices' },
+  { symbol: 'QQQ', name: 'Nasdaq 100', group: 'US indices' },
+  { symbol: 'DIA', name: 'Dow Jones', group: 'US indices' },
+  { symbol: 'IWM', name: 'Russell 2000', group: 'US indices' },
+  { symbol: 'FEZ', name: 'Euro Stoxx 50', group: 'Europe' },
+  { symbol: 'EWG', name: 'Germany', group: 'Europe' },
+  { symbol: 'EWU', name: 'United Kingdom', group: 'Europe' },
+  { symbol: 'EWQ', name: 'France', group: 'Europe' },
+  { symbol: 'EWJ', name: 'Japan', group: 'Japan' },
+  { symbol: 'ASHR', name: 'China A-shares', group: 'China' },
+  { symbol: 'EWH', name: 'Hong Kong', group: 'China' },
+  { symbol: 'KWEB', name: 'China Internet', group: 'China' },
+  { symbol: 'EWZ', name: 'Brazil', group: 'LatAm' },
+  { symbol: 'EWW', name: 'Mexico', group: 'LatAm' },
+  { symbol: 'EEM', name: 'Emerging Markets', group: 'EM' },
+  { symbol: 'GLD', name: 'Gold', group: 'Metals' },
+  { symbol: 'SLV', name: 'Silver', group: 'Metals' },
+  { symbol: 'GDX', name: 'Gold Miners', group: 'Metals' },
+];
+const HEATMAP_CROWDING_KEYS = { SPY: 'sp500', QQQ: 'nasdaq100', GLD: 'gold', SLV: 'gold', GDX: 'gold' };
+
+export async function getMarketHeatmap() {
+  return withCache('analytics:market-heatmap', 15 * 60_000, async () => {
+    const [positioningResult, liquidityResult] = await Promise.allSettled([getMarketPositioning(), getLiquiditySnapshot()]);
+    const positioning = positioningResult.status === 'fulfilled' ? positioningResult.value.model : null;
+    const globalLiquidity = liquidityResult.status === 'fulfilled' ? liquidityResult.value.globalLiquidity : null;
+    const toPoints = (points) => (points ?? []).filter((point) => Number.isFinite(point.value)).map((point) => ({ timestamp: point.timestamp ?? `${point.date}T00:00:00.000Z`, value: point.value }));
+    const spyHistory = await getMarketHistory('SPY', '1Y').catch(() => null);
+    const spyPoints = toPoints(spyHistory?.stale ? [] : spyHistory?.points);
+    const results = await Promise.allSettled(HEATMAP_UNIVERSE.map(async (entry) => {
+      const history = await getMarketHistory(entry.symbol, '1Y');
+      const points = history.stale ? [] : toPoints(history.points);
+      const technical = calculateTechnicalSnapshot(points, { annualizationDays: entry.symbol === 'BTC' ? 365 : 252 });
+      const alignment = entry.symbol === 'SPY' ? 1 : calculateChangeCorrelations(spyPoints, points)?.correlations?.['60D'] ?? null;
+      const crowdContract = positioning?.contracts?.find((contract) => contract.key === HEATMAP_CROWDING_KEYS[entry.symbol]);
+      return buildHeatmapRow({ symbol: entry.symbol, name: entry.name, group: entry.group, technical, alignment, crowdingPercentile: crowdContract?.percentile ?? null });
+    }));
+    const assets = results.flatMap((result) => result.status === 'fulfilled' ? [result.value] : []);
+    const calculated = assets.filter((asset) => asset.status === 'calculated');
+    return {
+      asOf: new Date().toISOString(),
+      version: 'market-heatmap-v1',
+      status: calculated.length ? 'calculated' : 'unavailable',
+      calculatedCount: calculated.length,
+      universeSize: HEATMAP_UNIVERSE.length,
+      liquidityBackdrop: globalLiquidity ? { score: globalLiquidity.score, regime: globalLiquidity.regime } : null,
+      assets,
+      methodology: 'Scores from technical-v1 on stored close histories; alignment is the 60-day change correlation versus SPY; crowding uses CFTC COT three-year percentile where a matching contract exists; volatility is 20-day annualized realized volatility.',
     };
   });
 }
