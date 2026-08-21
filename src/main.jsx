@@ -793,7 +793,7 @@ function MacroDashboard({ data }) {
     <section className="workspace-pulse panel">
       <div className="panel-title"><div><p className="section-kicker">WORKSPACE PULSE · CALCULATED</p><h3>Headlines from every calculated workspace</h3></div><span className="data-pill">Live</span></div>
       <div className="btc-cycle-grid">
-        <div className="btc-cycle-cell"><small>Screener momentum</small><b>{(() => { const leader = screenerLeader(data.screener?.rows); return leader ? `${leader.symbol} ${leader.mom20 > 0 ? '+' : ''}${leader.mom20}%` : '—'; })()}</b><span>{data.screener?.status === 'calculated' ? `Leader of ${data.screener.calculatedCount} constituents by 20D momentum` : 'Screener histories pending'}</span></div>
+        <div className="btc-cycle-cell"><small>Screener momentum</small><b>{(() => { const leader = screenerLeader(data.screener?.rows); return leader ? `${leader.symbol} ${leader.mom20 > 0 ? '+' : ''}${leader.mom20}%` : '—'; })()}</b><span>{data.screener?.status === 'calculated' ? (() => { const leader = screenerLeader(data.screener?.rows); return `Top of ${data.screener.calculatedCount} names${leader?.sector ? ` · ${leader.sector}` : ''} by 20D momentum`; })() : 'Screener histories pending'}</span></div>
         <div className="btc-cycle-cell"><small>Crypto aggregate</small><b>{Number.isFinite(data.bitcoin?.cryptoGlobal?.mcapChange24hPct) ? `${data.bitcoin.cryptoGlobal.mcapChange24hPct > 0 ? '+' : ''}${data.bitcoin.cryptoGlobal.mcapChange24hPct.toFixed(2)}%` : '—'}</b><span>Total crypto market cap, 24 hours</span></div>
         <div className="btc-cycle-cell"><small>Fear &amp; Greed</small><b>{Number.isFinite(data.sentiment?.fearGreed?.score) ? data.sentiment.fearGreed.score : '—'}</b><span>{data.sentiment?.fearGreed?.rating ?? 'Sentiment feed pending'}</span></div>
         <div className="btc-cycle-cell"><small>Equity breadth</small><b>{Number.isFinite(data.equityRisk?.spxBreadth?.pctAbove200) ? `${data.equityRisk.spxBreadth.pctAbove200}%` : '—'}</b><span>{data.equityRisk?.spxBreadth?.status === 'calculated' ? data.equityRisk.spxBreadth.read : 'Breadth histories pending'}</span></div>
@@ -853,18 +853,21 @@ const SCREENER_PRESETS = {
 function ScreenerDashboard({ data }) {
   const [preset, setPreset] = React.useState('momentum-leaders');
   const [search, setSearch] = React.useState('');
+  const [sectorFilter, setSectorFilter] = React.useState('All');
   const screener = data.screener;
   const rows = screener?.rows ?? [];
   const definition = SCREENER_PRESETS[preset];
+  const sectors = ['All', ...(screener?.sectorLeadership ?? []).map((item) => item.sector)];
   const matched = rows
     .filter(definition.filter)
+    .filter((row) => sectorFilter === 'All' || row.sector === sectorFilter)
     .filter((row) => !search || row.symbol.toLowerCase().includes(search.trim().toLowerCase()))
     .sort(definition.sort);
   const filtered = matched.slice(0, 40);
 
   const exportCsv = () => {
-    const header = 'Symbol,Last,Mom20,Mom60,VsSma200,Rsi14,Vol20,Score';
-    const lines = matched.map((row) => [row.symbol, row.last ?? '', row.mom20 ?? '', row.mom60 ?? '', row.vsSma200 ?? '', Number.isFinite(row.rsi14) ? row.rsi14.toFixed(1) : '', row.vol20 ?? '', row.score ?? ''].join(','));
+    const header = 'Symbol,Sector,Last,Mom20,Mom60,VsSma200,Rsi14,Vol20,Score';
+    const lines = matched.map((row) => [row.symbol, row.sector ?? '', row.last ?? '', row.mom20 ?? '', row.mom60 ?? '', row.vsSma200 ?? '', Number.isFinite(row.rsi14) ? row.rsi14.toFixed(1) : '', row.vol20 ?? '', row.score ?? ''].join(','));
     const blob = new Blob([[header].concat(lines).join('\n')], { type: 'text/csv' });
     const url = URL.createObjectURL(blob);
     const anchor = document.createElement('a');
@@ -881,6 +884,9 @@ function ScreenerDashboard({ data }) {
     </section>
     <DataDisclosure data={data} message={`Every metric is calculated from Yahoo batch spark one-year daily closes over the Wikipedia S&P 500 list. ${screener?.calculatedCount ?? 0} of ${screener?.universeSize ?? 0} constituents returned usable history.`} />
     <section className="macro-section-heading"><div><p className="section-kicker">SCREENS · CALCULATED</p><h2>{definition.label}</h2></div><span className="data-pill">{filtered.length ? `Top ${filtered.length} of ${rows.length}` : 'No matches'}</span></section>
+    <section className="screener-controls-row">
+      <div className="window-buttons">{sectors.map((sector) => <button className={sectorFilter === sector ? 'selected' : ''} key={sector} onClick={() => setSectorFilter(sector)}>{sector === 'All' ? 'All sectors' : sector}</button>)}</div>
+    </section>
     <section className="screener-controls-row">
       <div className="window-buttons">{Object.entries(SCREENER_PRESETS).map(([key, item]) => <button className={preset === key ? 'selected' : ''} key={key} onClick={() => setPreset(key)}>{item.label}</button>)}</div>
       <input className="screener-search" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Filter by symbol…" aria-label="Filter by symbol" />

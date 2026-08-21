@@ -1062,6 +1062,7 @@ export async function getEquityScreener() {
       const variance = returns.reduce((total, value) => total + ((value - meanReturn) ** 2), 0) / (returns.length || 1);
       rows.push({
         symbol,
+        sector: universe.sectors.get(symbol) ?? null,
         last: Math.round(last * 100) / 100,
         mom20: closes.length > 21 ? round1(((last / closes.at(-21)) - 1) * 100) : null,
         mom60: closes.length > 61 ? round1(((last / closes.at(-61)) - 1) * 100) : null,
