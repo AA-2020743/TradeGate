@@ -521,6 +521,31 @@ function EquitiesDashboard({ platformData }) {
       })()}
     </section>
 
+    <section className="equity-section-heading"><div><p className="section-kicker">RISK APPETITE · CALCULATED</p><h2>Breadth, credit, and the equity premium</h2></div><EquityStatus status={platformData?.equityRisk?.status} label="Inputs pending" /></section>
+    <section className="equity-macro-matrix">
+      {(() => {
+        const risk = platformData?.equityRisk;
+        const hasRisk = Boolean(risk?.calculatedCount);
+        return <article className={`equity-rotation-panel panel wide ${hasRisk ? '' : 'preview-section'}`}>
+          <div className="panel-title"><div><p className="section-kicker">EQUITY RISK DASHBOARD · {risk?.version ? risk.version.toUpperCase() : 'UNAVAILABLE'}</p><h3>{risk?.spxBreadth?.status === 'calculated' ? `${risk.spxBreadth.pctAbove200}% of S&P 500 above 200-day — ${risk.spxBreadth.read}` : 'Breadth and risk appetite'}</h3></div><span className="data-pill">{risk ? `${risk.calculatedCount}/${risk.totalLegs} legs` : 'Unavailable'}</span></div>
+          {hasRisk ? <>
+            <div className="btc-cycle-grid">
+              <div className="btc-cycle-cell"><small>Above 200DMA</small><b>{risk.spxBreadth?.status === 'calculated' ? `${risk.spxBreadth.pctAbove200}%` : '—'}</b><span>{risk.spxBreadth?.status === 'calculated' ? `${risk.spxBreadth.counted}/${risk.spxBreadth.universeSize} constituents` : risk.spxBreadth?.reason}</span></div>
+              <div className="btc-cycle-cell"><small>Above 50DMA</small><b>{risk.spxBreadth?.status === 'calculated' ? `${risk.spxBreadth.pctAbove50}%` : '—'}</b><span>Short-term participation</span></div>
+              <div className="btc-cycle-cell"><small>RSP/SPY 50d slope</small><b>{risk.equalWeight?.status === 'calculated' ? `${risk.equalWeight.slope50 > 0 ? '+' : ''}${risk.equalWeight.slope50}%` : '—'}</b><span>{risk.equalWeight?.read ?? risk.equalWeight?.reason}</span></div>
+              <div className="btc-cycle-cell"><small>HY OAS</small><b>{risk.creditStress?.status === 'calculated' ? `${risk.creditStress.level}%` : '—'}</b><span>{risk.creditStress?.status === 'calculated' ? `${risk.creditStress.change20d >= 0 ? '+' : ''}${risk.creditStress.change20d} 20d · ${risk.creditStress.read}` : risk.creditStress?.reason}</span></div>
+              <div className="btc-cycle-cell"><small>ERP proxy</small><b>{risk.riskPremium?.status === 'calculated' ? `${risk.riskPremium.spread > 0 ? '+' : ''}${risk.riskPremium.spread}%` : '—'}</b><span>{risk.riskPremium?.status === 'calculated' ? `EY ${risk.riskPremium.earningsYield}% − real ${risk.riskPremium.realYield10y}% · ${risk.riskPremium.read}` : risk.riskPremium?.reason}</span></div>
+            </div>
+            {risk.sectorRotation?.status === 'calculated' && <>
+              <div className="equity-rotation-head sentiment-head" style={{ marginTop: 14 }}><span>Sector SPDR relative strength vs SPY</span><span>3M RS</span></div>
+              {risk.sectorRotation.rows.map((row) => <div className="equity-rotation-row sentiment-row" key={row.symbol}><span><strong>{row.name}</strong><small>{row.symbol} · 20-session RS {row.momentum20d > 0 ? '+' : ''}{row.momentum20d}%</small></span><b className={row.momentum3m >= 0 ? 'positive' : 'negative'}>{row.momentum3m > 0 ? '+' : ''}{row.momentum3m}%</b></div>)}
+            </>}
+            <p className="equity-source-line">{risk.methodology}</p>
+          </> : <div className="equity-empty">The risk dashboard publishes as constituent histories, FRED spreads, and earnings-yield inputs respond.</div>}
+        </article>;
+      })()}
+    </section>
+
     <section className="equity-section-heading"><div><p className="section-kicker">MARKET INTERNALS · CALCULATED PROXY</p><h2>Participation across the ETF universe</h2></div><EquityStatus status={sectorData?.sectorBreadth?.status} label="Histories pending" /></section>
     <section className="equity-macro-matrix">
       <article className="equity-rotation-panel panel wide">

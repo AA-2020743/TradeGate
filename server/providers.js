@@ -90,9 +90,9 @@ async function fetchJson(url, attempt = 0, maxRetries = 2, extraHeaders = null) 
   return response.json();
 }
 
-async function fetchText(url, attempt = 0, maxRetries = 2) {
+async function fetchText(url, attempt = 0, maxRetries = 2, extraHeaders = null) {
   const response = await fetch(url, {
-    headers: { Accept: 'text/csv', 'User-Agent': 'TradeGateResearch/0.1' },
+    headers: { Accept: 'text/html,text/csv,*/*', 'User-Agent': 'TradeGateResearch/0.1', ...(extraHeaders ?? {}) },
     signal: AbortSignal.timeout(12_000),
   });
 
@@ -100,7 +100,7 @@ async function fetchText(url, attempt = 0, maxRetries = 2) {
     const retryAfterHeader = response.headers.get('retry-after');
     const retryAfter = retryAfterHeader === null ? Number.NaN : Number(retryAfterHeader);
     await wait(Number.isFinite(retryAfter) ? Math.min(retryAfter * 1000, 30_000) : 5_000 * (attempt + 1));
-    return fetchText(url, attempt + 1, maxRetries);
+    return fetchText(url, attempt + 1, maxRetries, extraHeaders);
   }
   if (!response.ok) throw new Error(`Upstream request failed with ${response.status}`);
   return response.text();
@@ -690,6 +690,214 @@ async function getBinancePositioningLeg() {
 
 let bitcoinOnchainMemo = null;
 let bitcoinDerivativesMemo = null;
+
+const BROWSER_HEADERS = {
+  'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36',
+  Accept: 'application/json, text/html, */*',
+};
+
+const SECTOR_SPDRS = [
+  { symbol: 'XLK', name: 'Technology' },
+  { symbol: 'XLC', name: 'Communication Services' },
+  { symbol: 'XLY', name: 'Consumer Discretionary' },
+  { symbol: 'XLP', name: 'Consumer Staples' },
+  { symbol: 'XLE', name: 'Energy' },
+  { symbol: 'XLF', name: 'Financials' },
+  { symbol: 'XLV', name: 'Health Care' },
+  { symbol: 'XLI', name: 'Industrials' },
+  { symbol: 'XLB', name: 'Materials' },
+  { symbol: 'XLRE', name: 'Real Estate' },
+  { symbol: 'XLU', name: 'Utilities' },
+];
+
+function getSpxConstituents() {
+  return withCache('equity:spx-constituents', 7 * 86_400_000, async () => {
+    const html = await fetchText('https://en.wikipedia.org/wiki/List_of_S%26P_500_companies', 0, 2, BROWSER_HEADERS);
+    const nasdaq = [...html.matchAll(/nasdaq\.com\/market-activity\/stocks\/([a-z.\-]+)/g)].map((match) => match[1].toUpperCase());
+    const nyse = [...html.matchAll(/nyse\.com\/quote\/(?:XNYS|XASE|ARCX):([A-Z.\-]+)/g)].map((match) => match[1]);
+    const symbols = [...new Set([...nasdaq, ...nyse])];
+    if (symbols.length < 400) throw new Error(`Wikipedia constituent list incomplete (${symbols.length} symbols)`);
+    return symbols;
+  });
+}
+
+async function getSparkBatch(symbols) {
+  const url = `https://query1.finance.yahoo.com/v7/finance/spark?symbols=${encodeURIComponent(symbols.join(','))}&range=1y&interval=1d`;
+  const payload = await fetchJson(url, 0, 2, BROWSER_HEADERS);
+  const rows = payload?.spark?.result ?? [];
+  const out = new Map();
+  for (const row of rows) {
+    const rawCloses = row?.response?.[0]?.indicators?.quote?.[0]?.close ?? [];
+    const values = rawCloses.map((close) => asNumber(close)).filter((value) => value !== null);
+    if (values.length >= 210) out.set(row.symbol, values);
+  }
+  return out;
+}
+
+async function getSparkCloses(symbols) {
+  const normalized = [...new Set(symbols.map((symbol) => symbol.replace(/\./g, '-')))];
+  const batches = [];
+  for (let index = 0; index < normalized.length; index += 20) batches.push(normalized.slice(index, index + 20));
+  const merged = new Map();
+  let failures = 0;
+  for (let waveStart = 0; waveStart < batches.length; waveStart += 4) {
+    const wave = batches.slice(waveStart, waveStart + 4);
+    const settled = await Promise.allSettled(wave.map((batch) => getSparkBatch(batch)));
+    for (const result of settled) {
+      if (result.status === 'fulfilled') {
+        for (const [key, value] of result.value) merged.set(key, value);
+      } else {
+        failures += 1;
+      }
+    }
+    if (waveStart + 4 < batches.length) await wait(500);
+  }
+  if (!merged.size) throw new Error(`All ${batches.length} spark batches failed (${failures} failures)`);
+  return merged;
+}
+
+function alignedRatioSeries(left, right) {
+  const n = Math.min(left.length, right.length);
+  const offsetLeft = left.length - n;
+  const offsetRight = right.length - n;
+  const ratios = [];
+  for (let index = 0; index < n; index += 1) {
+    const denominator = right[offsetRight + index];
+    if (denominator > 0) ratios.push(left[offsetLeft + index] / denominator);
+  }
+  return ratios;
+}
+
+export async function getEquityRiskAppetite() {
+  return withCache('analytics:equity-risk', 6 * 3_600_000, async () => {
+    const [constituentsResult, fredResult] = await Promise.allSettled([
+      getSpxConstituents(),
+      Promise.all([
+        getFredCsvSeries({ id: 'BAMLH0A0HYM2', key: 'highYieldSpread', name: 'US high-yield OAS' }),
+        getFredCsvSeries({ id: 'DFII10', key: 'realYield10y', name: '10-year real yield' }),
+      ]),
+    ]);
+
+    let spxBreadth = { status: 'unavailable', reason: `Constituent list unavailable: ${constituentsResult.reason?.message ?? constituentsResult.reason}` };
+    let equalWeight = { status: 'unavailable', reason: 'RSP/SPY histories are required.' };
+    let sectorRotation = { status: 'unavailable', reason: 'Sector SPDR histories are required.' };
+
+    if (constituentsResult.status === 'fulfilled') {
+      try {
+        const symbols = constituentsResult.value;
+        const closesBySymbol = await getSparkCloses([...symbols, 'RSP', 'SPY', ...SECTOR_SPDRS.map((sector) => sector.symbol)]);
+
+        let above200 = 0;
+        let above50 = 0;
+        let counted = 0;
+        for (const symbol of symbols) {
+          const closes = closesBySymbol.get(symbol);
+          if (!closes || closes.length < 200) continue;
+          counted += 1;
+          const last = closes.at(-1);
+          if (last > smaOf(closes, 200)) above200 += 1;
+          if (closes.length >= 50 && last > smaOf(closes, 50)) above50 += 1;
+        }
+        if (counted >= symbols.length * 0.8) {
+          spxBreadth = {
+            status: 'calculated',
+            universeSize: symbols.length,
+            counted,
+            pctAbove200: Math.round((above200 / counted) * 100),
+            pctAbove50: Math.round((above50 / counted) * 100),
+            read: above200 / counted >= 0.6 ? 'Broad participation' : above200 / counted <= 0.4 ? 'Narrow market' : 'Mixed breadth',
+          };
+        } else {
+          spxBreadth = { status: 'unavailable', reason: `Only ${counted} of ${symbols.length} constituents returned usable history.` };
+        }
+
+        const rsp = closesBySymbol.get('RSP');
+        const spy = closesBySymbol.get('SPY');
+        if (rsp && spy) {
+          const ratio = alignedRatioSeries(rsp, spy);
+          const slope50 = ratio.length > 55 ? Math.round(((ratio.at(-1) / ratio.at(-51)) - 1) * 10000) / 100 : null;
+          equalWeight = {
+            status: slope50 !== null ? 'calculated' : 'unavailable',
+            ratio: Math.round(ratio.at(-1) * 1000) / 1000,
+            slope50,
+            read: slope50 === null ? 'Insufficient history' : slope50 > 0.5 ? 'Equal-weight leading — broad tape' : slope50 < -0.5 ? 'Cap-weight leading — narrowing tape' : 'Balanced',
+            reason: slope50 === null ? 'RSP/SPY history shorter than the 50-session window.' : undefined,
+          };
+        }
+
+        const sectorRows = [];
+        for (const sector of SECTOR_SPDRS) {
+          const closes = closesBySymbol.get(sector.symbol);
+          if (!closes || !spy || closes.length < 70) continue;
+          const rs = alignedRatioSeries(closes, spy);
+          if (rs.length < 65) continue;
+          const momentum3m = Math.round(((rs.at(-1) / rs.at(-64)) - 1) * 10000) / 100;
+          const momentum20d = Math.round(((rs.at(-1) / rs.at(-21)) - 1) * 10000) / 100;
+          sectorRows.push({ symbol: sector.symbol, name: sector.name, momentum3m, momentum20d });
+        }
+        if (sectorRows.length >= 8) {
+          sectorRows.sort((left, right) => right.momentum3m - left.momentum3m);
+          sectorRotation = { status: 'calculated', leaders: sectorRows.slice(0, 3).map((row) => row.name).join(', '), laggards: sectorRows.slice(-2).map((row) => row.name).join(', '), rows: sectorRows };
+        } else {
+          sectorRotation = { status: 'unavailable', reason: `Only ${sectorRows.length} sector SPDRs returned usable history.` };
+        }
+      } catch (error) {
+        spxBreadth = { status: 'unavailable', reason: `Breadth calculation failed: ${error.message}` };
+      }
+    }
+
+    let creditStress = { status: 'unavailable', reason: 'FRED high-yield spread is required.' };
+    let riskPremium = { status: 'unavailable', reason: 'Earnings-yield and real-yield inputs are required.' };
+    if (fredResult.status === 'fulfilled') {
+      const [hySeries, realSeries] = fredResult.value;
+      const hyValue = hySeries?.value;
+      const hy20dAgo = hySeries?.history?.at(-21)?.value;
+      creditStress = Number.isFinite(hyValue) ? {
+        status: 'calculated',
+        level: hyValue,
+        change20d: Number.isFinite(hy20dAgo) ? Math.round((hyValue - hy20dAgo) * 100) / 100 : null,
+        read: hyValue < 3.2 ? 'Complacent' : hyValue < 4.5 ? 'Neutral' : hyValue < 6 ? 'Stress building' : 'Distress',
+        date: hySeries.date,
+      } : { status: 'unavailable', reason: 'FRED returned no usable high-yield observation.' };
+
+      const realYield = realSeries?.value;
+      try {
+        const html = await fetchText('https://www.multpl.com/s-p-500-earnings-yield', 0, 2, BROWSER_HEADERS);
+        const match = html.match(/Current S&amp;P 500 Earnings Yield[:<>/a-z\s]*(-?[\d.]+)/) ?? html.match(/Current S&P 500 Earnings Yield[:<>/a-z\s]*(-?[\d.]+)/);
+        const earningsYield = match ? asNumber(match[1]) : null;
+        riskPremium = earningsYield !== null && Number.isFinite(realYield) ? {
+          status: 'calculated',
+          earningsYield,
+          realYield10y: realYield,
+          spread: Math.round((earningsYield - realYield) * 100) / 100,
+          basis: 'Trailing earnings yield (multpl.com) minus 10-year TIPS real yield',
+          read: earningsYield - realYield > 2 ? 'Equities cheap vs bonds' : earningsYield - realYield > 0 ? 'Modest equity premium' : 'Bonds favored',
+          date: realSeries.date,
+        } : { status: 'unavailable', reason: 'multpl.com earnings yield or FRED real yield was unusable.' };
+      } catch (error) {
+        riskPremium = { status: 'unavailable', reason: `multpl.com unreachable: ${error.message}` };
+      }
+    } else {
+      creditStress = { status: 'unavailable', reason: `FRED CSV unreachable: ${fredResult.reason?.message ?? fredResult.reason}` };
+    }
+
+    const legs = [spxBreadth, equalWeight, creditStress, riskPremium, sectorRotation];
+    const calculatedCount = legs.filter((leg) => leg.status === 'calculated').length;
+    return {
+      asOf: new Date().toISOString(),
+      version: 'equity-risk-v1',
+      status: calculatedCount ? 'calculated' : 'unavailable',
+      calculatedCount,
+      totalLegs: legs.length,
+      spxBreadth,
+      equalWeight,
+      creditStress,
+      riskPremium,
+      sectorRotation,
+      methodology: 'Breadth computes 200-day and 50-day simple averages per constituent from Wikipedia\'s S&P 500 list and Yahoo batch spark closes. Equal-weight participation uses the RSP/SPY ratio 50-session slope. Credit stress reads FRED BAMLH0A0HYM2 with a 20-observation change. The risk-premium proxy subtracts the 10-year TIPS real yield from the trailing earnings yield on multpl.com. Sector rotation ranks 11 SPDRs by 3-month relative strength versus SPY.',
+    };
+  });
+}
 
 export async function getBitcoinCycleWorkspace() {
   return withCache('analytics:bitcoin-cycle', 30 * 60_000, async () => {

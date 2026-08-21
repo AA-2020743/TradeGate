@@ -20,6 +20,7 @@ export function usePlatformData() {
     fx: null,
     sentiment: null,
     bitcoin: null,
+    equityRisk: null,
     error: null,
   });
 
@@ -27,7 +28,7 @@ export function usePlatformData() {
     let active = true;
 
     const load = async () => {
-      const [health, markets, liquidity, dxyBtc, regimeCorrelations, positioning, heatmap, metals, fx, sentiment, bitcoin] = await Promise.allSettled([
+      const [health, markets, liquidity, dxyBtc, regimeCorrelations, positioning, heatmap, metals, fx, sentiment, bitcoin, equityRisk] = await Promise.allSettled([
         requestJson('/api/health'),
         requestJson('/api/markets/snapshot'),
         requestJson('/api/macro/liquidity'),
@@ -39,6 +40,7 @@ export function usePlatformData() {
         requestJson('/api/analytics/fx'),
         requestJson('/api/analytics/sentiment'),
         requestJson('/api/analytics/bitcoin'),
+        requestJson('/api/analytics/equity-risk'),
       ]);
       if (!active) return;
 
@@ -53,6 +55,7 @@ export function usePlatformData() {
       const fxData = fx.status === 'fulfilled' ? fx.value : null;
       const sentimentData = sentiment.status === 'fulfilled' ? sentiment.value : null;
       const bitcoinData = bitcoin.status === 'fulfilled' ? bitcoin.value : null;
+      const equityRiskData = equityRisk.status === 'fulfilled' ? equityRisk.value : null;
       const hasQuotes = Boolean(marketData?.assets?.length);
       const hasUnconfiguredProviders = Object.values(healthData?.providers ?? {}).some((provider) => !provider.configured || (provider.connected === false && provider.mode === 'unavailable') || provider.migrated === false && provider.configured);
       const hasErrors = [health, markets, liquidity, dxyBtc].some((result) => result.status === 'rejected') || Boolean(marketData?.errors?.length) || Boolean(liquidityData?.errors?.length) || hasUnconfiguredProviders;
@@ -70,6 +73,7 @@ export function usePlatformData() {
         fx: fxData,
         sentiment: sentimentData,
         bitcoin: bitcoinData,
+        equityRisk: equityRiskData,
         error: !healthData ? 'The data API is unavailable.' : hasErrors ? 'Some data providers are unavailable.' : null,
       });
     };

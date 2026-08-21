@@ -223,6 +223,10 @@ Market close histories work without any API key: Twelve Data is preferred when c
 
 The metals COT panel also publishes the disaggregated report (dataset `72hh-3qpy`): three-year percentile ranks of net managed-money, producer/merchant, and swap-dealer gold positions with weekly changes, alongside the legacy net-non-commercial percentile. The FX positioning panel additionally carries the ICE US Dollar Index futures contract (`098662`) so USD speculative crowding sits beside the six currency pairs.
 
+`bitcoin-cycle-v1` assembles seven crowding legs: 200-day/200-week trend regime (Yahoo BTC-USD), MVRV Z-score and short-term-holder realized price (bitcoin-data.com), aggregate Binance+Bybit funding with a history percentile, a 7-day open-interest-versus-price quadrant, aggregate stablecoin supply change (DefiLlama), and spot ETF flows, which remain unavailable without a licensed source. Same-host calls are serialized and last-known-good values are memoized because bitcoin-data.com rate-limits aggressively.
+
+`equity-risk-v1` publishes S&P 500 breadth (% of constituents above 200-day and 50-day averages from Wikipedia's constituent list plus Yahoo batch spark closes), RSP/SPY equal-weight participation slope, FRED high-yield OAS with 20-observation change, an equity-risk-premium proxy (trailing earnings yield from multpl.com minus the 10-year TIPS real yield), and 3-month relative strength for all 11 sector SPDRs versus SPY. A CNN Fear & Greed snapshot card sits alongside CFTC positioning on the equities tab.
+
 ## Reliability Rules
 
 - Missing provider data returns unavailable; it is never silently replaced with a sample value.
