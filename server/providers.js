@@ -736,6 +736,7 @@ const COT_CONTRACTS = [
   { code: '209742', key: 'nasdaq100', name: 'E-mini Nasdaq-100' },
   { code: '088691', key: 'gold', name: 'COMEX Gold' },
   { code: '1170E1', key: 'vix', name: 'VIX Futures' },
+  { code: '098662', key: 'usdIndex', name: 'US Dollar Index' },
   { code: '099741', key: 'fxeur', name: 'Euro FX' },
   { code: '097741', key: 'fxjpy', name: 'Japanese Yen' },
   { code: '096742', key: 'fxgbp', name: 'British Pound' },
@@ -889,16 +890,18 @@ export async function getFxWorkspace() {
       },
     ];
     const riskRegime = spyMomentum === null ? 'Unavailable' : spyMomentum >= 0 ? 'Risk-on' : 'Risk-off';
+    const usdContract = positioning?.contracts?.find((item) => item.key === 'usdIndex') ?? null;
     return {
       asOf: new Date().toISOString(),
       version: 'fx-workspace-v1',
       status: pairs.length ? 'calculated' : 'unavailable',
       calculatedCount: pairs.length + links.length + rotationSignals.filter((signal) => signal.status !== 'Unavailable').length,
+      usdCot: usdContract ? { name: 'US Dollar Index', venue: 'ICE Futures U.S.', netNoncomm: usdContract.netNoncomm, weeklyChange: usdContract.weeklyChange, percentile: usdContract.percentile, crowd: usdContract.crowd, stance: usdContract.stance, asOf: usdContract.asOf } : null,
       pairs,
       links,
       rotationSignals,
       riskRegime,
-      methodology: 'Currency strength uses Yahoo FX crosses oriented so positive momentum means currency strength; COT figures reuse the platform CFTC contracts for EUR, JPY, GBP, CAD, AUD, and CHF. Commodity links correlate 60-day daily changes; rotation signals compare 20-session momenta with sign-based confirmation.',
+      methodology: 'Currency strength uses Yahoo FX crosses oriented so positive momentum means currency strength; COT figures reuse the platform CFTC contracts for EUR, JPY, GBP, CAD, AUD, CHF, and the ICE US Dollar Index (098662). Commodity links correlate 60-day daily changes; rotation signals compare 20-session momenta with sign-based confirmation.',
     };
   });
 }
