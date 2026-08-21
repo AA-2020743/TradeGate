@@ -1,6 +1,6 @@
 import { config } from './config.js';
 import { withCache } from './cache.js';
-import { buildHeatmapRow, buildLiquidityNarrative, buildWorkspaceNarrative, calculateChangeCorrelations, calculateLeadLag, calculatePositioningModel, calculateCrossMarketRelationship, calculateGlobalLiquidityModel, calculateMacroRegimeModel, calculateRsi, calculateScreenerScores, calculateTechnicalSnapshot, classifyHeadlineSentiment, calculateUsdStrengthModel, calculateUsLiquidityModel } from './analytics.js';
+import { buildHeatmapRow, buildLiquidityNarrative, buildWorkspaceNarrative, calculateChangeCorrelations, calculateLeadLag, calculatePositioningModel, calculateCrossMarketRelationship, calculateGlobalLiquidityModel, calculateMacroRegimeModel, calculateRsi, calculateScreenerScores, calculateTechnicalSnapshot, calculateTrendQuality, classifyHeadlineSentiment, calculateUsdStrengthModel, calculateUsLiquidityModel } from './analytics.js';
 import { getStoredFredSeries, getStoredMarketHistory, getStoredMarketSnapshot, getRecentModelOutputs, isDatabaseConfigured, reserveProviderCredits } from './database.js';
 import { getAllEquityHistorySymbols, getCoreEquityHistorySymbols } from './equityCatalog.js';
 import { isCryptoHistoryStale, isCotReportStale, isDailyCloseStale, isFredSeriesStale, isPbocObservationStale, monthsBetween } from './freshness.js';
@@ -1072,6 +1072,7 @@ export async function getEquityScreener() {
       }
       const meanReturn = returns.reduce((total, value) => total + value, 0) / (returns.length || 1);
       const variance = returns.reduce((total, value) => total + ((value - meanReturn) ** 2), 0) / (returns.length || 1);
+      const trend = calculateTrendQuality(closes);
       rows.push({
         symbol,
         sector: universe.sectors.get(symbol) ?? null,
@@ -1084,6 +1085,9 @@ export async function getEquityScreener() {
         breakout: Number.isFinite(sma200) && Number.isFinite(sma200Then) && last > sma200 && closes.at(-21) <= sma200Then,
         vol20: returns.length >= 10 ? round1(Math.sqrt(variance) * Math.sqrt(252) * 100) : null,
         rsi14: calculateRsi(closes),
+        trendSlopePct: trend?.annualizedSlopePct ?? null,
+        trendR2: trend?.r2 ?? null,
+        trendQuality: trend?.quality ?? null,
       });
     }
     if (!rows.length) {
@@ -1131,6 +1135,8 @@ export async function getEquityScreener() {
     const calculated = scored.length;
     const near52wHighCount = scored.filter((row) => Number.isFinite(row.pctFrom52wHigh) && row.pctFrom52wHigh >= -5).length;
     const above50Count = scored.filter((row) => row.above50 === true).length;
+    const persistentTrendCount = scored.filter((row) => Number.isFinite(row.trendQuality) && row.trendQuality > 0 && row.trendR2 >= 0.5).length;
+    const qualityCovered = scored.filter((row) => Number.isFinite(row.trendQuality)).length;
     return {
       asOf: new Date().toISOString(),
       version: 'screener-v1',
@@ -1143,9 +1149,12 @@ export async function getEquityScreener() {
         near52wHighCount,
         near52wHighPct: calculated ? Math.round((near52wHighCount / calculated) * 100) : null,
         above50Pct: calculated ? Math.round((above50Count / calculated) * 100) : null,
+        persistentTrendCount,
+        persistentTrendPct: qualityCovered ? Math.round((persistentTrendCount / qualityCovered) * 100) : null,
+        qualityCovered,
       },
       sectorLeadership,
-      methodology: 'Universe is Wikipedia\'s S&P 500 constituent list with GICS sector attribution from the same table; metrics come from Yahoo batch spark one-year daily closes. The composite score cross-sectionally ranks 20-session momentum (45%), distance above the 200-day average (35%), and the inverse of 20-day annualized volatility (20%). RSI-14 uses standard Wilder smoothing on the same closes. Momentum is also expressed as excess return versus SPY over identical windows. Sector leadership aggregates each GICS sector\'s share of 20-session advancers and its average momentum. Distance from the 52-week high uses the trailing 252-session peak.',
+      methodology: 'Universe is Wikipedia\'s S&P 500 constituent list with GICS sector attribution from the same table; metrics come from Yahoo batch spark one-year daily closes. The composite score cross-sectionally ranks 20-session momentum (45%), distance above the 200-day average (35%), and the inverse of 20-day annualized volatility (20%). RSI-14 uses standard Wilder smoothing on the same closes. Momentum is also expressed as excess return versus SPY over identical windows. Sector leadership aggregates each GICS sector\'s share of 20-session advancers and its average momentum. Distance from the 52-week high uses the trailing 252-session peak. Trend quality fits an ordinary least-squares line to the last 90 log closes: the annualized slope is the fitted daily drift compounded over 252 sessions, and the quality reading multiplies that slope by the fit\'s R-squared so that only trends the price actually respects rank highly.',
     };
   });
 }

@@ -872,6 +872,8 @@ const SCREENER_PRESETS = {
   breakouts: { label: '200D breakouts', filter: (row) => row.breakout === true, sort: (a, b) => (b.mom20 ?? -999) - (a.mom20 ?? -999) },
   oversold: { label: 'Oversold', filter: (row) => row.mom20 <= -8, sort: (a, b) => (a.mom20 ?? 999) - (b.mom20 ?? 999) },
   'near-highs': { label: 'Near 52W highs', filter: (row) => Number.isFinite(row.pctFrom52wHigh) && row.pctFrom52wHigh >= -5, sort: (a, b) => (b.pctFrom52wHigh ?? -999) - (a.pctFrom52wHigh ?? -999) },
+  'quality-trends': { label: 'Quality trends', filter: (row) => Number.isFinite(row.trendQuality) && row.trendQuality > 0 && row.trendR2 >= 0.5, sort: (a, b) => (b.trendQuality ?? -9999) - (a.trendQuality ?? -9999) },
+  'broken-trends': { label: 'Broken trends', filter: (row) => Number.isFinite(row.trendQuality) && row.trendQuality < 0 && row.trendR2 >= 0.5, sort: (a, b) => (a.trendQuality ?? 9999) - (b.trendQuality ?? 9999) },
 };
 
 function ScreenerDashboard({ data }) {
@@ -890,8 +892,8 @@ function ScreenerDashboard({ data }) {
   const filtered = matched.slice(0, 40);
 
   const exportCsv = () => {
-    const header = 'Symbol,Sector,SectorRank,SectorSize,Last,Mom20,Mom60,VsIdx20,VsIdx60,VsSma200,Rsi14,Vol20,PctFrom52wHigh,Score';
-    const lines = matched.map((row) => [row.symbol, row.sector ?? '', row.sectorRank ?? '', row.sectorCount ?? '', row.last ?? '', row.mom20 ?? '', row.mom60 ?? '', row.vsIndexMom20 ?? '', row.vsIndexMom60 ?? '', row.vsSma200 ?? '', Number.isFinite(row.rsi14) ? row.rsi14.toFixed(1) : '', row.vol20 ?? '', row.pctFrom52wHigh ?? '', row.score ?? ''].join(','));
+    const header = 'Symbol,Sector,SectorRank,SectorSize,Last,Mom20,Mom60,VsIdx20,VsIdx60,VsSma200,Rsi14,Vol20,PctFrom52wHigh,TrendSlopePct,TrendR2,TrendQuality,QualityRank,Score';
+    const lines = matched.map((row) => [row.symbol, row.sector ?? '', row.sectorRank ?? '', row.sectorCount ?? '', row.last ?? '', row.mom20 ?? '', row.mom60 ?? '', row.vsIndexMom20 ?? '', row.vsIndexMom60 ?? '', row.vsSma200 ?? '', Number.isFinite(row.rsi14) ? row.rsi14.toFixed(1) : '', row.vol20 ?? '', row.pctFrom52wHigh ?? '', row.trendSlopePct ?? '', row.trendR2 ?? '', row.trendQuality ?? '', row.qualityRank ?? '', row.score ?? ''].join(','));
     const blob = new Blob([[header].concat(lines).join('\n')], { type: 'text/csv' });
     const url = URL.createObjectURL(blob);
     const anchor = document.createElement('a');
@@ -903,11 +905,11 @@ function ScreenerDashboard({ data }) {
 
   return <div className="screener-dashboard">
     <section className="macro-intro">
-      <div><p className="eyebrow">EQUITY SCREENING SYSTEM</p><h1>Rank the whole index, not a watchlist.</h1><p className="intro">Cross-sectional momentum, trend, volatility, and RSI for every S&P 500 constituent, calculated from provider closes.</p></div>
+      <div><p className="eyebrow">EQUITY SCREENING SYSTEM</p><h1>Rank the whole index, not a watchlist.</h1><p className="intro">Cross-sectional momentum, trend quality, volatility, and RSI for every S&P 500 constituent, calculated from provider closes.</p></div>
       <div className="model-tabs"><button className="active">Calculated universe</button></div>
     </section>
     <DataDisclosure data={data} message={`Every metric is calculated from Yahoo batch spark one-year daily closes over the Wikipedia S&P 500 list. ${screener?.calculatedCount ?? 0} of ${screener?.universeSize ?? 0} constituents returned usable history.`} />
-    {screener?.breadth && Number.isFinite(screener.breadth.above50Pct) ? <p className="watchlist-summary">{screener.breadth.near52wHighCount} of {screener.breadth.calculated} names within 5% of their 52-week high ({screener.breadth.near52wHighPct}%) · {screener.breadth.above50Pct}% above their 50-day average · momentum expressed net of SPY over the same windows</p> : null}
+    {screener?.breadth && Number.isFinite(screener.breadth.above50Pct) ? <p className="watchlist-summary">{screener.breadth.near52wHighCount} of {screener.breadth.calculated} names within 5% of their 52-week high ({screener.breadth.near52wHighPct}%) · {screener.breadth.above50Pct}% above their 50-day average{Number.isFinite(screener.breadth.persistentTrendPct) ? ` · ${screener.breadth.persistentTrendCount} of ${screener.breadth.qualityCovered} riding a persistent 90-session uptrend (${screener.breadth.persistentTrendPct}%)` : ''} · momentum expressed net of SPY over the same windows</p> : null}
     <section className="macro-section-heading"><div><p className="section-kicker">SCREENS · CALCULATED</p><h2>{definition.label}</h2></div><span className="data-pill">{filtered.length ? `Top ${filtered.length} of ${rows.length}` : 'No matches'}</span></section>
     <section className="screener-controls-row">
       <div className="window-buttons">{sectors.map((sector) => <button className={sectorFilter === sector ? 'selected' : ''} key={sector} onClick={() => setSectorFilter(sector)}>{sector === 'All' ? 'All sectors' : sector}</button>)}</div>
@@ -919,7 +921,7 @@ function ScreenerDashboard({ data }) {
     </section>
     <section className={`screener-panel panel ${screener?.status === 'calculated' ? '' : 'preview-section'}`}>
       {screener?.status === 'calculated' ? <div className="screener-wrap">
-        <div className="screener-head"><span>Symbol</span><span>Last</span><span>20D</span><span>60D</span><span>vs 200D</span><span>RSI-14</span><span>Vol 20D</span><span>Score</span></div>
+        <div className="screener-head"><span>Symbol</span><span>Last</span><span>20D</span><span>60D</span><span>vs 200D</span><span>RSI-14</span><span>Vol 20D</span><span>Trend 90D</span><span>Score</span></div>
         {filtered.map((row) => <div className="screener-row" key={row.symbol}>
           <b>{row.symbol}</b>
           <span>{formatUsd(row.last)}</span>
@@ -928,6 +930,7 @@ function ScreenerDashboard({ data }) {
           <span className={row.vsSma200 >= 0 ? 'positive' : 'negative'}>{Number.isFinite(row.vsSma200) ? `${row.vsSma200 > 0 ? '+' : ''}${row.vsSma200}%` : '—'}</span>
           <span>{Number.isFinite(row.rsi14) ? row.rsi14.toFixed(0) : '—'}</span>
           <span>{Number.isFinite(row.vol20) ? `${row.vol20}%` : '—'}</span>
+          <span className={Number.isFinite(row.trendQuality) ? (row.trendQuality >= 0 ? 'positive' : 'negative') : ''} title={Number.isFinite(row.trendQuality) ? `90-session log-price fit: ${row.trendSlopePct > 0 ? '+' : ''}${row.trendSlopePct}% annualized slope × R² ${row.trendR2}` : 'Needs 90 sessions of closes'}>{Number.isFinite(row.trendQuality) ? `${row.trendQuality > 0 ? '+' : ''}${row.trendQuality}%` : '—'}</span>
           <b>{row.score ?? '—'}</b>
         </div>)}
         {!filtered.length && <div className="calculation-empty">No constituents match this screen right now.</div>}

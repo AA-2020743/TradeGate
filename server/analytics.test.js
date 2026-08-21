@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { buildAtomFeed, buildHeatmapRow, buildLiquidityNarrative, buildWorkspaceNarrative, calculateChangeCorrelations, calculateLeadLag, calculatePositioningModel, calculateCrossMarketRelationship, calculateGlobalLiquidityModel, calculateMacroRegimeModel, calculateRsi, calculateScreenerScores, calculateTechnicalSnapshot, classifyHeadlineSentiment, calculateUsdStrengthModel, calculateUsLiquidityModel, escapeXml, pearsonCorrelation } from './analytics.js';
+import { buildAtomFeed, buildHeatmapRow, buildLiquidityNarrative, buildWorkspaceNarrative, calculateChangeCorrelations, calculateLeadLag, calculatePositioningModel, calculateCrossMarketRelationship, calculateGlobalLiquidityModel, calculateMacroRegimeModel, calculateRsi, calculateScreenerScores, calculateTechnicalSnapshot, calculateTrendQuality, classifyHeadlineSentiment, calculateUsdStrengthModel, calculateUsLiquidityModel, escapeXml, pearsonCorrelation } from './analytics.js';
 
 test('RSI reaches 100 for an uninterrupted advance', () => {
   const values = Array.from({ length: 30 }, (_, index) => 100 + index);
@@ -455,4 +455,53 @@ test('headline sentiment classifies by transparent keyword lexicon', () => {
   assert.equal(classifyHeadlineSentiment('Markets plunge amid recession fears').tone, 'negative');
   assert.equal(classifyHeadlineSentiment('Fed publishes minutes from June meeting').tone, 'neutral');
   assert.equal(classifyHeadlineSentiment('').tone, 'neutral');
+});
+
+test('trend quality annualizes a clean exponential advance with a perfect fit', () => {
+  const closes = Array.from({ length: 120 }, (_, index) => 100 * Math.exp(0.001 * index));
+  const trend = calculateTrendQuality(closes);
+  assert.equal(trend.observations, 90);
+  assert.equal(trend.r2, 1);
+  assert.equal(trend.annualizedSlopePct, 28.7);
+  assert.equal(trend.quality, 28.7);
+});
+
+test('trend quality discounts an equally steep but erratic advance', () => {
+  const clean = Array.from({ length: 90 }, (_, index) => 100 * Math.exp(0.001 * index));
+  const noisy = clean.map((value, index) => value * (index % 2 === 0 ? 1.06 : 0.94));
+  const cleanTrend = calculateTrendQuality(clean);
+  const noisyTrend = calculateTrendQuality(noisy);
+  assert.ok(noisyTrend.r2 < 0.6);
+  assert.ok(noisyTrend.quality < cleanTrend.quality);
+});
+
+test('trend quality is negative for a persistent decline and floored at -100%', () => {
+  const trend = calculateTrendQuality(Array.from({ length: 90 }, (_, index) => 100 * Math.exp(-0.05 * index)));
+  assert.equal(trend.annualizedSlopePct, -100);
+  assert.equal(trend.quality, -100);
+});
+
+test('trend quality withholds a reading without a full window of positive closes', () => {
+  assert.equal(calculateTrendQuality(Array.from({ length: 89 }, () => 100)), null);
+  assert.equal(calculateTrendQuality(Array.from({ length: 90 }, (_, index) => (index === 3 ? 0 : 100))), null);
+  assert.equal(calculateTrendQuality(null), null);
+});
+
+test('flat closes produce a zero slope and no quality edge', () => {
+  const trend = calculateTrendQuality(Array(90).fill(100));
+  assert.equal(trend.annualizedSlopePct, 0);
+  assert.equal(trend.r2, 0);
+  assert.equal(trend.quality, 0);
+});
+
+test('screener scores rank trend quality cross-sectionally without moving the composite', () => {
+  const rows = calculateScreenerScores([
+    { symbol: 'AAA', mom20: 10, vsSma200: 5, vol20: 10, trendQuality: 40, trendR2: 0.9 },
+    { symbol: 'BBB', mom20: 0, vsSma200: 0, vol20: 30, trendQuality: -12, trendR2: 0.4 },
+    { symbol: 'CCC', mom20: 4, vsSma200: 2, vol20: 12, trendQuality: null, trendR2: null },
+  ]);
+  assert.equal(rows[0].qualityRank, 100);
+  assert.equal(rows[1].qualityRank, 50);
+  assert.equal(rows[2].qualityRank, null);
+  assert.equal(rows[0].score, 93);
 });

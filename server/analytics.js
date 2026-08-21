@@ -84,11 +84,44 @@ export function classifyHeadlineSentiment(title) {
   return { tone: 'neutral', matches: [...positive, ...negative] };
 }
 
+export function calculateTrendQuality(values, period = 90) {
+  if (!Array.isArray(values)) return null;
+  const window = values.slice(-period);
+  if (window.length < period || !window.every((value) => Number.isFinite(value) && value > 0)) return null;
+  const logs = window.map((value) => Math.log(value));
+  const meanIndex = (logs.length - 1) / 2;
+  const meanLog = mean(logs);
+  let covariance = 0;
+  let indexVariance = 0;
+  for (let index = 0; index < logs.length; index += 1) {
+    covariance += (index - meanIndex) * (logs[index] - meanLog);
+    indexVariance += (index - meanIndex) ** 2;
+  }
+  if (indexVariance <= 0) return null;
+  const slope = covariance / indexVariance;
+  const intercept = meanLog - (slope * meanIndex);
+  let residualSquares = 0;
+  let totalSquares = 0;
+  for (let index = 0; index < logs.length; index += 1) {
+    residualSquares += (logs[index] - (intercept + (slope * index))) ** 2;
+    totalSquares += (logs[index] - meanLog) ** 2;
+  }
+  const r2 = totalSquares > 0 ? clamp(1 - (residualSquares / totalSquares), 0, 1) : 0;
+  const annualizedSlopePct = Math.round(clamp((Math.exp(slope * TRADING_DAYS) - 1) * 100, -100, 10_000) * 10) / 10;
+  return {
+    observations: logs.length,
+    annualizedSlopePct,
+    r2: Math.round(r2 * 1000) / 1000,
+    quality: Math.round(annualizedSlopePct * r2 * 10) / 10,
+  };
+}
+
 export function calculateScreenerScores(rows) {
   if (!Array.isArray(rows)) return [];
   const momValues = rows.map((row) => row.mom20).filter(Number.isFinite);
   const trendValues = rows.map((row) => row.vsSma200).filter(Number.isFinite);
   const volValues = rows.map((row) => row.vol20).filter(Number.isFinite);
+  const qualityValues = rows.map((row) => row.trendQuality).filter(Number.isFinite);
   const rankOf = (values, value) => (values.length ? Math.round((values.filter((item) => item <= value).length / values.length) * 100) : null);
   return rows.map((row) => {
     const momentumRank = Number.isFinite(row.mom20) ? rankOf(momValues, row.mom20) : null;
@@ -96,6 +129,7 @@ export function calculateScreenerScores(rows) {
     const calmRank = Number.isFinite(row.vol20) && volValues.length ? 100 - rankOf(volValues, row.vol20) : null;
     return {
       ...row,
+      qualityRank: Number.isFinite(row.trendQuality) ? rankOf(qualityValues, row.trendQuality) : null,
       score: momentumRank !== null && trendRank !== null && calmRank !== null
         ? Math.round((momentumRank * 0.45) + (trendRank * 0.35) + (calmRank * 0.2))
         : null,
