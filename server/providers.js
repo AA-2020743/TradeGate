@@ -758,15 +758,30 @@ const SECTOR_SPDRS = [
   { symbol: 'XLU', name: 'Utilities' },
 ];
 
-function getSpxConstituents() {
-  return withCache('equity:spx-constituents', 7 * 86_400_000, async () => {
+const GICS_SECTORS = ['Information Technology', 'Health Care', 'Financials', 'Consumer Discretionary', 'Communication Services', 'Industrials', 'Consumer Staples', 'Energy', 'Utilities', 'Real Estate', 'Materials'];
+
+function getSpxUniverse() {
+  return withCache('equity:spx-universe', 7 * 86_400_000, async () => {
     const html = await fetchText('https://en.wikipedia.org/wiki/List_of_S%26P_500_companies', 0, 2, BROWSER_HEADERS);
-    const nasdaq = [...html.matchAll(/nasdaq\.com\/market-activity\/stocks\/([a-z.\-]+)/g)].map((match) => match[1].toUpperCase());
-    const nyse = [...html.matchAll(/nyse\.com\/quote\/(?:XNYS|XASE|ARCX):([A-Z.\-]+)/g)].map((match) => match[1]);
-    const symbols = [...new Set([...nasdaq, ...nyse])];
+    const symbols = [];
+    const sectors = new Map();
+    for (const row of html.split('<tr').slice(1)) {
+      const match = row.match(/nasdaq\.com\/market-activity\/stocks\/([a-z.\-]+)/) ?? row.match(/nyse\.com\/quote\/(?:XNYS|XASE|ARCX):([A-Z.\-]+)/);
+      if (!match) continue;
+      const symbol = match[1].toUpperCase();
+      if (sectors.has(symbol)) continue;
+      const sector = GICS_SECTORS.find((name) => row.includes(name));
+      if (!sector) continue;
+      symbols.push(symbol);
+      sectors.set(symbol, sector);
+    }
     if (symbols.length < 400) throw new Error(`Wikipedia constituent list incomplete (${symbols.length} symbols)`);
-    return symbols;
+    return { symbols, sectors };
   });
+}
+
+function getSpxConstituents() {
+  return getSpxUniverse().then((universe) => universe.symbols);
 }
 
 async function getSparkBatch(symbols, { range = '1y', interval = '1d' } = {}) {
@@ -1028,7 +1043,8 @@ export async function getEquityRiskAppetite() {
 
 export async function getEquityScreener() {
   return withCache('analytics:screener', 12 * 3_600_000, async () => {
-    const symbols = await getSpxConstituents();
+    const universe = await getSpxUniverse();
+    const symbols = universe.symbols;
     const closesByKey = await getSparkCloses(symbols);
     const round1 = (value) => Math.round(value * 10) / 10;
     const rows = [];
@@ -1060,6 +1076,29 @@ export async function getEquityScreener() {
       return { asOf: new Date().toISOString(), version: 'screener-v1', status: 'unavailable', reason: 'No constituent histories were returned.', calculatedCount: 0, universeSize: symbols.length, rows: [], methodology: 'Requires Yahoo batch spark histories for the S&P 500 constituent list.' };
     }
     const scored = calculateScreenerScores(rows);
+    const sectorBuckets = new Map();
+    for (const row of scored) {
+      const sector = universe.sectors.get(row.symbol);
+      if (!sector) continue;
+      const bucket = sectorBuckets.get(sector) ?? { sector, constituents: 0, counted: 0, advancers: 0, momentumSum: 0, leader: null };
+      bucket.constituents += 1;
+      if (Number.isFinite(row.mom20)) {
+        bucket.counted += 1;
+        bucket.momentumSum += row.mom20;
+        if (row.mom20 > 0) bucket.advancers += 1;
+        if (!bucket.leader || row.mom20 > bucket.leader.mom20) bucket.leader = { symbol: row.symbol, mom20: row.mom20 };
+      }
+      sectorBuckets.set(sector, bucket);
+    }
+    const sectorLeadership = [...sectorBuckets.values()]
+      .map((bucket) => ({
+        sector: bucket.sector,
+        constituents: bucket.constituents,
+        advancersPct: bucket.counted ? Math.round((bucket.advancers / bucket.counted) * 100) : null,
+        avgMomentum20d: bucket.counted ? Math.round((bucket.momentumSum / bucket.counted) * 10) / 10 : null,
+        leader: bucket.leader,
+      }))
+      .sort((a, b) => (b.avgMomentum20d ?? -999) - (a.avgMomentum20d ?? -999));
     return {
       asOf: new Date().toISOString(),
       version: 'screener-v1',
@@ -1067,7 +1106,8 @@ export async function getEquityScreener() {
       calculatedCount: scored.length,
       universeSize: symbols.length,
       rows: scored,
-      methodology: 'Universe is Wikipedia\'s S&P 500 constituent list; metrics come from Yahoo batch spark one-year daily closes. The composite score cross-sectionally ranks 20-session momentum (45%), distance above the 200-day average (35%), and the inverse of 20-day annualized volatility (20%). RSI-14 uses standard Wilder smoothing on the same closes.',
+      sectorLeadership,
+      methodology: 'Universe is Wikipedia\'s S&P 500 constituent list with GICS sector attribution from the same table; metrics come from Yahoo batch spark one-year daily closes. The composite score cross-sectionally ranks 20-session momentum (45%), distance above the 200-day average (35%), and the inverse of 20-day annualized volatility (20%). RSI-14 uses standard Wilder smoothing on the same closes. Sector leadership aggregates each GICS sector\'s share of 20-session advancers and its average momentum.',
     };
   });
 }

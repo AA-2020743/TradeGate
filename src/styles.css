@@ -101,3 +101,5 @@ html[data-theme='dark'] .screener-search { background: #1a221d; border-color: #3
 @media (max-width: 700px) { .watchlist-head, .watchlist-row { min-width: 540px; } }
 
 .workspace-pulse { margin-top: 17px; padding: 18px 20px; }
+
+.sector-leadership-head, .sector-leadership-row { display: grid; grid-template-columns: minmax(150px, 1.3fr) 60px 110px 100px minmax(120px, 1fr); gap: 10px; align-items: center; font-size: 10px; }.sector-leadership-head { color: #9ca29b; text-transform: uppercase; letter-spacing: .35px; font-size: 8px; padding-bottom: 7px; border-bottom: 1px solid #e9ebe4; }.sector-leadership-row { min-height: 32px; border-top: 1px solid #e9ebe4; }.sector-leadership-row > b { font-size: 10px; }.sector-leadership-row > span, .sector-leadership-row > strong { font: 500 10px 'DM Mono', monospace; }.sector-leadership-row > span.positive, .sector-leadership-row > strong.positive { color: #3f7a35; }.sector-leadership-row > span.negative, .sector-leadership-row > strong.negative { color: #a04b3a; }

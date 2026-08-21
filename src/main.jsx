@@ -903,6 +903,19 @@ function ScreenerDashboard({ data }) {
         <p className="model-footnote">{screener.methodology}</p>
       </div> : <div className="calculation-empty">{screener?.reason ?? 'Constituent histories are required before the screener can publish.'}</div>}
     </section>
+    {screener?.status === 'calculated' && screener.sectorLeadership?.length ? <>
+      <section className="macro-section-heading"><div><p className="section-kicker">SECTOR LEADERSHIP · CALCULATED</p><h2>Where the momentum concentrates</h2></div><span className="data-pill">{screener.sectorLeadership.length} GICS sectors</span></section>
+      <section className="screener-panel panel">
+        <div className="sector-leadership-head"><span>Sector</span><span>Names</span><span>20D advancers</span><span>Avg momentum</span><span>Leader</span></div>
+        {screener.sectorLeadership.map((sector) => <div className="sector-leadership-row" key={sector.sector}>
+          <b>{sector.sector}</b>
+          <span>{sector.constituents}</span>
+          <span className={(sector.advancersPct ?? 0) >= 50 ? 'positive' : 'negative'}>{Number.isFinite(sector.advancersPct) ? `${sector.advancersPct}%` : '—'}</span>
+          <strong className={(sector.avgMomentum20d ?? 0) >= 0 ? 'positive' : 'negative'}>{Number.isFinite(sector.avgMomentum20d) ? `${sector.avgMomentum20d > 0 ? '+' : ''}${sector.avgMomentum20d}%` : '—'}</strong>
+          <span>{sector.leader ? `${sector.leader.symbol} ${sector.leader.mom20 > 0 ? '+' : ''}${sector.leader.mom20}%` : '—'}</span>
+        </div>)}
+      </section>
+    </> : null}
     <p className="independence-note">TradeGate is an independent market research platform and is not affiliated with Tradegate AG.</p>
   </div>;
 }
