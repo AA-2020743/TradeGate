@@ -921,6 +921,14 @@ function CryptoDashboard({ data }) {
         </div>
         <p className="model-footnote">Favorability combines broad-dollar direction and level with the measured DXY/BTC correlation: a falling, weak dollar against an inverse link reads as a tailwind; a rising, strong dollar reads as a headwind.</p>
       </article>
+      <article className={`crypto-tailwind-panel panel ${data.bitcoin?.ethRotation?.status === 'calculated' ? '' : 'preview-section'}`}><div className="panel-title"><div><p className="section-kicker">ETHEREUM &amp; ROTATION · CALCULATED</p><h3>{data.bitcoin?.ethRotation?.btcEthRatio?.read ?? 'Awaiting histories'}</h3></div><span className="data-pill">{data.bitcoin?.ethRotation?.version ?? 'Unavailable'}</span></div>
+        <div className="btc-cycle-grid">
+          <div className="btc-cycle-cell"><small>ETH spot</small><b>{Number.isFinite(data.bitcoin?.ethRotation?.price) ? `$${Math.round(data.bitcoin.ethRotation.price).toLocaleString()}` : '—'}</b><span>{Number.isFinite(data.bitcoin?.ethRotation?.pctVsSma200) ? `${data.bitcoin.ethRotation.pctVsSma200 > 0 ? '+' : ''}${data.bitcoin.ethRotation.pctVsSma200}% vs 200D` : 'Yahoo ETH-USD history required'}</span></div>
+          <div className="btc-cycle-cell"><small>ETH momentum</small><b>{Number.isFinite(data.bitcoin?.ethRotation?.momentum20d) ? `${data.bitcoin.ethRotation.momentum20d > 0 ? '+' : ''}${data.bitcoin.ethRotation.momentum20d}%` : '—'}</b><span>20-session change</span></div>
+          <div className="btc-cycle-cell"><small>BTC/ETH ratio</small><b>{Number.isFinite(data.bitcoin?.ethRotation?.btcEthRatio?.ratio) ? data.bitcoin.ethRotation.btcEthRatio.ratio : '—'}</b><span>{Number.isFinite(data.bitcoin?.ethRotation?.btcEthRatio?.percentile) ? `${data.bitcoin.ethRotation.btcEthRatio.percentile}th pct · ${data.bitcoin.ethRotation.btcEthRatio.change20d > 0 ? '+' : ''}${data.bitcoin.ethRotation.btcEthRatio.change20d}% 20d` : 'Aligned BTC/ETH histories required'}</span></div>
+        </div>
+        <p className="model-footnote">{data.bitcoin?.ethRotation?.methodology ?? 'Ethereum rotation publishes once Yahoo ETH-USD and BTC-USD histories respond.'}</p>
+      </article>
       <article className={`dxy-btc-panel panel ${hasBtc ? '' : 'preview-section'}`}><div className="panel-title"><div><p className="section-kicker">BITCOIN CYCLE &amp; CROWDING · CALCULATED</p><h3>{btc?.trend?.status === 'calculated' ? `Spot $${Math.round(btc.trend.price).toLocaleString()} · ${btc.trend.pctVsSma200w > 0 ? '+' : ''}${btc.trend.pctVsSma200w}% vs 200W` : 'Cycle dashboard'}</h3></div><span className="data-pill">{btc ? `${btc.calculatedCount}/${btc.totalLegs} legs` : 'Unavailable'}</span></div>
         {hasBtc ? <>
           <div className="btc-cycle-grid">

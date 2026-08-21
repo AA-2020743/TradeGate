@@ -1169,6 +1169,43 @@ export async function getMetalsWorkspace() {
   });
 }
 
+export async function getEthereumRotation() {
+  return withCache('analytics:eth-rotation', 30 * 60_000, async () => {
+    const [ethResult, btcResult] = await Promise.allSettled([getYahooHistory('ETH-USD'), getYahooHistory('BTC-USD')]);
+    if (ethResult.status !== 'fulfilled') return { asOf: new Date().toISOString(), version: 'eth-rotation-v1', status: 'unavailable', reason: `Yahoo ETH-USD history is required: ${ethResult.reason?.message ?? ethResult.reason}` };
+    const ethCloses = ethResult.value.map((point) => point.value);
+    const latest = ethCloses.at(-1);
+    if (!Number.isFinite(latest)) return { asOf: new Date().toISOString(), version: 'eth-rotation-v1', status: 'unavailable', reason: 'ETH history was empty.' };
+    const sma200 = smaOf(ethCloses, 200);
+    let rotation = null;
+    if (btcResult.status === 'fulfilled') {
+      const btcCloses = btcResult.value.map((point) => point.value);
+      const ratios = alignedRatioSeries(btcCloses, ethCloses);
+      const ratio = ratios.at(-1);
+      if (Number.isFinite(ratio)) {
+        const percentile = percentileOf(ratios, ratio);
+        rotation = {
+          ratio: Math.round(ratio * 100) / 100,
+          percentile,
+          change20d: ratios.length > 21 ? Math.round(((ratio / ratios.at(-21)) - 1) * 1000) / 10 : null,
+          read: percentile >= 70 ? 'Bitcoin leading — flight to size' : percentile <= 30 ? 'Alts leading — risk-on rotation' : 'Balanced',
+          observations: ratios.length,
+        };
+      }
+    }
+    return {
+      asOf: new Date().toISOString(),
+      version: 'eth-rotation-v1',
+      status: 'calculated',
+      price: latest,
+      pctVsSma200: Number.isFinite(sma200) ? Math.round(((latest / sma200) - 1) * 1000) / 10 : null,
+      momentum20d: ethCloses.length > 21 ? Math.round(((latest / ethCloses.at(-21)) - 1) * 1000) / 10 : null,
+      btcEthRatio: rotation,
+      methodology: 'Ethereum trend uses Yahoo ETH-USD daily closes versus its 200-day average; the BTC/ETH ratio is percentile-ranked over the aligned one-year window to read large-cap rotation inside crypto.',
+    };
+  });
+}
+
 export async function getTechnicalSnapshot(symbol) {
   const history = await getMarketHistory(symbol, '1Y');
   const model = calculateTechnicalSnapshot(history.points, { annualizationDays: history.symbol === 'BTC' ? 365 : 252 });
