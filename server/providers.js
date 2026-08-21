@@ -1052,7 +1052,11 @@ export async function getEquityScreener() {
   return withCache('analytics:screener', 12 * 3_600_000, async () => {
     const universe = await getSpxUniverse();
     const symbols = universe.symbols;
-    const closesByKey = await getSparkCloses(symbols);
+    const closesByKey = await getSparkCloses([...symbols, 'SPY']);
+    const benchmark = closesByKey.get('SPY');
+    if (closesByKey.has('SPY')) closesByKey.delete('SPY');
+    const benchmarkMom20 = benchmark && benchmark.length > 21 ? ((benchmark.at(-1) / benchmark.at(-21)) - 1) * 100 : null;
+    const benchmarkMom60 = benchmark && benchmark.length > 61 ? ((benchmark.at(-1) / benchmark.at(-61)) - 1) * 100 : null;
     const round1 = (value) => Math.round(value * 10) / 10;
     const rows = [];
     for (const [symbol, closes] of closesByKey) {
@@ -1084,6 +1088,10 @@ export async function getEquityScreener() {
     }
     if (!rows.length) {
       return { asOf: new Date().toISOString(), version: 'screener-v1', status: 'unavailable', reason: 'No constituent histories were returned.', calculatedCount: 0, universeSize: symbols.length, rows: [], methodology: 'Requires Yahoo batch spark histories for the S&P 500 constituent list.' };
+    }
+    for (const row of rows) {
+      row.vsIndexMom20 = benchmarkMom20 !== null && Number.isFinite(row.mom20) ? round1(row.mom20 - benchmarkMom20) : null;
+      row.vsIndexMom60 = benchmarkMom60 !== null && Number.isFinite(row.mom60) ? round1(row.mom60 - benchmarkMom60) : null;
     }
     const scored = calculateScreenerScores(rows);
     const sectorBuckets = new Map();
@@ -1120,6 +1128,9 @@ export async function getEquityScreener() {
       group.sort((a, b) => b.score - a.score);
       group.forEach((row, index) => { row.sectorRank = index + 1; row.sectorCount = group.length; });
     }
+    const calculated = scored.length;
+    const near52wHighCount = scored.filter((row) => Number.isFinite(row.pctFrom52wHigh) && row.pctFrom52wHigh >= -5).length;
+    const above50Count = scored.filter((row) => row.above50 === true).length;
     return {
       asOf: new Date().toISOString(),
       version: 'screener-v1',
@@ -1127,8 +1138,14 @@ export async function getEquityScreener() {
       calculatedCount: scored.length,
       universeSize: symbols.length,
       rows: scored,
+      breadth: {
+        calculated,
+        near52wHighCount,
+        near52wHighPct: calculated ? Math.round((near52wHighCount / calculated) * 100) : null,
+        above50Pct: calculated ? Math.round((above50Count / calculated) * 100) : null,
+      },
       sectorLeadership,
-      methodology: 'Universe is Wikipedia\'s S&P 500 constituent list with GICS sector attribution from the same table; metrics come from Yahoo batch spark one-year daily closes. The composite score cross-sectionally ranks 20-session momentum (45%), distance above the 200-day average (35%), and the inverse of 20-day annualized volatility (20%). RSI-14 uses standard Wilder smoothing on the same closes. Sector leadership aggregates each GICS sector\'s share of 20-session advancers and its average momentum. Distance from the 52-week high uses the trailing 252-session peak.',
+      methodology: 'Universe is Wikipedia\'s S&P 500 constituent list with GICS sector attribution from the same table; metrics come from Yahoo batch spark one-year daily closes. The composite score cross-sectionally ranks 20-session momentum (45%), distance above the 200-day average (35%), and the inverse of 20-day annualized volatility (20%). RSI-14 uses standard Wilder smoothing on the same closes. Momentum is also expressed as excess return versus SPY over identical windows. Sector leadership aggregates each GICS sector\'s share of 20-session advancers and its average momentum. Distance from the 52-week high uses the trailing 252-session peak.',
     };
   });
 }

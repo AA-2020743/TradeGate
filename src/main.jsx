@@ -846,6 +846,7 @@ function MacroDashboard({ data }) {
 
 const SCREENER_PRESETS = {
   'momentum-leaders': { label: 'Momentum leaders', filter: () => true, sort: (a, b) => (b.mom20 ?? -999) - (a.mom20 ?? -999) },
+  'market-beating': { label: 'Market-beating', filter: (row) => Number.isFinite(row.vsIndexMom20) && row.vsIndexMom20 > 0, sort: (a, b) => (b.vsIndexMom20 ?? -999) - (a.vsIndexMom20 ?? -999) },
   'uptrend-pullbacks': { label: 'Uptrend pullbacks', filter: (row) => row.vsSma200 > 0 && row.mom20 < 0, sort: (a, b) => (b.vsSma200 ?? -999) - (a.vsSma200 ?? -999) },
   'low-vol-uptrend': { label: 'Low-vol uptrends', filter: (row) => row.vsSma200 > 0 && row.above50 === true, sort: (a, b) => (b.score ?? -1) - (a.score ?? -1) },
   breakouts: { label: '200D breakouts', filter: (row) => row.breakout === true, sort: (a, b) => (b.mom20 ?? -999) - (a.mom20 ?? -999) },
@@ -869,8 +870,8 @@ function ScreenerDashboard({ data }) {
   const filtered = matched.slice(0, 40);
 
   const exportCsv = () => {
-    const header = 'Symbol,Sector,SectorRank,SectorSize,Last,Mom20,Mom60,VsSma200,Rsi14,Vol20,PctFrom52wHigh,Score';
-    const lines = matched.map((row) => [row.symbol, row.sector ?? '', row.sectorRank ?? '', row.sectorCount ?? '', row.last ?? '', row.mom20 ?? '', row.mom60 ?? '', row.vsSma200 ?? '', Number.isFinite(row.rsi14) ? row.rsi14.toFixed(1) : '', row.vol20 ?? '', row.pctFrom52wHigh ?? '', row.score ?? ''].join(','));
+    const header = 'Symbol,Sector,SectorRank,SectorSize,Last,Mom20,Mom60,VsIdx20,VsIdx60,VsSma200,Rsi14,Vol20,PctFrom52wHigh,Score';
+    const lines = matched.map((row) => [row.symbol, row.sector ?? '', row.sectorRank ?? '', row.sectorCount ?? '', row.last ?? '', row.mom20 ?? '', row.mom60 ?? '', row.vsIndexMom20 ?? '', row.vsIndexMom60 ?? '', row.vsSma200 ?? '', Number.isFinite(row.rsi14) ? row.rsi14.toFixed(1) : '', row.vol20 ?? '', row.pctFrom52wHigh ?? '', row.score ?? ''].join(','));
     const blob = new Blob([[header].concat(lines).join('\n')], { type: 'text/csv' });
     const url = URL.createObjectURL(blob);
     const anchor = document.createElement('a');
@@ -886,6 +887,7 @@ function ScreenerDashboard({ data }) {
       <div className="model-tabs"><button className="active">Calculated universe</button></div>
     </section>
     <DataDisclosure data={data} message={`Every metric is calculated from Yahoo batch spark one-year daily closes over the Wikipedia S&P 500 list. ${screener?.calculatedCount ?? 0} of ${screener?.universeSize ?? 0} constituents returned usable history.`} />
+    {screener?.breadth && Number.isFinite(screener.breadth.above50Pct) ? <p className="watchlist-summary">{screener.breadth.near52wHighCount} of {screener.breadth.calculated} names within 5% of their 52-week high ({screener.breadth.near52wHighPct}%) · {screener.breadth.above50Pct}% above their 50-day average · momentum expressed net of SPY over the same windows</p> : null}
     <section className="macro-section-heading"><div><p className="section-kicker">SCREENS · CALCULATED</p><h2>{definition.label}</h2></div><span className="data-pill">{filtered.length ? `Top ${filtered.length} of ${rows.length}` : 'No matches'}</span></section>
     <section className="screener-controls-row">
       <div className="window-buttons">{sectors.map((sector) => <button className={sectorFilter === sector ? 'selected' : ''} key={sector} onClick={() => setSectorFilter(sector)}>{sector === 'All' ? 'All sectors' : sector}</button>)}</div>
