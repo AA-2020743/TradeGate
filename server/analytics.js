@@ -160,7 +160,11 @@ export function calculateTechnicalSnapshot(inputPoints, options = {}) {
   const macd = calculateMacd(values);
   const momentumBase = values[Math.max(0, values.length - 21)];
   const momentumPercent = ((latest / momentumBase) - 1) * 100;
-  const returns = values.slice(-21).slice(1).map((value, index) => Math.log(value / values.slice(-21)[index]));
+  const recentValues = values.slice(-21);
+  const returns = recentValues.slice(1).map((value, index) => {
+    const base = recentValues[index];
+    return base > 0 && value > 0 ? Math.log(value / base) : null;
+  }).filter(Number.isFinite);
   const annualizationDays = options.annualizationDays ?? TRADING_DAYS;
   const volatility = (standardDeviation(returns) ?? 0) * Math.sqrt(annualizationDays) * 100;
   const movingAverages = [sma20, sma50, sma200].filter(Number.isFinite);

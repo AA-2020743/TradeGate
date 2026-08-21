@@ -17,6 +17,7 @@ export function usePlatformData() {
     positioning: null,
     heatmap: null,
     metals: null,
+    fx: null,
     error: null,
   });
 
@@ -24,7 +25,7 @@ export function usePlatformData() {
     let active = true;
 
     const load = async () => {
-      const [health, markets, liquidity, dxyBtc, regimeCorrelations, positioning, heatmap, metals] = await Promise.allSettled([
+      const [health, markets, liquidity, dxyBtc, regimeCorrelations, positioning, heatmap, metals, fx] = await Promise.allSettled([
         requestJson('/api/health'),
         requestJson('/api/markets/snapshot'),
         requestJson('/api/macro/liquidity'),
@@ -33,6 +34,7 @@ export function usePlatformData() {
         requestJson('/api/analytics/positioning'),
         requestJson('/api/analytics/heatmap'),
         requestJson('/api/analytics/metals'),
+        requestJson('/api/analytics/fx'),
       ]);
       if (!active) return;
 
@@ -44,6 +46,7 @@ export function usePlatformData() {
       const positioningData = positioning.status === 'fulfilled' ? positioning.value : null;
       const heatmapData = heatmap.status === 'fulfilled' ? heatmap.value : null;
       const metalsData = metals.status === 'fulfilled' ? metals.value : null;
+      const fxData = fx.status === 'fulfilled' ? fx.value : null;
       const hasQuotes = Boolean(marketData?.assets?.length);
       const hasUnconfiguredProviders = Object.values(healthData?.providers ?? {}).some((provider) => !provider.configured || (provider.connected === false && provider.mode === 'unavailable') || provider.migrated === false && provider.configured);
       const hasErrors = [health, markets, liquidity, dxyBtc].some((result) => result.status === 'rejected') || Boolean(marketData?.errors?.length) || Boolean(liquidityData?.errors?.length) || hasUnconfiguredProviders;
@@ -58,6 +61,7 @@ export function usePlatformData() {
         positioning: positioningData,
         heatmap: heatmapData,
         metals: metalsData,
+        fx: fxData,
         error: !healthData ? 'The data API is unavailable.' : hasErrors ? 'Some data providers are unavailable.' : null,
       });
     };

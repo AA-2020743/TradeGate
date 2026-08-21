@@ -217,6 +217,10 @@ The sector dashboard also publishes a calculated macro-sensitivity matrix: for e
 
 Market close histories work without any API key: Twelve Data is preferred when configured, and otherwise Yahoo Finance's public chart endpoint supplies one year of daily closes (BTC continues to use CoinGecko). Source labels reflect whichever provider served the response.
 
+### FX workspace
+
+`fx-workspace-v1` covers six currencies (EUR, JPY, GBP, CAD, AUD, CHF). Currency strength uses Yahoo FX crosses oriented so positive momentum always means currency strength; each pair carries a `technical-v1` score plus CFTC COT net-speculative percentile from verified contract codes (099741 EUR, 097741 JPY, 096742 GBP, 090741 CAD, 232741 AUD, 092741 CHF). Commodity links correlate 60-day daily changes (CAD/WTI, AUD/copper, AUD/gold, CHF/S&P 500), and rotation signals compare 20-session momenta by sign: commodity-FX versus crude, broad USD versus EEM, and yen versus S&P 500. The USD scenario map remains an explicitly labeled qualitative framework.
+
 ## Reliability Rules
 
 - Missing provider data returns unavailable; it is never silently replaced with a sample value.

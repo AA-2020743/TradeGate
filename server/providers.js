@@ -383,7 +383,9 @@ async function getYahooHistory(symbol) {
   const timestamps = result?.timestamp ?? [];
   const closes = result?.indicators?.quote?.[0]?.close ?? [];
   return timestamps.flatMap((seconds, index) => {
-    const value = asNumber(closes[index]);
+    const rawClose = closes[index];
+    if (rawClose === null || rawClose === undefined) return [];
+    const value = asNumber(rawClose);
     if (value === null || !Number.isFinite(seconds)) return [];
     return [{ timestamp: new Date(seconds * 1000).toISOString(), value }];
   });
@@ -688,6 +690,12 @@ const COT_CONTRACTS = [
   { code: '209742', key: 'nasdaq100', name: 'E-mini Nasdaq-100' },
   { code: '088691', key: 'gold', name: 'COMEX Gold' },
   { code: '1170E1', key: 'vix', name: 'VIX Futures' },
+  { code: '099741', key: 'fxeur', name: 'Euro FX' },
+  { code: '097741', key: 'fxjpy', name: 'Japanese Yen' },
+  { code: '096742', key: 'fxgbp', name: 'British Pound' },
+  { code: '090741', key: 'fxcad', name: 'Canadian Dollar' },
+  { code: '232741', key: 'fxaud', name: 'Australian Dollar' },
+  { code: '092741', key: 'fxchf', name: 'Swiss Franc' },
 ];
 
 async function getCotContract(contract) {
@@ -725,6 +733,126 @@ export async function getMarketPositioning() {
       model,
       staleContracts: reports.filter((report) => report.stale).map((report) => report.name),
       errors,
+    };
+  });
+}
+
+const FX_PAIRS = [
+  { key: 'eur', name: 'Euro', yahooSymbol: 'EURUSD=X', inverted: false },
+  { key: 'jpy', name: 'Japanese Yen', yahooSymbol: 'JPY=X', inverted: true },
+  { key: 'gbp', name: 'British Pound', yahooSymbol: 'GBPUSD=X', inverted: false },
+  { key: 'cad', name: 'Canadian Dollar', yahooSymbol: 'CAD=X', inverted: true },
+  { key: 'aud', name: 'Australian Dollar', yahooSymbol: 'AUD=X', inverted: true },
+  { key: 'chf', name: 'Swiss Franc', yahooSymbol: 'CHF=X', inverted: true },
+];
+const FX_LINKS = [
+  { currency: 'CAD', pairKey: 'cad', market: 'WTI Crude', yahooSymbol: 'CL=F' },
+  { currency: 'AUD', pairKey: 'aud', market: 'Copper', yahooSymbol: 'HG=F' },
+  { currency: 'AUD', pairKey: 'aud', market: 'Gold', yahooSymbol: 'GC=F' },
+  { currency: 'CHF', pairKey: 'chf', market: 'S&P 500', yahooSymbol: 'SPY' },
+];
+
+function momentumPercent(points, sessions = 20) {
+  if (points.length <= sessions) return null;
+  const latest = points.at(-1)?.value;
+  const prior = points[points.length - 1 - sessions]?.value;
+  return Number.isFinite(latest) && Number.isFinite(prior) && prior !== 0 ? Number(((latest / prior - 1) * 100).toFixed(2)) : null;
+}
+
+export async function getFxWorkspace() {
+  return withCache('analytics:fx-workspace', 15 * 60_000, async () => {
+    const positioningResult = await Promise.allSettled([getMarketPositioning()]);
+    const positioning = positioningResult[0].status === 'fulfilled' ? positioningResult[0].value.model : null;
+    const toPoints = (points) => (points ?? []).filter((point) => Number.isFinite(point.value)).map((point) => ({ timestamp: point.timestamp, value: point.value }));
+    const symbols = [...new Set([...FX_PAIRS.map((pair) => pair.yahooSymbol), ...FX_LINKS.map((link) => link.yahooSymbol), 'EEM'])];
+    const seriesMap = new Map();
+    await Promise.allSettled(symbols.map(async (symbol) => {
+      seriesMap.set(symbol, toPoints(await getYahooHistory(symbol)));
+    }));
+    const pairs = FX_PAIRS.flatMap((pair) => {
+      let points = seriesMap.get(pair.yahooSymbol) ?? [];
+      if (!points.length) return [];
+      if (pair.inverted) points = points.map((point) => ({ timestamp: point.timestamp, value: 1 / point.value }));
+      const technical = calculateTechnicalSnapshot(points, { annualizationDays: 252 });
+      if (!technical) return [];
+      const contract = positioning?.contracts?.find((item) => item.key === `fx${pair.key}`) ?? null;
+      return [{
+        key: pair.key,
+        name: pair.name,
+        quote: pair.inverted ? `USD per ${pair.name.split(' ').pop()}` : `${pair.name} per USD`,
+        score: technical.score,
+        regime: technical.regime,
+        momentum20d: momentumPercent(points),
+        rsi14: technical.indicators.rsi14,
+        asOf: technical.asOf,
+        observations: technical.observations,
+        cot: contract ? { netNoncomm: contract.netNoncomm, weeklyChange: contract.weeklyChange, percentile: contract.percentile, crowd: contract.crowd, stance: contract.stance, asOf: contract.asOf } : null,
+      }];
+    });
+    const pairByKey = new Map(pairs.map((pair) => [pair.key, pair]));
+    const links = FX_LINKS.flatMap((link) => {
+      const currencyPoints = (() => {
+        const raw = seriesMap.get(FX_PAIRS.find((pair) => pair.key === link.pairKey)?.yahooSymbol) ?? [];
+        const inverted = FX_PAIRS.find((pair) => pair.key === link.pairKey)?.inverted ?? false;
+        const points = raw.map((point) => ({ timestamp: point.timestamp, value: inverted ? 1 / point.value : point.value }));
+        return points;
+      })();
+      const marketPoints = seriesMap.get(link.yahooSymbol) ?? [];
+      if (currencyPoints.length < 23 || marketPoints.length < 23) return [];
+      const correlation = calculateChangeCorrelations(currencyPoints, marketPoints)?.correlations?.['60D'] ?? null;
+      return [{
+        currency: link.currency,
+        currencyMomentum20d: momentumPercent(currencyPoints),
+        market: link.market,
+        marketMomentum20d: momentumPercent(marketPoints),
+        correlation60d: Number.isFinite(correlation) ? Number(correlation.toFixed(2)) : null,
+        state: !Number.isFinite(correlation) ? 'Unavailable' : correlation >= 0.3 ? 'Aligned' : correlation <= -0.3 ? 'Inverse' : 'Mixed',
+        observations: Math.min(currencyPoints.length, marketPoints.length),
+      }];
+    });
+    const spyPoints = seriesMap.get('SPY') ?? [];
+    const eemPoints = seriesMap.get('EEM') ?? [];
+    const commodityFxMomentum = ['cad', 'aud'].map((key) => pairByKey.get(key)?.momentum20d).filter(Number.isFinite);
+    const avgCommodityFx = commodityFxMomentum.length ? Number((commodityFxMomentum.reduce((total, value) => total + value, 0) / commodityFxMomentum.length).toFixed(2)) : null;
+    const wtiMomentum = momentumPercent(seriesMap.get('CL=F') ?? []);
+    const usdMomentum = pairs.length ? Number((-(pairs.reduce((total, pair) => total + (pair.momentum20d ?? 0), 0) / pairs.length)).toFixed(2)) : null;
+    const eemMomentum = momentumPercent(eemPoints);
+    const jpyPair = pairByKey.get('jpy');
+    const spyMomentum = momentumPercent(spyPoints);
+    const rotationSignals = [
+      {
+        signal: 'Commodity FX vs crude',
+        detail: 'AUD/CAD average momentum against WTI',
+        left: avgCommodityFx,
+        right: wtiMomentum,
+        status: avgCommodityFx === null || wtiMomentum === null ? 'Unavailable' : Math.sign(avgCommodityFx) === Math.sign(wtiMomentum) ? 'Confirmed' : 'Diverged',
+      },
+      {
+        signal: 'Dollar vs EM equities',
+        detail: 'Broad USD momentum against EEM',
+        left: usdMomentum,
+        right: eemMomentum,
+        status: usdMomentum === null || eemMomentum === null ? 'Unavailable' : Math.sign(usdMomentum) !== Math.sign(eemMomentum) ? 'Confirmed' : 'Diverged',
+      },
+      {
+        signal: 'Yen safe haven vs S&P 500',
+        detail: 'JPY strength against SPY momentum',
+        left: jpyPair?.momentum20d ?? null,
+        right: spyMomentum,
+        status: jpyPair?.momentum20d == null || spyMomentum === null ? 'Unavailable' : Math.sign(jpyPair.momentum20d) !== Math.sign(spyMomentum) ? 'Confirmed' : 'Diverged',
+      },
+    ];
+    const riskRegime = spyMomentum === null ? 'Unavailable' : spyMomentum >= 0 ? 'Risk-on' : 'Risk-off';
+    return {
+      asOf: new Date().toISOString(),
+      version: 'fx-workspace-v1',
+      status: pairs.length ? 'calculated' : 'unavailable',
+      calculatedCount: pairs.length + links.length + rotationSignals.filter((signal) => signal.status !== 'Unavailable').length,
+      pairs,
+      links,
+      rotationSignals,
+      riskRegime,
+      methodology: 'Currency strength uses Yahoo FX crosses oriented so positive momentum means currency strength; COT figures reuse the platform CFTC contracts for EUR, JPY, GBP, CAD, AUD, and CHF. Commodity links correlate 60-day daily changes; rotation signals compare 20-session momenta with sign-based confirmation.',
     };
   });
 }
