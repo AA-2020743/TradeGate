@@ -17,7 +17,7 @@ import {
 import { getEquityDashboard, getSectorDashboard } from './equities.js';
 import { startIngestionScheduler } from './ingestion.js';
 import { createRateLimiter } from './rateLimit.js';
-import { getBitcoinCycleWorkspace, getBlockedSources, calculateDollarTransmission, getCryptoGlobal, getDxyBitcoinRelationship, getEquityRiskAppetite, getEquityScreener, getEthereumRotation, getFxWorkspace, getIntradayRotation, getLiquiditySnapshot, getMarketHeatmap, getMarketHistory, getMarketPositioning, getMarketSnapshot, getMetalsWorkspace, getNewsWire, getProviderHealth, getRegimeCorrelations, getSentimentSnapshot, getTechnicalSnapshot } from './providers.js';
+import { getBitcoinCycleWorkspace, getBlockedSources, calculateDollarTransmission, getCryptoGlobal, getDxyBitcoinRelationship, getEquityRiskAppetite, getEquityScreener, getEthereumRotation, getFxWorkspace, getIntradayRotation, getLiquiditySnapshot, getMarketHeatmap, getMarketHistory, getMarketPositioning, getMarketSnapshot, getMetalsWorkspace, getNewsWire, getProviderHealth, getRegimeCorrelations, getSentimentSnapshot, getStablecoinLeadLag, getTechnicalSnapshot } from './providers.js';
 import { buildAtomFeed } from './analytics.js';
 
 const app = express();
@@ -132,13 +132,14 @@ app.get('/api/analytics/sentiment', async (_request, response, next) => {
 
 app.get('/api/analytics/bitcoin', async (_request, response, next) => {
   try {
-    const [workspace, ethRotation, cryptoGlobal, intraday] = await Promise.all([
+    const [workspace, ethRotation, cryptoGlobal, intraday, stablecoinLead] = await Promise.all([
       getBitcoinCycleWorkspace(),
       getEthereumRotation().catch(() => null),
       getCryptoGlobal().catch(() => null),
       getIntradayRotation().catch(() => null),
+      getStablecoinLeadLag().catch(() => null),
     ]);
-    response.json({ ...workspace, ethRotation, cryptoGlobal, intraday });
+    response.json({ ...workspace, ethRotation, cryptoGlobal, intraday, stablecoinLead });
   } catch (error) {
     next(error);
   }

@@ -428,6 +428,33 @@ export function calculateUsLiquidityModel(seriesList) {
   const momentum = shortNetImpulse === null || longNetImpulse === null
     ? 'Unavailable'
     : shortNetImpulse > longNetImpulse ? 'Accelerating' : 'Decelerating';
+  const deltaOverDays = (points, days) => {
+    if (points.length < 2) return null;
+    const latest = points.at(-1);
+    const targetDate = new Date(latest.date);
+    targetDate.setUTCDate(targetDate.getUTCDate() - days);
+    const previous = latestAtOrBefore(points, targetDate.toISOString().slice(0, 10));
+    return previous ? latest.value - previous.value : null;
+  };
+  const decomposition = [28, 91].map((windowDays) => {
+    const fedDelta = deltaOverDays(fed, windowDays);
+    const tgaDelta = deltaOverDays(treasury, windowDays);
+    const rrpDelta = deltaOverDays(reverseRepo, windowDays);
+    if (fedDelta === null || tgaDelta === null || rrpDelta === null) return null;
+    const legs = [
+      { key: 'fedBalanceSheet', name: 'Fed balance sheet', contribution: fedDelta },
+      { key: 'treasuryGeneralAccount', name: 'TGA rebuild', contribution: -tgaDelta },
+      { key: 'reverseRepo', name: 'Reverse-repo drawdown', contribution: -rrpDelta },
+    ];
+    const dominant = legs.reduce((best, leg) => (Math.abs(leg.contribution) > Math.abs(best.contribution) ? leg : best), legs[0]);
+    return {
+      windowDays,
+      netChange: legs.reduce((total, leg) => total + leg.contribution, 0),
+      legs,
+      dominantLeg: dominant.key,
+      unit: 'USD millions',
+    };
+  }).filter(Boolean);
   const confidenceScore = Math.round(((availableWeight * 0.55) + (agreement * 0.45)) * 100);
 
   return {
@@ -441,6 +468,7 @@ export function calculateUsLiquidityModel(seriesList) {
     breadth: { positive: positiveDrivers, negative: negativeDrivers, total: drivers.length },
     netLiquidity: netLiquidity.at(-1)?.value ?? null,
     history: netLiquidity,
+    decomposition,
     composite,
     drivers: drivers.map(({ key, name, change, impulse, weight }) => ({ key, name, changePercent: change, impulse, weight })),
   };

@@ -1585,6 +1585,7 @@ export async function getFxWorkspace() {
         score: technical.score,
         regime: technical.regime,
         momentum20d: momentumPercent(points),
+        momentum60d: momentumPercent(points, 60),
         rsi14: technical.indicators.rsi14,
         asOf: technical.asOf,
         observations: technical.observations,
@@ -1645,6 +1646,17 @@ export async function getFxWorkspace() {
       },
     ];
     const riskRegime = spyMomentum === null ? 'Unavailable' : spyMomentum >= 0 ? 'Risk-on' : 'Risk-off';
+    const usdStrong20d = pairs.filter((pair) => Number.isFinite(pair.momentum20d) && pair.momentum20d < 0).length;
+    const usdStrong60d = pairs.filter((pair) => Number.isFinite(pair.momentum60d) && pair.momentum60d < 0).length;
+    const usdMomentumPairs = pairs.filter((pair) => Number.isFinite(pair.momentum20d)).length;
+    const usdBreadthPct20d = usdMomentumPairs ? Math.round((usdStrong20d / usdMomentumPairs) * 100) : null;
+    const usdBreadth = usdMomentumPairs ? {
+      total: usdMomentumPairs,
+      strong20d: usdStrong20d,
+      strong60d: usdStrong60d,
+      pct20d: usdBreadthPct20d,
+      read: usdBreadthPct20d >= 70 ? 'Broad USD advance' : usdBreadthPct20d <= 30 ? 'Broad USD retreat' : 'Mixed dollar',
+    } : null;
     const usdContract = positioning?.contracts?.find((item) => item.key === 'usdIndex') ?? null;
     return {
       asOf: new Date().toISOString(),
@@ -1656,7 +1668,8 @@ export async function getFxWorkspace() {
       links,
       rotationSignals,
       riskRegime,
-      methodology: 'Currency strength uses Yahoo FX crosses oriented so positive momentum means currency strength; COT figures reuse the platform CFTC contracts for EUR, JPY, GBP, CAD, AUD, CHF, and the ICE US Dollar Index (098662). Commodity links correlate 60-day daily changes; rotation signals compare 20-session momenta with sign-based confirmation.',
+      usdBreadth,
+      methodology: 'Currency strength uses Yahoo FX crosses oriented so positive momentum means currency strength; COT figures reuse the platform CFTC contracts for EUR, JPY, GBP, CAD, AUD, CHF, and the ICE US Dollar Index (098662). Commodity links correlate 60-day daily changes; rotation signals compare 20-session momenta with sign-based confirmation. Dollar breadth counts crosses where the 20- and 60-session momentum is negative, i.e. the dollar strengthened against that currency.',
     };
   });
 }
@@ -1782,6 +1795,65 @@ export async function getStablecoinIssuance() {
       state: !Number.isFinite(change30dPct) ? null : change30dPct >= 0.5 ? 'Expanding' : change30dPct <= -0.5 ? 'Contracting' : 'Flat',
       observations: chart.length,
       methodology: 'Aggregate circulating supply of all tracked stablecoins from DefiLlama; net issuance growth is read as a real-time dollar-liquidity proxy.',
+    };
+  });
+}
+
+export async function getStablecoinLeadLag() {
+  return withCache('analytics:stablecoin-btc-lead', 60 * 60_000, async () => {
+    const [chartResult, btcResult] = await Promise.allSettled([
+      fetchJson('https://stablecoins.llama.fi/stablecoincharts/all'),
+      getYahooHistory('BTC-USD'),
+    ]);
+    const chart = chartResult.status === 'fulfilled' && Array.isArray(chartResult.value) ? chartResult.value : [];
+    const btcPoints = btcResult.status === 'fulfilled' ? btcResult.value : [];
+    if (chart.length < 90 || btcPoints.length < 90) {
+      return {
+        asOf: new Date().toISOString(),
+        version: 'stablecoin-btc-lead-v1',
+        status: 'unavailable',
+        reason: `Aligned stablecoin and BTC histories are required (stablecoin rows: ${chart.length}, BTC points: ${btcPoints.length}).`,
+      };
+    }
+    const supplyByDate = new Map();
+    for (const row of chart) {
+      const value = asNumber(row?.totalCirculating?.peggedUSD);
+      if (!Number.isFinite(value) || !row.date) continue;
+      const dateKey = /^\d+$/.test(String(row.date)) ? new Date(Number(row.date) * 1000).toISOString().slice(0, 10) : String(row.date).slice(0, 10);
+      supplyByDate.set(dateKey, value);
+    }
+    const btcByDate = new Map();
+    for (const point of btcPoints) btcByDate.set(String(point.timestamp).slice(0, 10), point.value);
+    const dates = [...supplyByDate.keys()].sort().slice(-365);
+    const supply = [];
+    const btc = [];
+    let lastBtc = null;
+    for (const date of dates) {
+      const btcValue = btcByDate.get(date) ?? lastBtc;
+      if (Number.isFinite(btcValue)) {
+        supply.push(supplyByDate.get(date));
+        btc.push(btcValue);
+      }
+      lastBtc = Number.isFinite(btcByDate.get(date)) ? btcByDate.get(date) : lastBtc;
+    }
+    const weeklyChange = (series) => series.map((value, index) => (index >= 7 && series[index - 7] > 0 ? (value / series[index - 7] - 1) * 100 : null)).slice(7);
+    const stableChanges = weeklyChange(supply);
+    const btcChanges = weeklyChange(btc);
+    const leadLag = calculateLeadLag(stableChanges, btcChanges, 7, 60, { rankBy: 'magnitude' });
+    if (!leadLag) {
+      return { asOf: new Date().toISOString(), version: 'stablecoin-btc-lead-v1', status: 'unavailable', reason: 'Not enough overlapping daily observations to estimate a lead.' };
+    }
+    const decisive = leadLag.corrAtBest >= 0.15;
+    return {
+      asOf: new Date().toISOString(),
+      version: 'stablecoin-btc-lead-v1',
+      status: 'calculated',
+      synchronousCorr: leadLag.synchronousCorr,
+      bestLagDays: leadLag.bestLag,
+      corrAtBest: leadLag.corrAtBest,
+      observations: leadLag.observations,
+      read: !decisive ? 'No decisive lead' : leadLag.bestLag >= 2 ? 'Stablecoin supply leads price' : leadLag.bestLag <= -2 ? 'Price leads stablecoin supply' : 'Contemporaneous link',
+      methodology: 'DefiLlama aggregate stablecoin supply against Yahoo BTC-USD closes, aligned by date over the trailing year. Seven-day percent changes are correlated at daily lags from -7 to +7; a positive lag means stablecoin supply moves first.',
     };
   });
 }

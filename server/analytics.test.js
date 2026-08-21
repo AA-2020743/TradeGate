@@ -73,6 +73,13 @@ test('US liquidity model detects an expanding impulse', () => {
   assert.ok(model.score > 50);
   assert.equal(model.breadth.positive, 3);
   assert.equal(model.history.length, 30);
+  const quarter = model.decomposition.find((window) => window.windowDays === 91);
+  assert.ok(quarter);
+  assert.equal(quarter.dominantLeg, 'fedBalanceSheet');
+  assert.equal(quarter.legs.find((leg) => leg.key === 'fedBalanceSheet').contribution, 260_000);
+  assert.equal(quarter.legs.find((leg) => leg.key === 'treasuryGeneralAccount').contribution, 65_000);
+  assert.equal(quarter.legs.find((leg) => leg.key === 'reverseRepo').contribution, 104_000);
+  assert.equal(quarter.netChange, 429_000);
 });
 
 test('US liquidity model refuses to publish with a missing mandatory driver', () => {
