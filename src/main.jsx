@@ -798,6 +798,7 @@ function MacroDashboard({ data }) {
         <div className="btc-cycle-cell"><small>Crypto aggregate</small><b>{Number.isFinite(data.bitcoin?.cryptoGlobal?.mcapChange24hPct) ? `${data.bitcoin.cryptoGlobal.mcapChange24hPct > 0 ? '+' : ''}${data.bitcoin.cryptoGlobal.mcapChange24hPct.toFixed(2)}%` : '—'}</b><span>Total crypto market cap, 24 hours</span></div>
         <div className="btc-cycle-cell"><small>Fear &amp; Greed</small><b>{Number.isFinite(data.sentiment?.fearGreed?.score) ? data.sentiment.fearGreed.score : '—'}</b><span>{data.sentiment?.fearGreed?.rating ?? 'Sentiment feed pending'}</span></div>
         <div className="btc-cycle-cell"><small>Equity breadth</small><b>{Number.isFinite(data.equityRisk?.spxBreadth?.pctAbove200) ? `${data.equityRisk.spxBreadth.pctAbove200}%` : '—'}</b><span>{data.equityRisk?.spxBreadth?.status === 'calculated' ? data.equityRisk.spxBreadth.read : 'Breadth histories pending'}</span></div>
+        {(data.alerts?.alerts ?? []).length ? <div className="btc-cycle-cell"><small>Model alerts</small><b>{data.alerts.alerts.length} recent</b><span>{data.alerts.alerts[0]?.text ?? ''}</span></div> : null}
       </div>
     </section>
 
@@ -868,8 +869,8 @@ function ScreenerDashboard({ data }) {
   const filtered = matched.slice(0, 40);
 
   const exportCsv = () => {
-    const header = 'Symbol,Sector,Last,Mom20,Mom60,VsSma200,Rsi14,Vol20,PctFrom52wHigh,Score';
-    const lines = matched.map((row) => [row.symbol, row.sector ?? '', row.last ?? '', row.mom20 ?? '', row.mom60 ?? '', row.vsSma200 ?? '', Number.isFinite(row.rsi14) ? row.rsi14.toFixed(1) : '', row.vol20 ?? '', row.pctFrom52wHigh ?? '', row.score ?? ''].join(','));
+    const header = 'Symbol,Sector,SectorRank,SectorSize,Last,Mom20,Mom60,VsSma200,Rsi14,Vol20,PctFrom52wHigh,Score';
+    const lines = matched.map((row) => [row.symbol, row.sector ?? '', row.sectorRank ?? '', row.sectorCount ?? '', row.last ?? '', row.mom20 ?? '', row.mom60 ?? '', row.vsSma200 ?? '', Number.isFinite(row.rsi14) ? row.rsi14.toFixed(1) : '', row.vol20 ?? '', row.pctFrom52wHigh ?? '', row.score ?? ''].join(','));
     const blob = new Blob([[header].concat(lines).join('\n')], { type: 'text/csv' });
     const url = URL.createObjectURL(blob);
     const anchor = document.createElement('a');
@@ -939,9 +940,9 @@ function WatchlistRow({ symbol, onRemove, onSnapshot }) {
   const model = technical.data?.model;
 
   React.useEffect(() => {
-    onSnapshot(symbol, model ? { score: model.score, regime: model.regime } : null);
+    onSnapshot(symbol, model ? { score: model.score, regime: model.regime, last: Number.isFinite(last) ? last : null, changePct } : null);
     return () => onSnapshot(symbol, null);
-  }, [symbol, model?.score, model?.regime]);
+  }, [symbol, model?.score, model?.regime, last, changePct]);
 
   return <div className="watchlist-row">
     <b>{symbol}</b>
@@ -1054,6 +1055,20 @@ function WatchlistsDashboard({ data }) {
     setLists((current) => ({ ...current, [activeList]: (current[activeList] ?? []).filter((item) => item !== symbol) }));
     updateSnapshot(symbol, null);
   };
+  const exportListCsv = () => {
+    const header = 'Symbol,Last,Change3mPct,Score,Regime';
+    const lines = symbols.map((symbol) => {
+      const snapshot = snapshots[symbol];
+      return [symbol, snapshot?.last ?? '', Number.isFinite(snapshot?.changePct) ? snapshot.changePct.toFixed(2) : '', snapshot?.score ?? '', snapshot?.regime ?? ''].join(',');
+    });
+    const blob = new Blob([[header].concat(lines).join('\n')], { type: 'text/csv' });
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement('a');
+    anchor.href = url;
+    anchor.download = `tradegate-watchlist-${activeList.toLowerCase().replace(/[^a-z0-9]+/g, '-')}.csv`;
+    anchor.click();
+    URL.revokeObjectURL(url);
+  };
   const createList = () => {
     const name = `List ${Object.keys(lists).length + 1}`;
     setLists((current) => ({ ...current, [name]: [] }));
@@ -1080,6 +1095,7 @@ function WatchlistsDashboard({ data }) {
       <div className="watchlist-actions">
         <input className="screener-search" value={draftSymbol} onChange={(event) => setDraftSymbol(event.target.value)} onKeyDown={(event) => event.key === 'Enter' && addSymbol()} placeholder="Add symbol…" aria-label="Add symbol" />
         <button className="watch-button" onClick={addSymbol}>+ Add</button>
+        {symbols.length ? <button className="watch-button" onClick={exportListCsv}>Export CSV</button> : null}
         <button className="watch-button" onClick={createList}>New list</button>
         {Object.keys(lists).length > 1 && <button className="watch-button" onClick={deleteList}>Delete list</button>}
       </div>

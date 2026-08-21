@@ -1109,6 +1109,17 @@ export async function getEquityScreener() {
         leader: bucket.leader,
       }))
       .sort((a, b) => (b.avgMomentum20d ?? -999) - (a.avgMomentum20d ?? -999));
+    const sectorScoreGroups = new Map();
+    for (const row of scored) {
+      const sector = universe.sectors.get(row.symbol);
+      if (!sector || !Number.isFinite(row.score)) continue;
+      if (!sectorScoreGroups.has(sector)) sectorScoreGroups.set(sector, []);
+      sectorScoreGroups.get(sector).push(row);
+    }
+    for (const [, group] of sectorScoreGroups) {
+      group.sort((a, b) => b.score - a.score);
+      group.forEach((row, index) => { row.sectorRank = index + 1; row.sectorCount = group.length; });
+    }
     return {
       asOf: new Date().toISOString(),
       version: 'screener-v1',
