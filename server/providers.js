@@ -186,11 +186,6 @@ function asNumber(value) {
   return Number.isFinite(parsed) ? parsed : null;
 }
 
-function percentileOf(values, value) {
-  if (!Array.isArray(values) || !values.length || !Number.isFinite(value)) return null;
-  return Math.round((values.filter((item) => item <= value).length / values.length) * 100);
-}
-
 function normalizeTimestamp(value) {
   if (!value) return null;
   if (/^\d+$/.test(String(value))) return new Date(Number(value) * 1000).toISOString();
@@ -642,10 +637,15 @@ export async function getSentimentSnapshot() {
   });
 }
 
-function smaOf(values, window) {
-  if (values.length < window) return null;
+export function smaOf(values, window) {
+  if (!Array.isArray(values) || values.length < window) return null;
   const slice = values.slice(-window);
   return slice.reduce((sum, value) => sum + value, 0) / window;
+}
+
+export function percentileOf(values, value) {
+  if (!Array.isArray(values) || !values.length || !Number.isFinite(value)) return null;
+  return Math.round((values.filter((item) => item <= value).length / values.length) * 100);
 }
 
 async function getBinanceFundingLeg() {
@@ -690,6 +690,54 @@ async function getBinancePositioningLeg() {
 
 let bitcoinOnchainMemo = null;
 let bitcoinDerivativesMemo = null;
+
+export function parseRssItems(xml, source) {
+  const items = [];
+  const blocks = xml.match(/<item>[\s\S]*?<\/item>/g) ?? [];
+  for (const block of blocks.slice(0, 15)) {
+    const extract = (tag) => {
+      const match = block.match(new RegExp(`<${tag}[^>]*>([\\s\\S]*?)</${tag}>`));
+      if (!match) return null;
+      return match[1].replace(/<!\[CDATA\[|\]\]>/g, '').replace(/<[^>]+>/g, '').trim();
+    };
+    const title = extract('title');
+    const link = extract('link');
+    const pubDate = extract('pubDate');
+    if (!title) continue;
+    const timestamp = pubDate ? new Date(pubDate).getTime() : null;
+    items.push({ source, title, link, publishedAt: Number.isFinite(timestamp) ? new Date(timestamp).toISOString() : null });
+  }
+  return items;
+}
+
+export async function getNewsWire() {
+  return withCache('analytics:news-wire', 15 * 60_000, async () => {
+    const feeds = [
+      { url: 'https://www.federalreserve.gov/feeds/press_all.xml', source: 'Federal Reserve' },
+      { url: 'https://search.cnbc.com/rs/search/combinedcms/view.xml?partnerId=wrss01&id=100003114', source: 'CNBC' },
+      { url: 'https://feeds.content.dowjones.io/public/rss/mw_topstories', source: 'MarketWatch' },
+    ];
+    const settled = await Promise.allSettled(feeds.map((feed) => fetchText(feed.url).then((xml) => parseRssItems(xml, feed.source))));
+    const items = [];
+    const sources = [];
+    settled.forEach((result, index) => {
+      if (result.status === 'fulfilled') {
+        items.push(...result.value);
+        sources.push(feeds[index].source);
+      }
+    });
+    const dated = items.filter((item) => item.publishedAt !== null).sort((left, right) => new Date(right.publishedAt) - new Date(left.publishedAt));
+    return {
+      asOf: new Date().toISOString(),
+      version: 'news-wire-v1',
+      status: dated.length ? 'calculated' : 'unavailable',
+      calculatedCount: dated.length,
+      sources,
+      items: dated.slice(0, 14),
+      methodology: 'Aggregated official and outlet RSS wires: Federal Reserve press releases, CNBC top news, and MarketWatch top stories, sorted by publish time.',
+    };
+  });
+}
 
 const BROWSER_HEADERS = {
   'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36',
@@ -756,7 +804,7 @@ async function getSparkCloses(symbols) {
   return merged;
 }
 
-function alignedRatioSeries(left, right) {
+export function alignedRatioSeries(left, right) {
   const n = Math.min(left.length, right.length);
   const offsetLeft = left.length - n;
   const offsetRight = right.length - n;

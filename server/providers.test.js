@@ -1,6 +1,34 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { calculateTwelveCreditSlot, mergeFredSeries, mergeMarketSnapshot } from './providers.js';
+import { alignedRatioSeries, calculateTwelveCreditSlot, mergeFredSeries, mergeMarketSnapshot, parseRssItems, percentileOf, smaOf } from './providers.js';
+
+test('simple moving average requires the full window', () => {
+  assert.equal(smaOf([1, 2, 3], 3), 2);
+  assert.equal(smaOf([1, 2], 3), null);
+  assert.equal(smaOf([], 1), null);
+});
+
+test('percentile ranks a value within its history', () => {
+  assert.equal(percentileOf([1, 2, 3, 4], 3), 75);
+  assert.equal(percentileOf([], 3), null);
+  assert.equal(percentileOf([1, 2], Number.NaN), null);
+});
+
+test('ratio series aligns unequal-length histories from the tail', () => {
+  const left = [10, 20, 30, 40];
+  const right = [2, 2];
+  assert.deepEqual(alignedRatioSeries(left, right), [15, 20]);
+});
+
+test('RSS parser extracts titles, links, and timestamps', () => {
+  const xml = '<rss><channel><item><title><![CDATA[Fed releases statement]]></title><link>https://federalreserve.gov/a</link><pubDate>Thu, 20 Aug 2026 18:00:00 GMT</pubDate></item><item><title>Plain title</title><link>https://example.com/b</link></item></channel></rss>';
+  const items = parseRssItems(xml, 'Federal Reserve');
+  assert.equal(items.length, 2);
+  assert.equal(items[0].title, 'Fed releases statement');
+  assert.equal(items[0].source, 'Federal Reserve');
+  assert.equal(items[0].publishedAt, '2026-08-20T18:00:00.000Z');
+  assert.equal(items[1].publishedAt, null);
+});
 
 test('Twelve Data credit scheduling allows a bounded burst', () => {
   const reservations = [

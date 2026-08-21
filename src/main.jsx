@@ -20,11 +20,18 @@ const watchlist = [
   { ticker: 'BTC', name: 'Bitcoin', color: '#ff7c4d' },
 ];
 
-const news = [
-  ['BLOOMBERG', 'Nvidia rallies as AI spending keeps its momentum alive', '12m ago'],
-  ['FINANCIAL TIMES', 'The next leg of the market rally will demand broader participation', '36m ago'],
-  ['MARKETWATCH', 'Gold is quietly making its case as rate-cut bets build', '1h ago'],
-];
+const newsWireItems = (platformData) => {
+  const decode = (text) => text.replace(/&apos;/g, "'").replace(/&#39;/g, "'").replace(/&quot;/g, '"').replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>');
+  const relativeTime = (iso) => {
+    if (!iso) return '';
+    const minutes = Math.round((Date.now() - new Date(iso).getTime()) / 60000);
+    if (!Number.isFinite(minutes) || minutes < 0) return '';
+    if (minutes < 60) return `${minutes}m ago`;
+    if (minutes < 1440) return `${Math.round(minutes / 60)}h ago`;
+    return `${Math.round(minutes / 1440)}d ago`;
+  };
+  return (platformData?.news?.items ?? []).map((item) => ({ ...item, title: decode(item.title), time: relativeTime(item.publishedAt) }));
+};
 
 const fxOutlook = [
   ['USD', 'Strength', '68', 'positive', 'Growth and carry support'],
@@ -352,7 +359,10 @@ function App() {
 
           <section className="lower-grid">
             <article className={`watchlist-card panel ${watchlist.every((item) => (sparkByTicker[item.ticker]?.data?.points?.length ?? 0) > 0) ? '' : 'preview-section'}`}><div className="card-heading"><div><p className="section-kicker">LIVE PRICES · CALCULATED SPARKLINES</p><h3>Watchlist</h3></div><button>View all <span>→</span></button></div><div className="watchlist-table">{hydratedWatchlist.map((item) => <button className={`watch-row ${selectedTicker === item.ticker ? 'watch-selected' : ''}`} onClick={() => setSelectedTicker(item.ticker)} key={item.ticker}><span className="asset-badge" style={{ backgroundColor: item.color }}>{item.ticker.charAt(0)}</span><span className="asset-name"><b>{item.ticker}</b><small>{item.name}</small></span><span className="mini-chart">{(sparkByTicker[item.ticker]?.data?.points?.length ?? 0) > 0 ? <Sparkline color={item.color} values={normalizeSparkline(sparkByTicker[item.ticker].data.points.map((point) => point.value))} /> : <Sparkline color={item.color} values={[0, 0]} />}</span><span className="asset-price"><b>{formatUsd(item.quote?.price)}</b><small className={item.quote?.changePercent < 0 ? 'negative' : ''}>{formatPercent(item.quote?.changePercent)}{item.quote?.stored ? ' · stored' : ''}</small></span></button>)}</div></article>
-            <article className="news-card panel preview-section"><div className="card-heading"><div><p className="section-kicker">WHAT MATTERS</p><h3>Market intelligence</h3></div><button>All news <span>→</span></button></div><div className="news-list">{news.map(([source, title, time]) => <article className="news-item" key={title}><div><p><span>{source}</span> <small>{time}</small></p><h4>{title}</h4></div><span className="news-arrow">↗</span></article>)}</div></article>
+            {(() => {
+              const wireItems = newsWireItems(platformData);
+              return <article className={`news-card panel ${wireItems.length ? '' : 'preview-section'}`}><div className="card-heading"><div><p className="section-kicker">MACRO WIRE · CALCULATED</p><h3>Market intelligence</h3></div><span className="data-pill">{platformData?.news?.sources?.length ? platformData.news.sources.join(' · ') : 'Awaiting feeds'}</span></div><div className="news-list">{wireItems.slice(0, 6).map((item) => <a className="news-item" href={item.link} target="_blank" rel="noreferrer" key={item.title + item.publishedAt}><div><p><span>{item.source}</span> <small>{item.time}</small></p><h4>{item.title}</h4></div><span className="news-arrow">↗</span></a>)}</div>{wireItems.length > 6 && <p className="model-footnote">{wireItems.length} headlines aggregated from Federal Reserve, CNBC, and MarketWatch RSS wires, newest first.</p>}</article>;
+            })()}
           </section>
           <p className="independence-note">TradeGate is an independent market research platform and is not affiliated with Tradegate AG.</p>
           </>}
