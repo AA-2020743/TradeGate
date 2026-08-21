@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { buildAtomFeed, buildHeatmapRow, buildLiquidityNarrative, buildWorkspaceNarrative, calculateChangeCorrelations, calculateLeadLag, calculatePositioningModel, calculateCrossMarketRelationship, calculateGlobalLiquidityModel, calculateMacroRegimeModel, calculateRsi, calculateScreenerScores, calculateTechnicalSnapshot, calculateTrendQuality, classifyHeadlineSentiment, calculateUsdStrengthModel, calculateUsLiquidityModel, escapeXml, pearsonCorrelation } from './analytics.js';
+import { buildAtomFeed, buildHeatmapRow, buildLiquidityNarrative, buildWorkspaceNarrative, calculateChangeCorrelations, calculateLeadLag, calculatePositioningModel, calculateCrossMarketRelationship, calculateGlobalLiquidityModel, calculateMacroRegimeModel, calculateRsi, calculateScreenerScores, calculateSeriesLeadLag, calculateTechnicalSnapshot, calculateTrendQuality, classifyHeadlineSentiment, calculateUsdStrengthModel, calculateUsLiquidityModel, escapeXml, pearsonCorrelation } from './analytics.js';
 
 test('RSI reaches 100 for an uninterrupted advance', () => {
   const values = Array.from({ length: 30 }, (_, index) => 100 + index);
@@ -504,4 +504,77 @@ test('screener scores rank trend quality cross-sectionally without moving the co
   assert.equal(rows[1].qualityRank, 50);
   assert.equal(rows[2].qualityRank, null);
   assert.equal(rows[0].score, 93);
+});
+
+function dailyDates(count, start = Date.UTC(2025, 0, 1), stepDays = 1) {
+  return Array.from({ length: count }, (_, index) => new Date(start + (index * stepDays * 86_400_000)).toISOString().slice(0, 10));
+}
+
+test('lead-lag ranked by magnitude finds an inverse link a signed scan would miss', () => {
+  // Y mirrors X three bars later, so the real relationship is strongly negative.
+  const driver = Array.from({ length: 200 }, (_, index) => Math.sin(index / 3) + Math.cos(index / 11));
+  const follower = driver.map((_, index) => (index >= 3 ? -driver[index - 3] : 0));
+  const signed = calculateLeadLag(driver, follower, 10, 40);
+  const magnitude = calculateLeadLag(driver, follower, 10, 40, { rankBy: 'magnitude' });
+  assert.equal(magnitude.bestLag, 3);
+  assert.ok(magnitude.corrAtBest < -0.9);
+  assert.ok(Math.abs(signed.corrAtBest) < Math.abs(magnitude.corrAtBest));
+});
+
+test('a series that moves first is reported as the leader, in bars and in days', () => {
+  const driver = Array.from({ length: 200 }, (_, index) => Math.sin(index / 4) + Math.sin(index / 9));
+  const follower = driver.map((_, index) => (index >= 2 ? driver[index - 2] : 0));
+  const result = calculateSeriesLeadLag(driver, follower, dailyDates(201));
+  assert.equal(result.leads, 'left');
+  assert.equal(result.leadBars, 2);
+  assert.equal(result.leadDays, 2);
+  assert.equal(result.barDays, 1);
+  assert.ok(result.edge >= 0.05);
+});
+
+test('the follower side is named when the right series moves first', () => {
+  const driver = Array.from({ length: 200 }, (_, index) => Math.sin(index / 4) + Math.sin(index / 9));
+  const result = calculateSeriesLeadLag(driver.map((_, index) => (index >= 3 ? driver[index - 3] : 0)), driver, dailyDates(201));
+  assert.equal(result.leads, 'right');
+  assert.equal(result.leadBars, 3);
+});
+
+test('a weekly cadence reports its lead in weeks of calendar days, not sessions', () => {
+  const driver = Array.from({ length: 120 }, (_, index) => Math.sin(index / 4) + Math.sin(index / 9));
+  const follower = driver.map((_, index) => (index >= 2 ? driver[index - 2] : 0));
+  const result = calculateSeriesLeadLag(driver, follower, dailyDates(121, Date.UTC(2024, 0, 1), 7));
+  assert.equal(result.leads, 'left');
+  assert.equal(result.leadBars, 2);
+  assert.equal(result.barDays, 7);
+  assert.equal(result.leadDays, 14);
+});
+
+test('a synchronous pair claims no leader', () => {
+  const driver = Array.from({ length: 200 }, (_, index) => Math.sin(index / 5));
+  const result = calculateSeriesLeadLag(driver, driver.map((value) => value * 2), dailyDates(201));
+  assert.equal(result.leads, 'none');
+  assert.equal(result.leadBars, 0);
+  assert.equal(result.leadDays, 0);
+  assert.equal(result.bestLagBars, 0);
+});
+
+test('a lag that barely beats the synchronous reading is not called a lead', () => {
+  const noise = Array.from({ length: 200 }, (_, index) => Math.sin(index / 7) + (Math.sin(index * 12.9898) * 43_758.5453 % 1));
+  const result = calculateSeriesLeadLag(noise, [...noise].reverse(), dailyDates(201));
+  assert.ok(result.edge < 0.05 ? result.leads === 'none' : result.leadBars > 0);
+});
+
+test('lead-lag withholds a reading when the aligned history is too short', () => {
+  const short = Array.from({ length: 30 }, (_, index) => index % 5);
+  assert.equal(calculateSeriesLeadLag(short, short, dailyDates(31)), null);
+});
+
+test('change correlations publish a lead-lag block alongside the windows', () => {
+  const dates = dailyDates(200);
+  const leftPoints = dates.map((date, index) => ({ date, value: 100 + Math.sin(index / 4) * 10 }));
+  const rightPoints = dates.map((date, index) => ({ date, value: 100 + Math.sin((index - 2) / 4) * 10 }));
+  const result = calculateChangeCorrelations(leftPoints, rightPoints);
+  assert.equal(result.leadLag.leads, 'left');
+  assert.equal(result.leadLag.leadBars, 2);
+  assert.equal(typeof result.correlations['60D'], 'number');
 });

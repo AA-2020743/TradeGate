@@ -1436,6 +1436,9 @@ export async function getRegimeCorrelations() {
       const leftPoints = fredHistoryByKey[pair.leftKey] ?? [];
       const rightPoints = marketPointsBySymbol[pair.rightSymbol] ?? [];
       const result = leftPoints.length && rightPoints.length ? calculateChangeCorrelations(leftPoints, rightPoints) : null;
+      const leadLag = result?.leadLag ?? null;
+      const leader = leadLag?.leads === 'left' ? pair.leftName : leadLag?.leads === 'right' ? pair.rightName : null;
+      const follower = leadLag?.leads === 'left' ? pair.rightName : leadLag?.leads === 'right' ? pair.leftName : null;
       return {
         key: pair.key,
         left: pair.leftName,
@@ -1445,9 +1448,28 @@ export async function getRegimeCorrelations() {
         correlations: result?.correlations ?? { '20D': null, '60D': null, '1Y': null },
         observations: result?.observations ?? 0,
         asOf: result?.asOf ?? null,
+        leadLag: leadLag ? {
+          ...leadLag,
+          leader,
+          follower,
+          read: leader ? `${leader} leads ${follower} by about ${leadLag.leadDays} days` : 'Moves together',
+        } : null,
       };
     });
     const calculatedCount = pairs.filter((pair) => pair.status === 'calculated').length;
+    const leadSignals = pairs
+      .filter((pair) => pair.leadLag?.leader)
+      .sort((left, right) => Math.abs(right.leadLag.corrAtBest) - Math.abs(left.leadLag.corrAtBest))
+      .map((pair) => ({
+        key: pair.key,
+        leader: pair.leadLag.leader,
+        follower: pair.leadLag.follower,
+        leadDays: pair.leadLag.leadDays,
+        corrAtBest: pair.leadLag.corrAtBest,
+        synchronousCorr: pair.leadLag.synchronousCorr,
+        edge: pair.leadLag.edge,
+        read: pair.leadLag.read,
+      }));
 
     return {
       version: 'regime-correlation-v1',
@@ -1456,6 +1478,8 @@ export async function getRegimeCorrelations() {
       coverage: Math.round((calculatedCount / pairs.length) * 100),
       calculatedCount,
       pairs,
+      leadSignals,
+      leadLagMethodology: 'Each pair\'s aligned daily changes are cross-correlated across a lag window of ten observations in both directions, ranked by absolute correlation so a genuinely inverse pair is not misread. A lead is only claimed when the peak beats the synchronous reading by 0.05 and the lag is measured in calendar days from the pair\'s own observation cadence, so a weekly series reports weeks rather than sessions.',
       missingInputs: pairs.filter((pair) => pair.status === 'unavailable').map((pair) => `${pair.left} / ${pair.right}`),
     };
   });

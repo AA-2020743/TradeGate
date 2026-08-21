@@ -9,6 +9,13 @@ function mean(values) {
   return values.length ? values.reduce((total, value) => total + value, 0) / values.length : null;
 }
 
+function median(values) {
+  if (!values.length) return null;
+  const sorted = [...values].sort((left, right) => left - right);
+  const middle = Math.floor(sorted.length / 2);
+  return sorted.length % 2 ? sorted[middle] : (sorted[middle - 1] + sorted[middle]) / 2;
+}
+
 function standardDeviation(values) {
   if (values.length < 2) return null;
   const average = mean(values);
@@ -31,7 +38,14 @@ function emaSeries(values, period) {
   return result;
 }
 
-export function calculateLeadLag(seriesX, seriesY, maxLagBars = 4, minObservations = 30) {
+/**
+ * Scans the cross-correlation of two change series across a lag window. A
+ * positive `bestLag` means seriesX moves first. `rankBy: 'magnitude'` picks the
+ * strongest relationship in either direction, which is what a genuinely inverse
+ * macro pair needs — ranking a dollar/bitcoin scan by signed correlation would
+ * report a weak positive blip instead of the real inverse link.
+ */
+export function calculateLeadLag(seriesX, seriesY, maxLagBars = 4, minObservations = 30, { rankBy = 'signed' } = {}) {
   if (!Array.isArray(seriesX) || !Array.isArray(seriesY)) return null;
   const curve = [];
   for (let lag = -maxLagBars; lag <= maxLagBars; lag += 1) {
@@ -61,7 +75,8 @@ export function calculateLeadLag(seriesX, seriesY, maxLagBars = 4, minObservatio
     curve.push({ lag, corr: Math.round(corr * 1000) / 1000, observations: xs.length });
   }
   if (!curve.length) return null;
-  const best = curve.reduce((left, right) => (right.corr > left.corr ? right : left));
+  const strength = rankBy === 'magnitude' ? (point) => Math.abs(point.corr) : (point) => point.corr;
+  const best = curve.reduce((left, right) => (strength(right) > strength(left) ? right : left));
   return {
     bestLag: best.lag,
     corrAtBest: best.corr,
@@ -666,7 +681,48 @@ export function calculateChangeCorrelations(leftPoints, rightPoints) {
       ? pearsonCorrelation(leftChanges.slice(-window), rightChanges.slice(-window))
       : null;
   }
-  return { correlations, observations: leftChanges.length, asOf: dates.at(-1) };
+  return {
+    correlations,
+    observations: leftChanges.length,
+    asOf: dates.at(-1),
+    leadLag: calculateSeriesLeadLag(leftChanges, rightChanges, dates),
+  };
+}
+
+const LEAD_LAG_MAX_BARS = 10;
+const LEAD_LAG_MIN_OBSERVATIONS = 40;
+const LEAD_LAG_MIN_EDGE = 0.05;
+
+/**
+ * Decides whether either series reliably moves first. The lag is measured in
+ * aligned observations, so it is also reported in calendar days: a weekly
+ * series lagging by three bars is three weeks, not three sessions, and calling
+ * both "3" would misread the slower one by an order of magnitude.
+ */
+export function calculateSeriesLeadLag(leftChanges, rightChanges, dates) {
+  const scan = calculateLeadLag(leftChanges, rightChanges, LEAD_LAG_MAX_BARS, LEAD_LAG_MIN_OBSERVATIONS, { rankBy: 'magnitude' });
+  if (!scan) return null;
+  const gaps = [];
+  for (let index = 1; index < dates.length; index += 1) {
+    const gap = (Date.parse(dates[index]) - Date.parse(dates[index - 1])) / DAY_MS;
+    if (Number.isFinite(gap) && gap > 0) gaps.push(gap);
+  }
+  const barDays = median(gaps);
+  const synchronous = Number.isFinite(scan.synchronousCorr) ? scan.synchronousCorr : 0;
+  const edge = Math.round((Math.abs(scan.corrAtBest) - Math.abs(synchronous)) * 1000) / 1000;
+  // A peak that barely beats the synchronous reading is noise, not a lead.
+  const decisive = scan.bestLag !== 0 && edge >= LEAD_LAG_MIN_EDGE;
+  return {
+    leads: decisive ? (scan.bestLag > 0 ? 'left' : 'right') : 'none',
+    bestLagBars: scan.bestLag,
+    leadBars: decisive ? Math.abs(scan.bestLag) : 0,
+    leadDays: decisive && Number.isFinite(barDays) ? Math.round(Math.abs(scan.bestLag) * barDays) : 0,
+    barDays: Number.isFinite(barDays) ? Math.round(barDays * 10) / 10 : null,
+    corrAtBest: scan.corrAtBest,
+    synchronousCorr: scan.synchronousCorr,
+    edge,
+    observations: scan.observations,
+  };
 }
 
 export function buildLiquidityNarrative(usOutputs = [], globalOutputs = []) {
