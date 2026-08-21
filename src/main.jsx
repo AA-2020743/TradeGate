@@ -576,7 +576,32 @@ function EquitiesDashboard({ platformData }) {
       </article>
     </section>
 
-    <section className="equity-section-heading"><div><p className="section-kicker">PARTICIPATION AND POSITIONING</p><h2>Inputs required for reliable extremes</h2></div><EquityStatus status="unavailable" label="Feeds pending" /></section>
+    <section className="equity-section-heading"><div><p className="section-kicker">MARKET INTERNALS · CALCULATED PROXY</p><h2>Participation across the ETF universe</h2></div><EquityStatus status={sectorData?.sectorBreadth?.status} label="Histories pending" /></section>
+    <section className="equity-macro-matrix">
+      <article className="equity-rotation-panel panel wide">
+        {sectorData?.sectorBreadth?.status === 'calculated' ? <>
+          <div className="equity-rotation-head styles-head"><span>Universe of {sectorData.sectorBreadth.universeSize} ETFs</span><span>Reading</span></div>
+          <div className="equity-rotation-row styles-row"><span><strong>Above 50-day average</strong><small>Trend participation</small></span><b>{sectorData.sectorBreadth.pctAbove50}%</b></div>
+          <div className="equity-rotation-row styles-row"><span><strong>Above 200-day average</strong><small>Long-cycle participation</small></span><b>{sectorData.sectorBreadth.pctAbove200}%</b></div>
+          <div className="equity-rotation-row styles-row"><span><strong>20-session advancers</strong><small>Short-term breadth</small></span><b>{sectorData.sectorBreadth.advancersPct}%</b></div>
+          <div className="equity-rotation-row styles-row"><span><strong>New 60-session highs / lows</strong><small>Within 2% of extreme</small></span><b>{sectorData.sectorBreadth.newHighs} / {sectorData.sectorBreadth.newLows}</b></div>
+          <div className="equity-rotation-row styles-row"><span><strong>50-day trend thrust</strong><small>Universe-average 20-session slope</small></span><b className={(sectorData.sectorBreadth.thrust20 ?? 0) >= 0 ? 'positive' : 'negative'}>{Number.isFinite(sectorData.sectorBreadth.thrust20) ? `${sectorData.sectorBreadth.thrust20 > 0 ? '+' : ''}${sectorData.sectorBreadth.thrust20}%` : '—'}</b></div>
+        </> : <div className="equity-empty">{sectorData?.sectorBreadth?.reason ?? 'Fresh ETF histories are required before the participation proxy can publish.'}</div>}
+        <p className="equity-source-line">{sectorData?.sectorBreadth?.methodology ?? 'Awaiting sector API.'}</p>
+      </article>
+      <article className="panel">
+        <div className="panel-title"><div><p className="section-kicker">TOP RISK · PROXY BREADTH</p><h3>{sectorData?.topRisk?.risk ?? 'Unavailable'}</h3></div><span className="data-pill">{sectorData?.topRisk?.coverage ?? 0}% coverage</span></div>
+        <div className="detail-score"><span>Breadth-deterioration composite</span><b>{sectorData?.topRisk?.score ?? '—'}</b><small>{sectorData?.topRisk?.missing?.length ? `Missing: ${sectorData.topRisk.missing.join(', ')}` : 'All available drivers contributing'}</small></div>
+        <p className="model-footnote"><code>{sectorData?.topRisk?.version ?? 'equity-top-risk-v1'}</code> publishes provisionally when constituent breadth is replaced by the ETF participation proxy.</p>
+      </article>
+      <article className="panel">
+        <div className="panel-title"><div><p className="section-kicker">BOTTOM SIGNAL · PROXY BREADTH</p><h3>{sectorData?.bottomSignal?.signal ?? 'Unavailable'}</h3></div><span className="data-pill">{sectorData?.bottomSignal?.bearMarketRallyRisk ?? '—'} rally risk</span></div>
+        <div className="detail-score"><span>Washout-and-turn composite</span><b>{sectorData?.bottomSignal?.score ?? '—'}</b><small>{sectorData?.bottomSignal?.missing?.length ? `Missing: ${sectorData.bottomSignal.missing.join(', ')}` : 'All available drivers contributing'}</small></div>
+        <p className="model-footnote"><code>{sectorData?.bottomSignal?.version ?? 'equity-bottom-signal-v1'}</code> confirms only with full constituent breadth; proxy readings stay provisional.</p>
+      </article>
+    </section>
+
+    <section className="equity-section-heading"><div><p className="section-kicker">PARTICIPATION AND POSITIONING</p><h2>Inputs still required for reliable extremes</h2></div><EquityStatus status="unavailable" label="Feeds pending" /></section>
     <section className="equity-requirement-grid">
       <RequirementPanel title="Market breadth" dataset={dashboard?.breadth} requirements={catalog?.requiredFeeds?.breadth} />
       <RequirementPanel title="Sentiment" dataset={dashboard?.sentiment} requirements={catalog?.requiredFeeds?.sentiment} />

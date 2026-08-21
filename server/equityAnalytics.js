@@ -134,6 +134,68 @@ function technicalBottomScore(technical) {
   return mean([clamp(((45 - rsi) / 25) * 100), clamp(discount * 5), macdTurn].filter(Number.isFinite));
 }
 
+export function calculateSectorBreadthProxy(inputs) {
+  const usable = (inputs ?? []).filter((input) => Array.isArray(input?.points) && input.points.length >= 60);
+  if (!usable.length) {
+    return { version: 'sector-breadth-proxy-v1', status: 'unavailable', source: 'Sector/subsector ETF participation proxy', missing: ['At least one ETF history with 60 or more sessions'] };
+  }
+
+  const stats = usable.map((input) => {
+    const values = input.points.map((point) => point.value).filter(Number.isFinite);
+    const latest = values.at(-1);
+    const sma = (period) => values.length >= period ? mean(values.slice(-period)) : null;
+    const sma50 = sma(50);
+    const sma200 = sma(Math.min(200, values.length));
+    const window60 = values.slice(-60);
+    const high60 = Math.max(...window60);
+    const low60 = Math.min(...window60);
+    const past20 = values.at(-21);
+    const pastThrust = values.length >= 71 ? values.at(-71) : values[0];
+    const sma50Past = values.length >= 70 ? mean(values.slice(-70, -20)) : null;
+    return {
+      symbol: input.symbol,
+      above50: Number.isFinite(sma50) && Number.isFinite(latest) ? latest > sma50 : false,
+      above200: Number.isFinite(sma200) && Number.isFinite(latest) ? latest > sma200 : false,
+      advancing: Number.isFinite(past20) && past20 > 0 && Number.isFinite(latest) ? ((latest / past20) - 1) > 0 : false,
+      newHigh: Number.isFinite(latest) && latest >= (high60 * 0.98),
+      newLow: Number.isFinite(latest) && latest <= (low60 * 1.02),
+      thrustDelta: Number.isFinite(sma50Past) && sma50Past > 0 && Number.isFinite(sma50) ? (((sma50 / sma50Past) - 1) * 100) : null,
+      asOf: input.points.at(-1)?.date ?? null,
+    };
+  });
+
+  const count = (predicate) => stats.filter(predicate).length;
+  const universeSize = stats.length;
+  const pctAbove50 = Math.round((count((stat) => stat.above50) / universeSize) * 100);
+  const pctAbove200 = Math.round((count((stat) => stat.above200) / universeSize) * 100);
+  const advancersPct = Math.round((count((stat) => stat.advancing) / universeSize) * 100);
+  const newHighs = count((stat) => stat.newHigh);
+  const newLows = count((stat) => stat.newLow);
+  const thrustValues = stats.map((stat) => stat.thrustDelta).filter(Number.isFinite);
+  const thrust20 = thrustValues.length ? Number((thrustValues.reduce((total, value) => total + value, 0) / thrustValues.length).toFixed(2)) : null;
+  const participation = (pctAbove50 * 0.6) + (pctAbove200 * 0.4);
+  const topRisk = Math.round(clamp(100 - participation));
+  const bottomScore = Math.round(clamp(((100 - participation) * 0.7) + (Math.max(thrust20 ?? 0, 0) * 3)));
+  const asOf = stats.map((stat) => stat.asOf).filter(Boolean).sort().at(-1) ?? null;
+
+  return {
+    version: 'sector-breadth-proxy-v1',
+    status: 'calculated',
+    source: 'Sector/subsector ETF participation proxy',
+    asOf,
+    universeSize,
+    pctAbove50,
+    pctAbove200,
+    advancersPct,
+    newHighs,
+    newLows,
+    thrust20,
+    topRisk,
+    bottomScore,
+    methodology: 'Participation proxy across sector and subsector ETF close histories; not a substitute for constituent-level breadth.',
+  };
+}
+
 export function calculateTopRisk({ technical, breadth, sentiment, positioning, credit, liquidity, flows } = {}) {
   const calculatedBreadth = breadth?.status === 'calculated' ? breadth : null;
   const definitions = [

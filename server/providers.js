@@ -647,7 +647,7 @@ export async function getLiquiditySnapshot(options = {}) {
     const staleSeries = series.filter((item) => item.stale);
     const staleLiveSeries = liveSeries.filter((item) => item.stale);
     const errors = results.flatMap((result) => result.status === 'rejected' ? [result.reason.message] : []);
-    if (!config.fredApiKey && !storedSeries.length) errors.push('FRED_API_KEY is not configured; using the public FRED CSV endpoint');
+    if (!config.fredApiKey && !storedSeries.length && !series.length) errors.push('FRED is unreachable and no stored observations are available');
     if (staleLiveSeries.length) errors.push(`Latest FRED responses are stale: ${staleLiveSeries.map((item) => item.id).join(', ')}`);
     if (staleSeries.length) errors.push(`FRED series are stale and excluded from models: ${staleSeries.map((item) => item.id).join(', ')}`);
     const values = Object.fromEntries(modelSeries.map((item) => [item.key, item.value * item.multiplier]));

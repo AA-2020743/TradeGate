@@ -1,6 +1,6 @@
 import { getStoredMarketHistories, getStoredSeriesCoverage, isDatabaseConfigured } from './database.js';
 import { calculateTechnicalSnapshot } from './analytics.js';
-import { calculateBottomSignal, calculateBasketRotation, calculateEquityRegime, calculateMacroSensitivities, calculateSectorRotation, calculateTopRisk } from './equityAnalytics.js';
+import { calculateBottomSignal, calculateBasketRotation, calculateEquityRegime, calculateMacroSensitivities, calculateSectorBreadthProxy, calculateSectorRotation, calculateTopRisk } from './equityAnalytics.js';
 import {
   attachSeriesCoverage,
   breadthRequirements,
@@ -117,11 +117,13 @@ export async function getSectorDashboard() {
   let storageAvailable = false;
   let coverageAvailable = false;
   let liquidity = null;
+  let spyTechnical = null;
   if (isDatabaseConfigured()) {
-    const [historiesResult, coverageResult, liquidityResult] = await Promise.allSettled([
+    const [historiesResult, coverageResult, liquidityResult, technicalResult] = await Promise.allSettled([
       getStoredMarketHistories(symbols),
       getStoredSeriesCoverage(symbols),
       getLiquiditySnapshot(),
+      getStoredTechnicalSnapshot('SPY'),
     ]);
     if (historiesResult.status === 'fulfilled') {
       histories = historiesResult.value;
@@ -132,6 +134,7 @@ export async function getSectorDashboard() {
       coverageAvailable = true;
     }
     if (liquidityResult.status === 'fulfilled') liquidity = liquidityResult.value;
+    if (technicalResult.status === 'fulfilled') spyTechnical = technicalResult.value;
   }
   const historyIsFresh = (points) => {
     const timestamp = new Date(points.at(-1)?.timestamp).getTime();
@@ -144,6 +147,15 @@ export async function getSectorDashboard() {
     ...subsectorCatalog.map((subsector) => ({ ...subsector, kind: 'subsector', points: historyIsFresh(histories.get(subsector.symbol) ?? []) ? histories.get(subsector.symbol) : [] })),
   ];
   const rotation = calculateSectorRotation(rotationInputs, usableBenchmarkHistory);
+  const breadthProxy = calculateSectorBreadthProxy(
+    rotationInputs
+      .filter((input) => input.points.length)
+      .map((input) => ({ symbol: input.symbol, points: normalizeStoredPoints(input.points) })),
+  );
+  const usableBreadth = breadthProxy.status === 'calculated' ? breadthProxy : unavailableBreadth;
+  const usableSectorTechnical = spyTechnical?.stale ? null : spyTechnical?.model ?? null;
+  const sectorTopRisk = calculateTopRisk({ technical: usableSectorTechnical, breadth: usableBreadth, liquidity: liquidity?.model });
+  const sectorBottomSignal = calculateBottomSignal({ technical: usableSectorTechnical, breadth: usableBreadth, liquidity: liquidity?.model });
   const sectorMetadata = new Map([...sectorCatalog, ...subsectorCatalog].map((item) => [item.symbol, item]));
 
   const fredHistoryByKey = Object.fromEntries((liquidity?.series ?? [])
@@ -182,10 +194,12 @@ export async function getSectorDashboard() {
     macroSensitivity: { sources: macroSources, window: '60D changes' },
     sectors: attachSeriesCoverage(sectorCatalog, coverage),
     subsectors: attachSeriesCoverage(subsectorCatalog, coverage),
-    sectorBreadth: {
+    sectorBreadth: breadthProxy.status === 'calculated' ? breadthProxy : {
       status: 'unavailable',
-      reason: 'Sector and subsector constituent histories are required for participation breadth.',
+      reason: 'Fresh sector and subsector ETF histories are required for the participation proxy.',
     },
+    topRisk: sectorTopRisk,
+    bottomSignal: sectorBottomSignal,
     flows: unavailableDataset('Sector flows', ['ETF creations/redemptions', 'Mutual-fund flows', 'Institutional flows', 'Options flows']),
     methodology: 'Rotation uses fresh, aligned 20- and 60-session ETF proxy performance relative to SPY together with technical-v1. Macro sensitivities correlate 60-day daily ETF changes against FRED broad-dollar, real-yield, VIX, and high-yield-spread histories. Stale histories are excluded; holdings breadth, volume, valuation, positioning, and flows are not inferred.',
   };
