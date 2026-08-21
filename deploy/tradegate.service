@@ -1,6 +1,6 @@
 [Unit]
 Description=TradeGate research platform
-After=network-online.target
+After=network-online.target postgresql.service
 Wants=network-online.target
 
 [Service]
@@ -9,9 +9,10 @@ User=tradegate
 Group=tradegate
 WorkingDirectory=/home/tradegate/TradeGate
 EnvironmentFile=/home/tradegate/TradeGate/.env
-ExecStart=/usr/bin/node server/index.js
-Restart=always
+ExecStart=/usr/bin/npm start
+Restart=on-failure
 RestartSec=5
+
 NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=full
