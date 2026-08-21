@@ -1649,15 +1649,18 @@ async function getFredCsvSeries(series) {
   };
 }
 
-export async function getIntradayRotation() {
-  return withCache('analytics:intraday-rotation', 15 * 60_000, async () => {
+export function getIntradayRotation(range = '5d') {
+  const normalizedRange = ['1d', '5d'].includes(range) ? range : '5d';
+  const interval = normalizedRange === '1d' ? '5m' : '30m';
+  const barMinutes = normalizedRange === '1d' ? 5 : 30;
+  return withCache(`analytics:intraday-rotation:${normalizedRange}`, 15 * 60_000, async () => {
     const symbols = ['BTC-USD', 'ETH-USD', 'SOL-USD'];
     const names = { 'BTC-USD': 'Bitcoin', 'ETH-USD': 'Ethereum', 'SOL-USD': 'Solana' };
-    const aligned = await getIntradayCloses(symbols);
+    const aligned = await getIntradayCloses(symbols, normalizedRange, interval);
     const reference = aligned.get('BTC-USD');
-    if (!reference || reference.size < 60) throw new Error('Intraday bitcoin history unavailable');
+    if (!reference || reference.size < 40) throw new Error('Intraday bitcoin history unavailable');
     const sharedTimestamps = [...reference.keys()].filter((timestamp) => symbols.every((symbol) => aligned.get(symbol)?.has(timestamp)));
-    if (sharedTimestamps.length < 60) throw new Error('Aligned intraday histories are too short');
+    if (sharedTimestamps.length < 40) throw new Error('Aligned intraday histories are too short');
     const returnsBySymbol = new Map();
     for (const symbol of symbols) {
       const series = sharedTimestamps.map((timestamp) => aligned.get(symbol).get(timestamp));
@@ -1675,18 +1678,19 @@ export async function getIntradayRotation() {
         corrAtBest: result.corrAtBest,
         synchronousCorr: result.synchronousCorr,
         observations: result.observations,
-        read: Math.abs(result.bestLag) <= 1 ? 'Synchronous' : result.bestLag > 0 ? `${names[leader]} leads by ${Math.abs(result.bestLag) * 30}m` : `${names[follower]} leads by ${Math.abs(result.bestLag) * 30}m`,
+        read: Math.abs(result.bestLag) <= 1 ? 'Synchronous' : result.bestLag > 0 ? `${names[leader]} leads by ${Math.abs(result.bestLag) * barMinutes}m` : `${names[follower]} leads by ${Math.abs(result.bestLag) * barMinutes}m`,
       });
     }
     return {
       asOf: new Date().toISOString(),
       version: 'intraday-rotation-v1',
       status: pairs.length ? 'calculated' : 'unavailable',
-      intervalMinutes: 30,
-      windowDays: 5,
+      intervalMinutes: barMinutes,
+      range: normalizedRange,
+      windowDays: normalizedRange === '1d' ? 1 : 5,
       bars: sharedTimestamps.length - 1,
       pairs,
-      methodology: 'Thirty-minute Yahoo spark closes over five days for BTC, ETH, and SOL are aligned on shared timestamps and converted to bar returns. Cross-correlation is scanned across ±4 bars; the peak identifies whether altcoins follow bitcoin or lead it on rotation days.',
+      methodology: `Yahoo spark closes over ${normalizedRange === '1d' ? 'one day at five-minute resolution (~140 bars)' : 'five days at thirty-minute resolution'} for BTC, ETH, and SOL are aligned on shared timestamps and converted to bar returns. Cross-correlation is scanned across ±4 bars; the peak identifies whether altcoins follow bitcoin or lead it on rotation days.`,
     };
   });
 }

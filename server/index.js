@@ -160,6 +160,15 @@ app.get('/api/analytics/bitcoin', async (_request, response, next) => {
   }
 });
 
+app.get('/api/analytics/intraday', async (request, response, next) => {
+  try {
+    const range = ['1d', '5d'].includes(String(request.query.range ?? '')) ? String(request.query.range) : '5d';
+    response.json(await getIntradayRotation(range));
+  } catch (error) {
+    next(error);
+  }
+});
+
 app.get('/api/analytics/screener', async (_request, response, next) => {
   try {
     response.json(await getEquityScreener());
