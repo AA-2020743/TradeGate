@@ -1292,6 +1292,56 @@ export function calculateDollarScenarios(seriesList, { growthSpread60d = null } 
   };
 }
 
+/**
+ * Score bands for the macro regime. Kept as one classifier so the published
+ * regime and the distance-to-flip cannot drift apart.
+ */
+export function classifyMacroRegimeByScore(score) {
+  if (!Number.isFinite(score)) return null;
+  if (score >= 70) return 'Expansion / risk-on';
+  if (score >= 58) return 'Constructive';
+  if (score <= 35) return 'Contraction / risk-off';
+  return 'Transition / choppy';
+}
+
+/**
+ * How many points of score movement would change the regime label, in each
+ * direction. A reading one point inside its band is a materially different
+ * call from one sitting in the middle of it, and the label alone hides that.
+ */
+export function calculateMacroRegimeProximity(score) {
+  const regime = classifyMacroRegimeByScore(score);
+  if (!regime) return null;
+  const scan = (step) => {
+    for (let distance = 1; distance <= 100; distance += 1) {
+      const probe = score + (distance * step);
+      if (probe < 0 || probe > 100) return null;
+      const next = classifyMacroRegimeByScore(probe);
+      if (next !== regime) return { regime: next, distance };
+    }
+    return null;
+  };
+  const higher = scan(1);
+  const lower = scan(-1);
+  const candidates = [
+    higher ? { ...higher, direction: 'higher' } : null,
+    lower ? { ...lower, direction: 'lower' } : null,
+  ].filter(Boolean);
+  const nearest = candidates.length
+    ? candidates.reduce((closest, item) => (item.distance < closest.distance ? item : closest))
+    : null;
+  return {
+    regime,
+    higher,
+    lower,
+    nearest,
+    borderline: Boolean(nearest && nearest.distance <= 3),
+    read: nearest
+      ? `${score}/100 sits ${nearest.distance} ${nearest.distance === 1 ? 'point' : 'points'} from ${nearest.regime}${nearest.direction === 'higher' ? ' above' : ' below'}.`
+      : `${score}/100 is not within reach of another regime band.`,
+  };
+}
+
 export function calculateMacroRegimeModel(seriesList, liquidityModel = null, usdStrengthModel = null, globalLiquidityModel = null) {
   const series = Object.fromEntries(seriesList.map((item) => [item.key, item]));
   const financialConditions = pointsForSeries(series.financialConditions);
@@ -1316,9 +1366,10 @@ export function calculateMacroRegimeModel(seriesList, liquidityModel = null, usd
   }
   const panicInputsAvailable = [vixLatest, creditLatest, financialLatest].every(Number.isFinite);
   const panicConfirmed = panicInputsAvailable ? vixLatest >= 35 && creditLatest >= 5 && financialLatest >= 0.5 : null;
-  const regime = panicConfirmed
-    ? 'Stress / deleveraging'
-    : model.score >= 70 ? 'Expansion / risk-on' : model.score >= 58 ? 'Constructive' : model.score <= 35 ? 'Contraction / risk-off' : 'Transition / choppy';
+  const regime = panicConfirmed ? 'Stress / deleveraging' : classifyMacroRegimeByScore(model.score);
+  // Panic overrides the score bands entirely, so proximity to them would be
+  // misleading while it holds.
+  const proximity = panicConfirmed ? null : calculateMacroRegimeProximity(model.score);
   const asOf = [liquidityModel?.asOf, usdStrengthModel?.asOf, financialConditions.at(-1)?.date, credit.at(-1)?.date, volatility.at(-1)?.date].filter(Boolean).sort().at(-1) ?? null;
   return {
     version: 'macro-regime-v1',
@@ -1329,6 +1380,7 @@ export function calculateMacroRegimeModel(seriesList, liquidityModel = null, usd
     coverage: model.coverage,
     confidence: model.coverage >= 85 ? 'High' : model.coverage >= 65 ? 'Medium' : 'Low',
     panicConfirmed,
+    proximity,
     missing: model.missing,
     drivers: model.drivers,
     settings: MACRO_REGIME_SETTINGS[regime],

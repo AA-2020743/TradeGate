@@ -113,3 +113,5 @@ html[data-theme='dark'] .screener-search { background: #1a221d; border-color: #3
 .watch-sync-pill { align-self: center; margin-right: 8px; padding: 5px 9px; border-radius: 20px; font: 700 9px 'DM Mono', monospace; letter-spacing: .6px; color: #2a7a3f; background: #e6f4dc; border: 1px solid #cfe8c2; }.watch-sync-pill[data-state='syncing'] { color: #8a6d2f; background: #f4ecd8; border-color: #e4d4ac; }.watch-sync-pill[data-state='failed'] { color: #a35342; background: #f6e4df; border-color: #eccfc7; }
 .watchlist-summary { margin: 0; padding: 12px 18px 0; color: #737c75; font: 10px 'DM Mono', monospace; letter-spacing: .3px; }
 .alert-meta { display: block; margin-top: 3px; color: #9aa19a; font: 9px 'DM Mono', monospace; letter-spacing: .3px; }
+
+.regime-proximity { color: #79837a; font-size: 9px; line-height: 1.45; margin: 9px 0 0; }.data-pill.pill-warning { color: #a35342; background: #f6e4df; border-color: #eccfc7; }html[data-theme='dark'] .regime-proximity { color: #8d968c; }html[data-theme='dark'] .data-pill.pill-warning { color: #dd9c8b; background: #33241f; border-color: #4a352e; }

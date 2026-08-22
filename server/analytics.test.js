@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { buildAtomFeed, buildHeatmapRow, buildLiquidityNarrative, buildLiquidityTransmission, buildWorkspaceNarrative, calculateChangeCorrelations, calculateDollarScenarios, calculateDollarTransmissionRead, calculateLeadLag, calculatePositioningModel, calculateCrossMarketRelationship, calculateGlobalLiquidityModel, calculateHeatmapRisk, calculateMacroRegimeModel, calculateMetalsCostStructure, calculateRsi, calculateScreenerScores, calculateSeriesLeadLag, calculateTechnicalSnapshot, calculateTrendQuality, classifyHeadlineSentiment, calculateUsdStrengthModel, calculateUsLiquidityModel, escapeXml, pearsonCorrelation } from './analytics.js';
+import { buildAtomFeed, buildHeatmapRow, buildLiquidityNarrative, buildLiquidityTransmission, buildWorkspaceNarrative, calculateChangeCorrelations, calculateDollarScenarios, calculateDollarTransmissionRead, calculateLeadLag, calculatePositioningModel, calculateCrossMarketRelationship, calculateGlobalLiquidityModel, calculateHeatmapRisk, calculateMacroRegimeModel, calculateMacroRegimeProximity, classifyMacroRegimeByScore, calculateMetalsCostStructure, calculateRsi, calculateScreenerScores, calculateSeriesLeadLag, calculateTechnicalSnapshot, calculateTrendQuality, classifyHeadlineSentiment, calculateUsdStrengthModel, calculateUsLiquidityModel, escapeXml, pearsonCorrelation } from './analytics.js';
 
 test('RSI reaches 100 for an uninterrupted advance', () => {
   const values = Array.from({ length: 30 }, (_, index) => 100 + index);
@@ -929,4 +929,75 @@ test('a universe with nothing calculated is explicitly unavailable', () => {
   assert.equal(model.status, 'unavailable');
   assert.equal(model.headline, null);
   assert.equal(calculateHeatmapRisk().status, 'unavailable');
+});
+
+test('the regime classifier keeps its documented band edges', () => {
+  assert.equal(classifyMacroRegimeByScore(70), 'Expansion / risk-on');
+  assert.equal(classifyMacroRegimeByScore(69), 'Constructive');
+  assert.equal(classifyMacroRegimeByScore(58), 'Constructive');
+  assert.equal(classifyMacroRegimeByScore(57), 'Transition / choppy');
+  assert.equal(classifyMacroRegimeByScore(36), 'Transition / choppy');
+  assert.equal(classifyMacroRegimeByScore(35), 'Contraction / risk-off');
+  assert.equal(classifyMacroRegimeByScore(null), null);
+});
+
+test('proximity measures the points needed to actually change the label', () => {
+  const midBand = calculateMacroRegimeProximity(64);
+  assert.equal(midBand.regime, 'Constructive');
+  assert.deepEqual(midBand.higher, { regime: 'Expansion / risk-on', distance: 6 });
+  assert.deepEqual(midBand.lower, { regime: 'Transition / choppy', distance: 7 });
+  assert.equal(midBand.nearest.direction, 'higher');
+  assert.equal(midBand.borderline, false);
+});
+
+test('a score one point inside its band is reported as borderline', () => {
+  const edge = calculateMacroRegimeProximity(58);
+  assert.equal(edge.regime, 'Constructive');
+  assert.equal(edge.lower.distance, 1);
+  assert.equal(edge.lower.regime, 'Transition / choppy');
+  assert.equal(edge.borderline, true);
+  assert.match(edge.read, /1 point from Transition \/ choppy below/);
+});
+
+test('proximity is consistent with the classifier at every integer score', () => {
+  for (let score = 0; score <= 100; score += 1) {
+    const proximity = calculateMacroRegimeProximity(score);
+    assert.equal(proximity.regime, classifyMacroRegimeByScore(score));
+    for (const side of [proximity.higher, proximity.lower]) {
+      if (!side) continue;
+      const step = side === proximity.higher ? 1 : -1;
+      // The named distance must be the first score that changes the label.
+      assert.equal(classifyMacroRegimeByScore(score + (side.distance * step)), side.regime);
+      assert.equal(classifyMacroRegimeByScore(score + ((side.distance - 1) * step)), proximity.regime);
+    }
+  }
+});
+
+test('the extremes of the scale have only one direction to travel', () => {
+  const bottom = calculateMacroRegimeProximity(0);
+  assert.equal(bottom.lower, null);
+  assert.equal(bottom.higher.regime, 'Transition / choppy');
+  const top = calculateMacroRegimeProximity(100);
+  assert.equal(top.higher, null);
+  assert.equal(top.lower.regime, 'Constructive');
+});
+
+test('a confirmed panic publishes no proximity because it overrides the bands', () => {
+  const day = (offset) => new Date(Date.UTC(2026, 6, 1) - (offset * 86_400_000)).toISOString().slice(0, 10);
+  const series = (key, latest, past) => ({ key, multiplier: 1, history: [{ date: day(120), value: past ?? latest }, { date: day(0), value: latest }] });
+  const panicked = calculateMacroRegimeModel(
+    [series('vix', 42, 20), series('highYieldSpread', 6.4, 4), series('financialConditions', 0.9, 0.1)],
+    { score: 30, version: 'us-liquidity-v1' },
+  );
+  assert.equal(panicked.panicConfirmed, true);
+  assert.equal(panicked.regime, 'Stress / deleveraging');
+  assert.equal(panicked.proximity, null);
+
+  const calm = calculateMacroRegimeModel(
+    [series('vix', 15, 16), series('highYieldSpread', 3.2, 3.3), series('financialConditions', -0.4, -0.3)],
+    { score: 62, version: 'us-liquidity-v1' },
+  );
+  assert.equal(calm.panicConfirmed, false);
+  assert.equal(calm.proximity.regime, calm.regime);
+  assert.ok(calm.proximity.nearest.distance > 0);
 });
