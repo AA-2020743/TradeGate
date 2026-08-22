@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { calculateBasketRotation, calculateBottomSignal, calculateBreadth, calculateEquityRegime, calculateMacroSensitivities, calculateSectorRotation, calculateTopRisk, rrgQuadrant } from './equityAnalytics.js';
+import { calculateBasketRotation, calculateBottomSignal, calculateBreadth, calculateBreadthDivergence, calculateEquityRegime, calculateMacroSensitivities, calculateSectorRotation, calculateTopRisk, rrgQuadrant } from './equityAnalytics.js';
 
 function technicalFixture(overrides = {}) {
   return {
@@ -340,4 +340,83 @@ test('a history too short for the lookback withholds the trajectory', () => {
   assert.equal(rotation.sectors[0].quadrant, 'Leading');
   assert.equal(rotation.sectors[0].rotation, null);
   assert.deepEqual(rotation.enteringLeadership, []);
+});
+
+const rising = (length, step) => Array.from({ length }, (_, index) => 100 + (index * step));
+
+test('a rally the advance/decline line stops confirming is a negative divergence', () => {
+  // Price keeps climbing; the A/D line peaks two-thirds of the way through.
+  const price = rising(60, 1);
+  const breadth = Array.from({ length: 60 }, (_, index) => (index < 40 ? index * 2 : 80 - ((index - 40) * 3)));
+  const result = calculateBreadthDivergence(breadth, price);
+  assert.equal(result.state, 'Negative divergence');
+  assert.equal(result.divergent, true);
+  assert.equal(result.pricePercentile, 100);
+  assert.ok(result.gap >= 20);
+  assert.match(result.read, /fewer names are carrying the advance/);
+});
+
+test('a rally participation keeps up with is reported as confirmed', () => {
+  const result = calculateBreadthDivergence(rising(60, 2), rising(60, 1));
+  assert.equal(result.state, 'Breadth confirms the high');
+  assert.equal(result.divergent, false);
+  assert.equal(result.gap, 0);
+});
+
+test('a decline fewer names are joining is a positive divergence', () => {
+  const price = rising(60, -1);
+  const breadth = Array.from({ length: 60 }, (_, index) => (index < 40 ? -index * 2 : -80 + ((index - 40) * 3)));
+  const result = calculateBreadthDivergence(breadth, price);
+  assert.equal(result.state, 'Positive divergence');
+  assert.equal(result.divergent, true);
+  assert.ok(result.pricePercentile <= 5);
+  assert.ok(result.gap <= -20);
+  assert.match(result.read, /fewer names are making the new lows/);
+});
+
+test('a broad decline is reported as confirmed rather than divergent', () => {
+  const result = calculateBreadthDivergence(rising(60, -2), rising(60, -1));
+  assert.equal(result.state, 'Breadth confirms the low');
+  assert.equal(result.divergent, false);
+});
+
+test('a mid-range index carries no divergence message', () => {
+  const price = Array.from({ length: 60 }, (_, index) => 100 + Math.sin(index / 5) * 10);
+  const breadth = Array.from({ length: 60 }, (_, index) => index * 2);
+  const result = calculateBreadthDivergence(breadth, price);
+  assert.equal(result.state, 'No divergence signal');
+  assert.equal(result.divergent, false);
+  assert.match(result.read, /mid-range/);
+});
+
+test('divergence withholds a reading without enough aligned sessions', () => {
+  const short = calculateBreadthDivergence(rising(30, 1), rising(30, 1));
+  assert.equal(short.status, 'unavailable');
+  assert.equal(short.observations, 30);
+  assert.match(short.reason, /40 aligned sessions/);
+  assert.equal(calculateBreadthDivergence([], []).status, 'unavailable');
+  assert.equal(calculateBreadthDivergence(null, null).status, 'unavailable');
+});
+
+test('divergence aligns on the shorter of the two series and ignores gaps', () => {
+  const result = calculateBreadthDivergence(rising(200, 1), rising(45, 1));
+  assert.equal(result.observations, 45);
+  assert.equal(result.status, 'calculated');
+  const withHoles = calculateBreadthDivergence([...rising(50, 1), Number.NaN, null], rising(50, 1));
+  assert.equal(withHoles.observations, 50);
+});
+
+test('percentile readings are written with the right ordinal suffix', () => {
+  const readFor = (priceStep, breadthValues) => calculateBreadthDivergence(breadthValues, rising(60, priceStep)).read;
+  // 1st, 2nd, 3rd and the 11th-13th exceptions must not read "1th" or "11st".
+  const samples = [
+    readFor(-1, Array.from({ length: 60 }, (_, index) => (index < 40 ? -index * 2 : -80 + ((index - 40) * 3)))),
+    readFor(1, Array.from({ length: 60 }, (_, index) => (index < 40 ? index * 2 : 80 - ((index - 40) * 3)))),
+  ];
+  for (const read of samples) {
+    assert.doesNotMatch(read, /\b\d*1th|\b\d*2th|\b\d*3th\b/);
+    assert.doesNotMatch(read, /1[123](st|nd|rd)\b/);
+    assert.match(read, /\d+(st|nd|rd|th) percentile|\d+(st|nd|rd|th)\b/);
+  }
+  assert.match(readFor(1, rising(60, 2)), /100th percentile/);
 });

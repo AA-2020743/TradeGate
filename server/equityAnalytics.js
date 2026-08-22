@@ -427,6 +427,66 @@ export function calculateBreadth(constituents, options = {}) {
   };
 }
 
+function ordinal(value) {
+  const lastTwo = value % 100;
+  if (lastTwo >= 11 && lastTwo <= 13) return `${value}th`;
+  const suffix = { 1: 'st', 2: 'nd', 3: 'rd' }[value % 10] ?? 'th';
+  return `${value}${suffix}`;
+}
+
+function percentileRank(values, value) {
+  if (!values.length) return null;
+  return Math.round((values.filter((item) => item <= value).length / values.length) * 100);
+}
+
+/**
+ * Asks whether participation confirms the index. An advance/decline line and a
+ * price series are each ranked within the same window: a market pushing to the
+ * top of its range while the A/D line sits far below the top of its own is a
+ * rally carried by fewer and fewer names. Percentile ranks are used rather than
+ * pivot detection, which is fragile on noisy daily data and can miss or invent
+ * a peak depending on where the window happens to start.
+ */
+export function calculateBreadthDivergence(breadthLine, benchmarkValues, { lookback = 60, minObservations = 40, nearEdge = 80, minimumGap = 20 } = {}) {
+  const breadth = (breadthLine ?? []).filter(Number.isFinite).slice(-lookback);
+  const price = (benchmarkValues ?? []).filter(Number.isFinite).slice(-lookback);
+  const observations = Math.min(breadth.length, price.length);
+  if (observations < minObservations) {
+    return { status: 'unavailable', reason: `Needs ${minObservations} aligned sessions of advance/decline and index history.`, observations };
+  }
+  const breadthWindow = breadth.slice(-observations);
+  const priceWindow = price.slice(-observations);
+  const pricePercentile = percentileRank(priceWindow, priceWindow.at(-1));
+  const breadthPercentile = percentileRank(breadthWindow, breadthWindow.at(-1));
+  const gap = pricePercentile - breadthPercentile;
+  const lowEdge = 100 - nearEdge;
+
+  let state;
+  if (pricePercentile >= nearEdge) state = gap >= minimumGap ? 'Negative divergence' : 'Breadth confirms the high';
+  else if (pricePercentile <= lowEdge) state = gap <= -minimumGap ? 'Positive divergence' : 'Breadth confirms the low';
+  else state = 'No divergence signal';
+
+  const reads = {
+    'Negative divergence': `The index sits in the ${ordinal(pricePercentile)} percentile of its ${observations}-session range while the advance/decline line is only in the ${ordinal(breadthPercentile)}: fewer names are carrying the advance.`,
+    'Breadth confirms the high': `The index is in the ${ordinal(pricePercentile)} percentile of its ${observations}-session range and the advance/decline line is in the ${ordinal(breadthPercentile)}, so participation is coming with it.`,
+    'Positive divergence': `The index sits in the ${ordinal(pricePercentile)} percentile of its ${observations}-session range while the advance/decline line holds the ${ordinal(breadthPercentile)}: fewer names are making the new lows.`,
+    'Breadth confirms the low': `The index is in the ${ordinal(pricePercentile)} percentile of its ${observations}-session range and the advance/decline line is in the ${ordinal(breadthPercentile)}, so the decline is broad.`,
+    'No divergence signal': `The index is mid-range at the ${ordinal(pricePercentile)} percentile of its ${observations} sessions, where a divergence against breadth carries no reliable message.`,
+  };
+
+  return {
+    status: 'calculated',
+    lookback: observations,
+    observations,
+    pricePercentile,
+    breadthPercentile,
+    gap,
+    state,
+    divergent: state === 'Negative divergence' || state === 'Positive divergence',
+    read: reads[state],
+  };
+}
+
 export function calculateMacroSensitivities(points, macroSeries) {
   const correlate = (history) => {
     if (!history?.length) return null;

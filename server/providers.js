@@ -1,6 +1,7 @@
 import { config } from './config.js';
 import { withCache } from './cache.js';
 import { settle, unwrap } from './settled.js';
+import { calculateBreadthDivergence } from './equityAnalytics.js';
 import { buildHeatmapRow, buildLiquidityNarrative, buildLiquidityTransmission, buildWorkspaceNarrative, calculateChangeCorrelations, calculateDollarScenarios, calculateDollarTransmissionRead, calculateLeadLag, calculatePositioningModel, calculateCrossMarketRelationship, calculateGlobalLiquidityModel, calculateMacroRegimeModel, calculateRsi, calculateScreenerScores, calculateTechnicalSnapshot, calculateTrendQuality, classifyHeadlineSentiment, calculateUsdStrengthModel, calculateUsLiquidityModel } from './analytics.js';
 import { getStoredFredSeries, getStoredMarketHistory, getStoredMarketSnapshot, getRecentModelOutputs, isDatabaseConfigured, reserveProviderCredits } from './database.js';
 import { getAllEquityHistorySymbols, getCoreEquityHistorySymbols } from './equityCatalog.js';
@@ -860,6 +861,11 @@ export function alignedRatioSeries(left, right) {
   return ratios;
 }
 
+
+// Sessions of advance/decline history compared against the index when asking
+// whether participation confirms the tape.
+const BREADTH_DIVERGENCE_WINDOW = 60;
+
 export async function getEquityRiskAppetite() {
   return withCache('analytics:equity-risk', 6 * 3_600_000, async () => {
     const [constituentsResult, fredResult, vixResult] = await Promise.allSettled([
@@ -907,10 +913,19 @@ export async function getEquityRiskAppetite() {
         let newLows = 0;
         let counted = 0;
         const thrustValues = [];
+        // Net advancers per session over the divergence window, accumulated
+        // below into an advance/decline line. The closes are already loaded,
+        // so this costs one pass rather than another provider round trip.
+        const netAdvances = new Array(BREADTH_DIVERGENCE_WINDOW).fill(0);
         for (const symbol of symbols) {
           const closes = closesBySymbol.get(symbol);
           if (!closes || closes.length < 200) continue;
           counted += 1;
+          const window = closes.slice(-(BREADTH_DIVERGENCE_WINDOW + 1));
+          for (let index = 1; index < window.length; index += 1) {
+            const slot = BREADTH_DIVERGENCE_WINDOW - (window.length - index);
+            if (slot >= 0 && window[index - 1] > 0) netAdvances[slot] += window[index] > window[index - 1] ? 1 : -1;
+          }
           const latest = closes.at(-1);
           if (latest > smaOf(closes, 200)) above200 += 1;
           if (closes.length >= 50 && latest > smaOf(closes, 50)) above50 += 1;
@@ -924,6 +939,10 @@ export async function getEquityRiskAppetite() {
           if (Number.isFinite(sma50Past) && sma50Past > 0 && Number.isFinite(sma50Now)) thrustValues.push(((sma50Now / sma50Past) - 1) * 100);
         }
         if (counted >= symbols.length * 0.8) {
+          let runningLine = 0;
+          const advanceDeclineLine = netAdvances.map((net) => (runningLine += net));
+          const benchmarkCloses = closesBySymbol.get('SPY') ?? [];
+          const divergence = calculateBreadthDivergence(advanceDeclineLine, benchmarkCloses.slice(-BREADTH_DIVERGENCE_WINDOW), { lookback: BREADTH_DIVERGENCE_WINDOW });
           const pctAbove200 = Math.round((above200 / counted) * 100);
           const pctAbove50 = Math.round((above50 / counted) * 100);
           const participation = (pctAbove50 * 0.6) + (pctAbove200 * 0.4);
@@ -943,6 +962,7 @@ export async function getEquityRiskAppetite() {
             topRisk: Math.round(100 - participation),
             bottomScore: Math.round(((100 - participation) * 0.7) + (Math.max(thrust20 ?? 0, 0) * 3)),
             read: pctAbove200 >= 60 ? 'Broad participation' : pctAbove200 <= 40 ? 'Narrow market' : 'Mixed breadth',
+            divergence,
           };
         } else {
           spxBreadth = { status: 'unavailable', reason: `Only ${counted} of ${symbols.length} constituents returned usable history.` };
