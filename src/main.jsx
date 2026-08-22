@@ -672,6 +672,7 @@ function MarketsDashboard({ data }) {
   const crowdedAssets = assets.filter((asset) => Number.isFinite(asset.crowdingPercentile));
   const peakCrowding = crowdedAssets.length ? Math.max(...crowdedAssets.map((asset) => asset.crowdingPercentile)) : null;
   const backdrop = heatmap?.liquidityBackdrop;
+  const heatmapRisk = heatmap?.risk;
 
   return <div className="markets-dashboard">
     <section className="markets-intro">
@@ -696,7 +697,7 @@ function MarketsDashboard({ data }) {
 
     <section className="heatmap-bottom-grid">
       <article className={`heatmap-method panel ${heatmap?.status === 'calculated' ? '' : 'preview-section'}`}><p className="section-kicker">MODEL DISCIPLINES</p><h3>One screen, seven lenses.</h3><p>Scores combine trend, cross-market alignment, positioning, volatility, and liquidity rather than relying on price direction alone.</p><div><span>Score</span><span>Regime</span><span>Alignment</span><span>Trend</span><span>Crowding</span><span>Volatility</span><span>Liquidity</span></div></article>
-      <article className="heatmap-alert panel preview-section"><p className="section-kicker">WATCHLIST ALERT</p><h3>Options positioning is the weak link.</h3><p>Suppressed volatility and elevated dealer gamma can turn a quiet market into an unstable one if the index breaks its range. Dealer-gamma feeds remain unplanned previews until an options source is connected.</p><button>Review positioning →</button></article>
+      <article className={`heatmap-alert panel ${heatmapRisk?.status === 'calculated' ? '' : 'preview-section'}`}><p className="section-kicker">WEAKEST LINK · {heatmapRisk?.status?.toUpperCase() ?? 'UNAVAILABLE'}</p><h3>{heatmapRisk?.headline ? `${heatmapRisk.headline.type}${heatmapRisk.headline.symbol ? `: ${heatmapRisk.headline.symbol}` : ''}` : heatmapRisk?.status === 'calculated' ? 'No single weak link stands out.' : 'Awaiting calculated markets.'}</h3><p>{heatmapRisk?.read ?? 'The heatmap must publish calculated scores before its weakest link can be identified.'}</p>{(heatmapRisk?.concerns ?? []).slice(1, 4).map((concern) => <div className="risk-concern" key={concern.key}><b>{concern.type}{concern.symbol ? ` · ${concern.symbol}` : ''}</b><small>{concern.read}</small></div>)}{heatmapRisk?.headline?.symbol ? <button onClick={() => { setSelectedSymbol(heatmapRisk.headline.symbol); setGroup('All'); }}>Show {heatmapRisk.headline.symbol} in the matrix →</button> : null}</article>
     </section>
     <p className="independence-note">TradeGate is an independent market research platform and is not affiliated with Tradegate AG.</p>
   </div>;

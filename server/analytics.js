@@ -703,6 +703,80 @@ export function buildHeatmapRow({ symbol, name, group, technical, alignment, cro
   };
 }
 
+const CROWDED_PERCENTILE = 80;
+const STRESS_SCORE = 35;
+const SOFT_SCORE = 45;
+const STRONG_SCORE = 60;
+const HIGH_ALIGNMENT = 0.6;
+const BROAD_STRESS_SHARE = 40;
+
+/**
+ * Names the weakest link in the cross-asset universe from what the heatmap
+ * already measures, ranked by severity. Positioning that is crowded and still
+ * working is a different risk from positioning that is crowded and rolling
+ * over, and a stressed market moving with the complex transmits further than
+ * one falling on its own — so each concern carries the evidence behind it
+ * rather than a single blended score.
+ */
+export function calculateHeatmapRisk(assets = []) {
+  const calculated = (assets ?? []).filter((asset) => asset?.status === 'calculated');
+  if (!calculated.length) {
+    return { version: 'heatmap-risk-v1', status: 'unavailable', reason: 'No market in the universe has a calculated score.', concerns: [], headline: null };
+  }
+  const concerns = [];
+  for (const asset of calculated) {
+    const crowding = asset.crowdingPercentile;
+    const score = asset.score;
+    const alignment = Math.abs(asset.alignmentValue ?? 0);
+    if (Number.isFinite(crowding) && crowding >= CROWDED_PERCENTILE && Number.isFinite(score)) {
+      if (score <= SOFT_SCORE) {
+        concerns.push({
+          key: `${asset.symbol}-crowded-turning`, symbol: asset.symbol, name: asset.name,
+          type: 'Crowded and turning', severity: 90 + Math.round((crowding - CROWDED_PERCENTILE) / 4),
+          read: `${asset.name} sits in the ${crowding}th percentile of speculative positioning while its technical score has fallen to ${score}: the crowd is offside rather than early.`,
+        });
+      } else if (score >= STRONG_SCORE) {
+        concerns.push({
+          key: `${asset.symbol}-crowded-consensus`, symbol: asset.symbol, name: asset.name,
+          type: 'Crowded consensus', severity: 55 + Math.round((crowding - CROWDED_PERCENTILE) / 4),
+          read: `${asset.name} is working with a score of ${score}, but positioning is already in the ${crowding}th percentile, so the trade is consensus and has less room to absorb bad news.`,
+        });
+      }
+    }
+    if (Number.isFinite(score) && score <= STRESS_SCORE && alignment >= HIGH_ALIGNMENT) {
+      concerns.push({
+        key: `${asset.symbol}-transmitting`, symbol: asset.symbol, name: asset.name,
+        type: 'Stress transmitting', severity: 75 + Math.round((HIGH_ALIGNMENT === 1 ? 0 : (alignment - HIGH_ALIGNMENT) * 25)),
+        read: `${asset.name} is in stress at a score of ${score} while still moving with the complex at ${asset.alignmentValue} correlation to SPY, so weakness there is unlikely to stay contained.`,
+      });
+    }
+  }
+
+  const stressed = calculated.filter((asset) => Number.isFinite(asset.score) && asset.score <= STRESS_SCORE);
+  const stressShare = Math.round((stressed.length / calculated.length) * 100);
+  if (stressShare >= BROAD_STRESS_SHARE) {
+    concerns.push({
+      key: 'universe-broad-stress', symbol: null, name: 'Cross-asset universe',
+      type: 'Broad stress', severity: 80 + Math.round(stressShare / 5),
+      read: `${stressed.length} of ${calculated.length} calculated markets (${stressShare}%) score at or below ${STRESS_SCORE}, so the weakness is the tape rather than any single market.`,
+    });
+  }
+
+  concerns.sort((left, right) => right.severity - left.severity || left.key.localeCompare(right.key));
+  return {
+    version: 'heatmap-risk-v1',
+    status: 'calculated',
+    universeSize: calculated.length,
+    stressShare,
+    concerns,
+    headline: concerns.length ? concerns[0] : null,
+    read: concerns.length
+      ? concerns[0].read
+      : `No single weak link stands out: nothing in the ${calculated.length} calculated markets is both crowded and turning, and stress is not transmitting across the complex.`,
+    methodology: `Positioning at or above the ${CROWDED_PERCENTILE}th COT percentile is flagged as crowded and turning when the technical score has fallen to ${SOFT_SCORE} or below, and as consensus when the score is still ${STRONG_SCORE} or above. A market scoring ${STRESS_SCORE} or below while holding at least ${HIGH_ALIGNMENT} absolute correlation to SPY is flagged as transmitting stress. Broad stress is raised when at least ${BROAD_STRESS_SHARE}% of the calculated universe scores at or below ${STRESS_SCORE}. Markets without a COT contract contribute no positioning concern rather than an assumed one.`,
+  };
+}
+
 export function calculatePositioningModel(reports) {
   const usable = reports.filter((report) => Array.isArray(report.history) && report.history.length >= 26);
   const contracts = usable.map((report) => {

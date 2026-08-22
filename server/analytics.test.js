@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { buildAtomFeed, buildHeatmapRow, buildLiquidityNarrative, buildLiquidityTransmission, buildWorkspaceNarrative, calculateChangeCorrelations, calculateDollarScenarios, calculateDollarTransmissionRead, calculateLeadLag, calculatePositioningModel, calculateCrossMarketRelationship, calculateGlobalLiquidityModel, calculateMacroRegimeModel, calculateMetalsCostStructure, calculateRsi, calculateScreenerScores, calculateSeriesLeadLag, calculateTechnicalSnapshot, calculateTrendQuality, classifyHeadlineSentiment, calculateUsdStrengthModel, calculateUsLiquidityModel, escapeXml, pearsonCorrelation } from './analytics.js';
+import { buildAtomFeed, buildHeatmapRow, buildLiquidityNarrative, buildLiquidityTransmission, buildWorkspaceNarrative, calculateChangeCorrelations, calculateDollarScenarios, calculateDollarTransmissionRead, calculateLeadLag, calculatePositioningModel, calculateCrossMarketRelationship, calculateGlobalLiquidityModel, calculateHeatmapRisk, calculateMacroRegimeModel, calculateMetalsCostStructure, calculateRsi, calculateScreenerScores, calculateSeriesLeadLag, calculateTechnicalSnapshot, calculateTrendQuality, classifyHeadlineSentiment, calculateUsdStrengthModel, calculateUsLiquidityModel, escapeXml, pearsonCorrelation } from './analytics.js';
 
 test('RSI reaches 100 for an uninterrupted advance', () => {
   const values = Array.from({ length: 30 }, (_, index) => 100 + index);
@@ -859,4 +859,74 @@ test('no inputs at all leaves the cost structure unavailable', () => {
   const model = calculateMetalsCostStructure({});
   assert.equal(model.status, 'unavailable');
   assert.equal(model.legs.filter((leg) => leg.status === 'calculated').length, 0);
+});
+
+const heatmapAsset = (overrides) => ({ symbol: 'SPY', name: 'S&P 500', group: 'US', status: 'calculated', score: 60, alignmentValue: 0.4, crowdingPercentile: null, ...overrides });
+
+test('a crowded market that has rolled over outranks one that is still working', () => {
+  const model = calculateHeatmapRisk([
+    heatmapAsset({ symbol: 'GLD', name: 'Gold', score: 72, crowdingPercentile: 94 }),
+    heatmapAsset({ symbol: 'QQQ', name: 'Nasdaq 100', score: 38, crowdingPercentile: 88 }),
+  ]);
+  assert.equal(model.headline.type, 'Crowded and turning');
+  assert.equal(model.headline.symbol, 'QQQ');
+  assert.match(model.headline.read, /the crowd is offside rather than early/);
+  assert.equal(model.concerns[1].type, 'Crowded consensus');
+  assert.equal(model.concerns[1].symbol, 'GLD');
+});
+
+test('a stressed market still moving with the complex is flagged as transmitting', () => {
+  const model = calculateHeatmapRisk([
+    heatmapAsset({ symbol: 'EEM', name: 'Emerging markets', score: 28, alignmentValue: 0.78 }),
+    heatmapAsset({ symbol: 'GLD', name: 'Gold', score: 30, alignmentValue: 0.05 }),
+  ]);
+  const transmitting = model.concerns.filter((concern) => concern.type === 'Stress transmitting');
+  assert.equal(transmitting.length, 1);
+  assert.equal(transmitting[0].symbol, 'EEM');
+  assert.match(transmitting[0].read, /unlikely to stay contained/);
+});
+
+test('broad stress is raised against the universe rather than any one market', () => {
+  const model = calculateHeatmapRisk([
+    heatmapAsset({ symbol: 'A', score: 20, alignmentValue: 0.1 }),
+    heatmapAsset({ symbol: 'B', score: 25, alignmentValue: 0.1 }),
+    heatmapAsset({ symbol: 'C', score: 70, alignmentValue: 0.1 }),
+  ]);
+  const broad = model.concerns.find((concern) => concern.type === 'Broad stress');
+  assert.ok(broad);
+  assert.equal(broad.symbol, null);
+  assert.equal(model.stressShare, 67);
+  assert.match(broad.read, /2 of 3 calculated markets \(67%\)/);
+});
+
+test('a calm universe reports no weak link rather than inventing one', () => {
+  const model = calculateHeatmapRisk([
+    heatmapAsset({ symbol: 'SPY', score: 62, alignmentValue: 0.5, crowdingPercentile: 40 }),
+    heatmapAsset({ symbol: 'GLD', name: 'Gold', score: 55, alignmentValue: 0.2, crowdingPercentile: 55 }),
+  ]);
+  assert.equal(model.status, 'calculated');
+  assert.deepEqual(model.concerns, []);
+  assert.equal(model.headline, null);
+  assert.match(model.read, /No single weak link stands out/);
+});
+
+test('markets without a positioning contract contribute no crowding concern', () => {
+  const model = calculateHeatmapRisk([heatmapAsset({ symbol: 'EWJ', name: 'Japan', score: 30, crowdingPercentile: null, alignmentValue: 0.1 })]);
+  assert.equal(model.concerns.filter((concern) => concern.type.startsWith('Crowded')).length, 0);
+});
+
+test('an unavailable market is excluded from the universe entirely', () => {
+  const model = calculateHeatmapRisk([
+    { symbol: 'X', name: 'X', status: 'unavailable' },
+    heatmapAsset({ symbol: 'SPY', score: 60, alignmentValue: 0.3, crowdingPercentile: 20 }),
+  ]);
+  assert.equal(model.universeSize, 1);
+  assert.equal(model.stressShare, 0);
+});
+
+test('a universe with nothing calculated is explicitly unavailable', () => {
+  const model = calculateHeatmapRisk([{ symbol: 'X', status: 'unavailable' }]);
+  assert.equal(model.status, 'unavailable');
+  assert.equal(model.headline, null);
+  assert.equal(calculateHeatmapRisk().status, 'unavailable');
 });
