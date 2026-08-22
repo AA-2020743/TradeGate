@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { calculateBasketRotation, calculateBottomSignal, calculateBreadth, calculateEquityRegime, calculateMacroSensitivities, calculateSectorRotation, calculateTopRisk } from './equityAnalytics.js';
+import { calculateBasketRotation, calculateBottomSignal, calculateBreadth, calculateEquityRegime, calculateMacroSensitivities, calculateSectorRotation, calculateTopRisk, rrgQuadrant } from './equityAnalytics.js';
 
 function technicalFixture(overrides = {}) {
   return {
@@ -251,4 +251,93 @@ test('basket rotation computes synchronized basket spreads', () => {
   const cyclical = styles.pairs.find((pair) => pair.key === 'cyclicalDefensive');
   assert.equal(cyclical.status, 'unavailable');
   assert.deepEqual(cyclical.missing, ['MISSING']);
+});
+
+// A benchmark that compounds steadily, and sectors whose excess return is
+// steered by a per-session multiplier so a known quadrant path can be built.
+function benchmarkSeries(length = 260) {
+  return Array.from({ length }, (_, index) => ({
+    timestamp: new Date(Date.UTC(2025, 0, index + 1)).toISOString(),
+    value: 100 * (1.0003 ** index),
+  }));
+}
+
+function sectorFrom(benchmark, excessPerSession) {
+  let value = 100;
+  return benchmark.map((point, index) => {
+    if (index > 0) {
+      const benchmarkReturn = point.value / benchmark[index - 1].value;
+      value *= benchmarkReturn * (1 + excessPerSession(index));
+    }
+    return { timestamp: point.timestamp, value };
+  });
+}
+
+test('the quadrant rule reads level from 60 sessions and build from 20', () => {
+  assert.equal(rrgQuadrant(2, 5), 'Leading');
+  assert.equal(rrgQuadrant(-2, 5), 'Weakening');
+  assert.equal(rrgQuadrant(2, -5), 'Improving');
+  assert.equal(rrgQuadrant(-2, -5), 'Lagging');
+  assert.equal(rrgQuadrant(null, 5), null);
+  assert.equal(rrgQuadrant(2, Number.NaN), null);
+});
+
+test('a sector rotating into leadership is distinguished from one holding it', () => {
+  const benchmark = benchmarkSeries();
+  // Trails all year, then turns up sharply over the closing sessions.
+  const turningUp = sectorFrom(benchmark, (index) => (index > 245 ? 0.006 : -0.0012));
+  const alwaysAhead = sectorFrom(benchmark, () => 0.0012);
+  const rotation = calculateSectorRotation([
+    { symbol: 'TURN', name: 'Turning up', points: turningUp },
+    { symbol: 'HOLD', name: 'Steady leader', points: alwaysAhead },
+  ], benchmark);
+
+  const turn = rotation.sectors.find((sector) => sector.symbol === 'TURN');
+  assert.equal(turn.quadrant, 'Leading');
+  assert.equal(turn.rotation.moved, true);
+  assert.equal(turn.rotation.previousQuadrant, 'Lagging');
+  assert.equal(turn.rotation.path, 'Lagging → Leading');
+  assert.equal(turn.rotation.direction, 'Strengthening');
+  assert.ok(turn.rotation.relativeShift > 0);
+
+  const hold = rotation.sectors.find((sector) => sector.symbol === 'HOLD');
+  assert.equal(hold.rotation.moved, false);
+  assert.equal(hold.rotation.path, 'Holding Leading');
+});
+
+test('a sector rolling out of leadership reports the transition and fading shift', () => {
+  const benchmark = benchmarkSeries();
+  // Led all year, then gives ground back — still ahead over 60 sessions,
+  // already behind over 20.
+  const rollingOver = sectorFrom(benchmark, (index) => (index > 245 ? -0.003 : 0.0015));
+  const rotation = calculateSectorRotation([{ symbol: 'ROLL', name: 'Rolling over', points: rollingOver }], benchmark);
+  const roll = rotation.sectors[0];
+  assert.equal(roll.rotation.previousQuadrant, 'Leading');
+  assert.equal(roll.quadrant, 'Weakening');
+  assert.equal(roll.rotation.path, 'Leading → Weakening');
+  assert.equal(roll.rotation.direction, 'Fading');
+  assert.ok(roll.rotation.relativeShift < 0);
+});
+
+test('the workspace names which sectors entered and left leadership', () => {
+  const benchmark = benchmarkSeries();
+  const rotation = calculateSectorRotation([
+    { symbol: 'TURN', name: 'Turning up', points: sectorFrom(benchmark, (index) => (index > 245 ? 0.006 : -0.0012)) },
+    { symbol: 'ROLL', name: 'Rolling over', points: sectorFrom(benchmark, (index) => (index > 245 ? -0.003 : 0.0015)) },
+    { symbol: 'HOLD', name: 'Steady leader', points: sectorFrom(benchmark, () => 0.0012) },
+  ], benchmark);
+  assert.equal(rotation.rotationLookbackSessions, 20);
+  assert.deepEqual(rotation.enteringLeadership, ['TURN']);
+  assert.deepEqual(rotation.leavingLeadership, ['ROLL']);
+});
+
+test('a history too short for the lookback withholds the trajectory', () => {
+  const benchmark = benchmarkSeries(70);
+  const rotation = calculateSectorRotation([
+    { symbol: 'SHORT', name: 'Short history', points: sectorFrom(benchmark, () => 0.001) },
+  ], benchmark);
+  assert.equal(rotation.sectors.length, 1);
+  assert.equal(rotation.sectors[0].quadrant, 'Leading');
+  assert.equal(rotation.sectors[0].rotation, null);
+  assert.deepEqual(rotation.enteringLeadership, []);
 });

@@ -513,6 +513,19 @@ export function calculateBasketRotation(pairs, historiesBySymbol) {
   };
 }
 
+const ROTATION_LOOKBACK_SESSIONS = 20;
+
+/**
+ * Relative-rotation quadrant. The 60-session excess return stands for how
+ * strong a sector already is against the benchmark, the 20-session one for
+ * whether that strength is currently building.
+ */
+export function rrgQuadrant(relative20, relative60) {
+  if (!Number.isFinite(relative20) || !Number.isFinite(relative60)) return null;
+  if (relative60 >= 0) return relative20 >= 0 ? 'Leading' : 'Weakening';
+  return relative20 >= 0 ? 'Improving' : 'Lagging';
+}
+
 export function calculateSectorRotation(sectors, benchmarkPoints) {
   const benchmark = normalizeHistory(benchmarkPoints ?? []);
   if (benchmark.length < 65) return { version: 'sector-rotation-v1', status: 'unavailable', asOf: null, sectors: [], missing: ['Benchmark history'] };
@@ -532,9 +545,28 @@ export function calculateSectorRotation(sectors, benchmarkPoints) {
     const relative60 = return60 - percentChange(alignedBenchmarkValues, 60);
     const relativeScore = clamp(50 + (relative20 * 6) + (relative60 * 2));
     const score = Math.round((technical.score * 0.55) + (relativeScore * 0.45));
-    const quadrant = relative20 >= 0 && relative60 >= 0
-      ? 'Leading'
-      : relative20 >= 0 ? 'Improving' : relative60 >= 0 ? 'Weakening' : 'Lagging';
+    const quadrant = rrgQuadrant(relative20, relative60);
+    // Where the sector sat one lookback ago, so the tape can distinguish a
+    // sector rotating into leadership from one rolling out of it.
+    const previous = (() => {
+      if (aligned.length <= 60 + ROTATION_LOOKBACK_SESSIONS) return null;
+      const sectorPast = alignedSectorValues.slice(0, -ROTATION_LOOKBACK_SESSIONS);
+      const benchmarkPast = alignedBenchmarkValues.slice(0, -ROTATION_LOOKBACK_SESSIONS);
+      const past20 = percentChange(sectorPast, 20) - percentChange(benchmarkPast, 20);
+      const past60 = percentChange(sectorPast, 60) - percentChange(benchmarkPast, 60);
+      const pastQuadrant = rrgQuadrant(past20, past60);
+      return pastQuadrant ? { relative20: past20, relative60: past60, quadrant: pastQuadrant } : null;
+    })();
+    const relativeShift = previous ? relative20 - previous.relative20 : null;
+    const rotation = previous ? {
+      lookbackSessions: ROTATION_LOOKBACK_SESSIONS,
+      previousQuadrant: previous.quadrant,
+      quadrant,
+      moved: previous.quadrant !== quadrant,
+      path: previous.quadrant === quadrant ? `Holding ${quadrant}` : `${previous.quadrant} → ${quadrant}`,
+      relativeShift: Math.round(relativeShift * 100) / 100,
+      direction: Math.abs(relativeShift) < 0.5 ? 'Flat' : relativeShift > 0 ? 'Strengthening' : 'Fading',
+    } : null;
     return [{
       symbol: sector.symbol,
       name: sector.name,
@@ -549,6 +581,7 @@ export function calculateSectorRotation(sectors, benchmarkPoints) {
       trend: technical.regime,
       technicalScore: technical.score,
       observations: points.length,
+      rotation,
     }];
   }).sort((left, right) => right.score - left.score).map((sector, index) => ({ ...sector, rank: index + 1 }));
 
@@ -557,7 +590,10 @@ export function calculateSectorRotation(sectors, benchmarkPoints) {
     status: calculated.length >= Math.ceil(sectors.length * 0.7) ? 'calculated' : calculated.length ? 'partial' : 'unavailable',
     asOf: calculated.map((sector) => sector.asOf).sort().at(-1) ?? null,
     benchmark: 'SPY',
-    methodology: '20- and 60-session total-price momentum relative to SPY, combined with technical-v1.',
+    methodology: `20- and 60-session total-price momentum relative to SPY, combined with technical-v1. The relative-rotation quadrant reads the 60-session excess return as how strong a sector already is and the 20-session one as whether that strength is building. Each sector is also placed where it sat ${ROTATION_LOOKBACK_SESSIONS} sessions ago, so a sector rotating into leadership is distinguishable from one rolling out of it; the shift is the change in 20-session excess return over that window.`,
+    rotationLookbackSessions: ROTATION_LOOKBACK_SESSIONS,
+    enteringLeadership: calculated.filter((sector) => sector.rotation?.moved && sector.quadrant === 'Leading').map((sector) => sector.symbol),
+    leavingLeadership: calculated.filter((sector) => sector.rotation?.moved && sector.rotation.previousQuadrant === 'Leading').map((sector) => sector.symbol),
     sectors: calculated,
     missing: calculated.length < sectors.length ? [`${sectors.length - calculated.length} sector histories`] : [],
   };
