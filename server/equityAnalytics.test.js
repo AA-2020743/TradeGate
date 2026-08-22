@@ -420,3 +420,73 @@ test('percentile readings are written with the right ordinal suffix', () => {
   }
   assert.match(readFor(1, rising(60, 2)), /100th percentile/);
 });
+
+test('macro sensitivities keep their numeric shape for existing readers', () => {
+  const etf = Array.from({ length: 200 }, (_, index) => ({
+    date: new Date(Date.UTC(2025, 0, index + 1)).toISOString().slice(0, 10),
+    value: 100 + index + Math.sin(index / 4),
+  }));
+  const dollar = etf.map((point) => ({ date: point.date, value: 100 - ((point.value - 100) * 0.2) }));
+  const result = calculateMacroSensitivities(etf, { dollar, realYield: [], vix: [], credit: [] });
+  assert.ok(result.dollar < 0);
+  assert.equal(result.realYield, null);
+  assert.equal(result.dollar, result.detail.dollar.correlation);
+});
+
+test('a daily driver reports its window in sessions', () => {
+  const etf = Array.from({ length: 200 }, (_, index) => ({
+    date: new Date(Date.UTC(2025, 0, index + 1)).toISOString().slice(0, 10),
+    value: 100 + index + Math.sin(index / 5),
+  }));
+  const vix = etf.map((point, index) => ({ date: point.date, value: 20 + Math.cos(index / 6) * 4 }));
+  const detail = calculateMacroSensitivities(etf, { dollar: [], realYield: [], vix, credit: [] }).detail.vix;
+  assert.equal(detail.status, 'calculated');
+  assert.equal(detail.daily, true);
+  assert.equal(detail.cadenceDays, 1);
+  assert.equal(detail.windowLabel, '60 sessions');
+  assert.ok(detail.observations >= 60);
+});
+
+test('a weekly driver says so instead of claiming sixty days', () => {
+  // A weekly driver needs sixty weeks of overlap, so the ETF history has to
+  // stretch well past a year for the window to fill at all.
+  const etf = Array.from({ length: 520 }, (_, index) => ({
+    date: new Date(Date.UTC(2025, 0, index + 1)).toISOString().slice(0, 10),
+    value: 100 + index + Math.sin(index / 5),
+  }));
+  // NFCI-style weekly cadence: only every seventh date is published.
+  const weekly = etf.filter((_, index) => index % 7 === 0).map((point, index) => ({ date: point.date, value: -0.3 + Math.sin(index / 3) * 0.2 }));
+  const detail = calculateMacroSensitivities(etf, { dollar: [], realYield: [], vix: [], credit: weekly }).detail.credit;
+  assert.equal(detail.status, 'calculated');
+  assert.equal(detail.daily, false);
+  assert.equal(detail.cadenceDays, 7);
+  assert.match(detail.windowLabel, /60 observations, about \d+ weeks/);
+  // Sixty weekly observations is well over a year, not sixty days.
+  assert.equal(detail.windowLabel, '60 observations, about 60 weeks');
+});
+
+test('a weekly driver short of sixty weeks is withheld rather than published thin', () => {
+  const etf = Array.from({ length: 400 }, (_, index) => ({
+    date: new Date(Date.UTC(2025, 0, index + 1)).toISOString().slice(0, 10),
+    value: 100 + index,
+  }));
+  const weekly = etf.filter((_, index) => index % 7 === 0).map((point, index) => ({ date: point.date, value: index % 5 }));
+  const detail = calculateMacroSensitivities(etf, { dollar: [], realYield: [], vix: [], credit: weekly }).detail.credit;
+  assert.equal(detail.status, 'unavailable');
+  assert.equal(detail.cadenceDays, 7);
+  assert.ok(detail.observations < 60);
+});
+
+test('a driver without enough aligned changes is unavailable and says why', () => {
+  const etf = Array.from({ length: 200 }, (_, index) => ({
+    date: new Date(Date.UTC(2025, 0, index + 1)).toISOString().slice(0, 10),
+    value: 100 + index,
+  }));
+  const sparse = etf.slice(0, 30).map((point) => ({ date: point.date, value: 1 }));
+  const detail = calculateMacroSensitivities(etf, { dollar: sparse, realYield: [], vix: [], credit: [] }).detail;
+  assert.equal(detail.dollar.status, 'unavailable');
+  assert.equal(detail.dollar.correlation, null);
+  assert.equal(detail.dollar.windowLabel, null);
+  assert.match(detail.dollar.reason, /Fewer than 60 aligned changes/);
+  assert.equal(detail.realYield.reason, 'No driver history.');
+});

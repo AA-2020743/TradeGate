@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { buildAtomFeed, buildCoingeckoRequest, buildHeatmapRow, buildLiquidityNarrative, buildLiquidityTransmission, buildWorkspaceNarrative, calculateBitcoinCyclePhase, calculateChangeCorrelations, calculateCryptoRotation, calculateDollarScenarios, calculateDollarTransmissionRead, calculateLeadLag, calculatePositioningModel, calculateCrossMarketRelationship, calculateGlobalLiquidityModel, calculateHeatmapRisk, calculateMacroRegimeModel, calculateMacroRegimeProximity, classifyMacroRegimeByScore, calculateMetalsCostStructure, calculateRsi, calculateScreenerScores, calculateSeriesLeadLag, calculateTechnicalSnapshot, calculateTrendQuality, classifyHeadlineSentiment, calculateUsdStrengthModel, calculateUsLiquidityModel, escapeXml, pearsonCorrelation } from './analytics.js';
+import { buildAtomFeed, buildCoingeckoRequest, buildSocrataRequest, buildHeatmapRow, buildLiquidityNarrative, buildLiquidityTransmission, buildWorkspaceNarrative, calculateBitcoinCyclePhase, calculateChangeCorrelations, calculateCryptoRotation, calculateDollarScenarios, calculateDollarTransmissionRead, calculateLeadLag, calculatePositioningModel, calculateCrossMarketRelationship, calculateGlobalLiquidityModel, calculateHeatmapRisk, calculateMacroRegimeModel, calculateMacroRegimeProximity, classifyMacroRegimeByScore, calculateMetalsCostStructure, calculateRsi, calculateScreenerScores, calculateSeriesLeadLag, calculateTechnicalSnapshot, calculateTrendQuality, classifyHeadlineSentiment, calculateUsdStrengthModel, calculateUsLiquidityModel, escapeXml, pearsonCorrelation } from './analytics.js';
 
 test('RSI reaches 100 for an uninterrupted advance', () => {
   const values = Array.from({ length: 30 }, (_, index) => 100 + index);
@@ -1201,4 +1201,43 @@ test('dominance is carried for context but does not decide the regime', () => {
   assert.equal(high.regime, 'Altcoin-led advance');
   assert.equal(high.btcDominancePct, 72);
   assert.equal(high.ethDominancePct, 11);
+});
+
+test('an anonymous Socrata request carries no token header', () => {
+  const request = buildSocrataRequest('publicreporting.cftc.gov', '6dca-aqww', { params: { $limit: '160' } });
+  assert.equal(request.authenticated, false);
+  assert.equal(request.headers, null);
+  assert.equal(request.url, 'https://publicreporting.cftc.gov/resource/6dca-aqww.json?%24limit=160');
+});
+
+test('an app token travels as a header, not in the query string', () => {
+  const request = buildSocrataRequest('publicreporting.cftc.gov', '6dca-aqww', { appToken: 'tok123', params: { $limit: '160' } });
+  assert.equal(request.authenticated, true);
+  assert.deepEqual(request.headers, { 'X-App-Token': 'tok123' });
+  assert.equal(new URL(request.url).searchParams.has('$$app_token'), false);
+  assert.equal(request.url.includes('tok123'), false);
+});
+
+test('Socrata query parameters are encoded and blank ones dropped', () => {
+  const request = buildSocrataRequest('publicreporting.cftc.gov', '6dca-aqww', {
+    params: { $where: "cftc_contract_market_code='088691'", $order: 'report_date_as_yyyy_mm_dd DESC', $offset: '', missing: null },
+  });
+  const url = new URL(request.url);
+  assert.equal(url.searchParams.get('$where'), "cftc_contract_market_code='088691'");
+  assert.equal(url.searchParams.get('$order'), 'report_date_as_yyyy_mm_dd DESC');
+  assert.equal(url.searchParams.has('$offset'), false);
+  assert.equal(url.searchParams.has('missing'), false);
+});
+
+test('a blank token is treated as anonymous', () => {
+  for (const appToken of ['', '   ', null, undefined]) {
+    assert.equal(buildSocrataRequest('publicreporting.cftc.gov', 'x', { appToken }).authenticated, false);
+  }
+});
+
+test('the host is accepted with or without a scheme or trailing slash', () => {
+  const expected = 'https://publicreporting.cftc.gov/resource/6dca-aqww.json';
+  for (const host of ['publicreporting.cftc.gov', 'https://publicreporting.cftc.gov', 'https://publicreporting.cftc.gov/']) {
+    assert.equal(buildSocrataRequest(host, '6dca-aqww').url, expected);
+  }
 });

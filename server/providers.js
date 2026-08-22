@@ -2,7 +2,7 @@ import { config } from './config.js';
 import { withCache } from './cache.js';
 import { settle, unwrap } from './settled.js';
 import { calculateBreadthDivergence } from './equityAnalytics.js';
-import { buildCoingeckoRequest, buildHeatmapRow, buildLiquidityNarrative, buildLiquidityTransmission, buildWorkspaceNarrative, calculateBitcoinCyclePhase, calculateChangeCorrelations, calculateCryptoRotation, calculateDollarScenarios, calculateDollarTransmissionRead, calculateLeadLag, calculatePositioningModel, calculateCrossMarketRelationship, calculateGlobalLiquidityModel, calculateHeatmapRisk, calculateMacroRegimeModel, calculateMetalsCostStructure, calculateRsi, calculateScreenerScores, calculateTechnicalSnapshot, calculateTrendQuality, classifyHeadlineSentiment, calculateUsdStrengthModel, calculateUsLiquidityModel } from './analytics.js';
+import { buildCoingeckoRequest, buildHeatmapRow, buildSocrataRequest, buildLiquidityNarrative, buildLiquidityTransmission, buildWorkspaceNarrative, calculateBitcoinCyclePhase, calculateChangeCorrelations, calculateCryptoRotation, calculateDollarScenarios, calculateDollarTransmissionRead, calculateLeadLag, calculatePositioningModel, calculateCrossMarketRelationship, calculateGlobalLiquidityModel, calculateHeatmapRisk, calculateMacroRegimeModel, calculateMetalsCostStructure, calculateRsi, calculateScreenerScores, calculateTechnicalSnapshot, calculateTrendQuality, classifyHeadlineSentiment, calculateUsdStrengthModel, calculateUsLiquidityModel } from './analytics.js';
 import { getStoredFredSeries, getStoredMarketHistory, getStoredMarketSnapshot, getRecentModelOutputs, isDatabaseConfigured, reserveProviderCredits } from './database.js';
 import { getAllEquityHistorySymbols, getCoreEquityHistorySymbols } from './equityCatalog.js';
 import { isCryptoHistoryStale, isCotReportStale, isDailyCloseStale, isFredSeriesStale, isPbocObservationStale, monthsBetween } from './freshness.js';
@@ -562,12 +562,13 @@ function summarizeMetalHistory(name, points) {
 const COT_DISAGGREGATED_DATASET = '72hh-3qpy';
 
 async function getCotDisaggregatedGold() {
-  const url = new URL(`https://publicreporting.cftc.gov/resource/${COT_DISAGGREGATED_DATASET}.json`);
-  url.searchParams.set('$select', 'report_date_as_yyyy_mm_dd,m_money_positions_long_all,m_money_positions_short_all,prod_merc_positions_long,prod_merc_positions_short,swap_positions_long_all,swap__positions_short_all');
-  url.searchParams.set('$where', "cftc_contract_market_code='088691'");
-  url.searchParams.set('$order', 'report_date_as_yyyy_mm_dd DESC');
-  url.searchParams.set('$limit', '160');
-  const rows = await fetchJson(url);
+  const request = cftcRequest(COT_DISAGGREGATED_DATASET, {
+    $select: 'report_date_as_yyyy_mm_dd,m_money_positions_long_all,m_money_positions_short_all,prod_merc_positions_long,prod_merc_positions_short,swap_positions_long_all,swap__positions_short_all',
+    $where: "cftc_contract_market_code='088691'",
+    $order: 'report_date_as_yyyy_mm_dd DESC',
+    $limit: '160',
+  });
+  const rows = await fetchJson(request.url, 0, 2, request.headers);
   const history = (Array.isArray(rows) ? rows : []).map((row) => {
     const long = asNumber(row.m_money_positions_long_all);
     const short = asNumber(row.m_money_positions_short_all);
@@ -1608,13 +1609,21 @@ const COT_CONTRACTS = [
   { code: '092741', key: 'fxchf', name: 'Swiss Franc' },
 ];
 
+// Both CFTC datasets route through here so the optional app token is applied
+// identically and the query stays in one shape.
+function cftcRequest(dataset, params) {
+  return buildSocrataRequest('publicreporting.cftc.gov', dataset, { appToken: config.cftcAppToken, params });
+}
+
+
 async function getCotContract(contract) {
-  const url = new URL(`https://publicreporting.cftc.gov/resource/${COT_DATASET}.json`);
-  url.searchParams.set('$select', 'report_date_as_yyyy_mm_dd,noncomm_positions_long_all,noncomm_positions_short_all,comm_positions_long_all,comm_positions_short_all,open_interest_all');
-  url.searchParams.set('$where', `cftc_contract_market_code='${contract.code}'`);
-  url.searchParams.set('$order', 'report_date_as_yyyy_mm_dd DESC');
-  url.searchParams.set('$limit', '160');
-  const rows = await fetchJson(url);
+  const request = cftcRequest(COT_DATASET, {
+    $select: 'report_date_as_yyyy_mm_dd,noncomm_positions_long_all,noncomm_positions_short_all,comm_positions_long_all,comm_positions_short_all,open_interest_all',
+    $where: `cftc_contract_market_code='${contract.code}'`,
+    $order: 'report_date_as_yyyy_mm_dd DESC',
+    $limit: '160',
+  });
+  const rows = await fetchJson(request.url, 0, 2, request.headers);
   const history = (Array.isArray(rows) ? rows : []).map((row) => {
     const long = Number(row.noncomm_positions_long_all);
     const short = Number(row.noncomm_positions_short_all);
@@ -2141,6 +2150,7 @@ export function getProviderHealth() {
     defiLlama: { configured: true, mode: 'keyless-public', purpose: 'Aggregate stablecoin supply history for the issuance liquidity leg' },
     binanceBybit: { configured: true, mode: 'keyless-public', purpose: 'Perpetual funding rates, open-interest history, and BTC cycle derivatives legs' },
     bitcoinData: { configured: true, mode: 'keyless-public', serialized: true, purpose: 'MVRV Z-score and short-term holder realized price' },
+    cftc: { configured: true, mode: config.cftcAppToken ? 'app-token' : 'keyless-public', purpose: 'Commitments of Traders positioning for equities, FX, and metals' },
     multpl: { configured: true, mode: 'keyless-public', purpose: 'Trailing S&P 500 earnings yield for the equity risk-premium proxy' },
     rssWires: { configured: true, mode: 'keyless-public', purpose: 'Federal Reserve, CNBC, and MarketWatch headlines for the news wire' },
   };

@@ -29,6 +29,7 @@ export const config = {
   twelveMaxInteractiveWaitMs: nonNegativeNumberFromEnvironment('TWELVE_MAX_INTERACTIVE_WAIT_MS', 10_000),
   twelveQuoteRefreshMs: numberFromEnvironment('TWELVE_QUOTE_REFRESH_MS', 15 * 60_000),
   fredApiKey: process.env.FRED_API_KEY ?? '',
+  cftcAppToken: process.env.CFTC_APP_TOKEN ?? '',
   coingeckoApiKey: process.env.COINGECKO_API_KEY ?? '',
   coingeckoPlan: (process.env.COINGECKO_API_PLAN ?? 'demo').toLowerCase() === 'pro' ? 'pro' : 'demo',
   databaseUrl: process.env.DATABASE_URL ?? '',

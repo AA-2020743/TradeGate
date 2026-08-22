@@ -487,16 +487,50 @@ export function calculateBreadthDivergence(breadthLine, benchmarkValues, { lookb
   };
 }
 
+/**
+ * Correlation of an ETF's daily changes against each macro driver, with what
+ * stands behind the number. The window is 60 aligned observations, and those
+ * are only 60 sessions when both legs publish daily: against a weekly series
+ * such as NFCI the same window spans more than a year, and labelling both "60D"
+ * misreads the slower one by a factor of seven.
+ */
 export function calculateMacroSensitivities(points, macroSeries) {
-  const correlate = (history) => {
-    if (!history?.length) return null;
-    return calculateChangeCorrelations(points, history)?.correlations?.['60D'] ?? null;
+  const measure = (history) => {
+    if (!history?.length) {
+      return { correlation: null, observations: 0, cadenceDays: null, windowLabel: null, asOf: null, status: 'unavailable', reason: 'No driver history.' };
+    }
+    const result = calculateChangeCorrelations(points, history);
+    const correlation = result?.correlations?.['60D'];
+    const cadenceDays = result?.leadLag?.barDays ?? null;
+    const windowLabel = !Number.isFinite(cadenceDays) ? '60 aligned observations'
+      : cadenceDays <= 2 ? '60 sessions'
+        : cadenceDays <= 10 ? `60 observations, about ${Math.round((60 * cadenceDays) / 7)} weeks`
+          : `60 observations, about ${Math.round(60 * cadenceDays)} days`;
+    return {
+      correlation: Number.isFinite(correlation) ? correlation : null,
+      observations: result?.observations ?? 0,
+      cadenceDays: Number.isFinite(cadenceDays) ? cadenceDays : null,
+      windowLabel: Number.isFinite(correlation) ? windowLabel : null,
+      asOf: result?.asOf ?? null,
+      // A driver that only publishes weekly is not directly comparable with a
+      // daily one over the same count of observations.
+      daily: Number.isFinite(cadenceDays) ? cadenceDays <= 2 : null,
+      status: Number.isFinite(correlation) ? 'calculated' : 'unavailable',
+      reason: Number.isFinite(correlation) ? null : 'Fewer than 60 aligned changes against this driver.',
+    };
+  };
+  const detail = {
+    dollar: measure(macroSeries.dollar),
+    realYield: measure(macroSeries.realYield),
+    vix: measure(macroSeries.vix),
+    credit: measure(macroSeries.credit),
   };
   return {
-    dollar: correlate(macroSeries.dollar),
-    realYield: correlate(macroSeries.realYield),
-    vix: correlate(macroSeries.vix),
-    credit: correlate(macroSeries.credit),
+    dollar: detail.dollar.correlation,
+    realYield: detail.realYield.correlation,
+    vix: detail.vix.correlation,
+    credit: detail.credit.correlation,
+    detail,
   };
 }
 

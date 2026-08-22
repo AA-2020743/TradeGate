@@ -546,14 +546,21 @@ function EquitiesDashboard({ platformData }) {
     {rotation?.subsectors?.length ? <section className="equity-section-heading"><div><p className="section-kicker">SUBSECTOR ROTATION</p><h2>Granular leadership inside each sector</h2></div><EquityStatus status="calculated" label={`${rotation.subsectors.length} tracked`} /></section> : null}
     {rotation?.subsectors?.length ? <section className="equity-subsector-rotation"><article className="equity-rotation-panel panel wide"><div className="equity-rotation-head subsector-head"><span>Rank</span><span>Subsector</span><span>Group</span><span>Quadrant</span><span>Rotation 20D</span><span>20D vs SPY</span><span>60D vs SPY</span><span>Score</span></div>{rotation.subsectors.map((row) => <div className="equity-rotation-row subsector-row" key={row.symbol}><b>{row.rank}</b><span><strong>{row.name}</strong><small>{row.symbol}</small></span><small>{row.group}</small><i className={row.quadrant ? row.quadrant.toLowerCase() : 'neutral'}>{row.quadrant ?? '—'}</i><RotationCell rotation={row.rotation} /><span className={row.relative20 >= 0 ? 'positive' : 'negative'}>{formatPercent(row.relative20)}</span><span className={row.relative60 >= 0 ? 'positive' : 'negative'}>{formatPercent(row.relative60)}</span><b>{row.score}</b></div>)}<p className="equity-source-line">Ranks are global across all {rotation.sectors.length + rotation.subsectors.length} tracked ETF proxies. Quadrants use 20- and 60-session relative performance versus SPY.</p></article></section> : null}
 
-    <section className="equity-section-heading"><div><p className="section-kicker">MACRO SENSITIVITY MATRIX · CALCULATED</p><h2>How each ETF trades against macro drivers</h2></div><span className="data-pill">{sectorData?.macroSensitivity?.window ?? '60D changes'}</span></section>
+    <section className="equity-section-heading"><div><p className="section-kicker">MACRO SENSITIVITY MATRIX · CALCULATED</p><h2>How each ETF trades against macro drivers</h2></div><span className="data-pill">{sectorData?.macroSensitivity?.window ?? '60 aligned changes'}</span></section>
     <section className="equity-macro-matrix">
       <article className="equity-rotation-panel panel wide">
         <div className="equity-rotation-head macro-head"><span>ETF</span><span>Broad dollar</span><span>10Y real yield</span><span>VIX</span><span>HY spread</span><span>Catalog sensitivity</span></div>
         {[...(rotation?.sectors ?? []), ...(rotation?.subsectors ?? [])].map((row) => {
-          const cell = (value) => <span className={!Number.isFinite(value) ? 'neutral' : value >= 0.25 ? 'positive' : value <= -0.25 ? 'negative' : 'neutral'}>{Number.isFinite(value) ? `${value > 0 ? '+' : ''}${value.toFixed(2)}` : '—'}</span>;
           const ms = row.macroSensitivity ?? {};
-          return <div className="equity-rotation-row macro-row" key={`ms-${row.symbol}`}><span><strong>{row.name}</strong><small>{row.symbol}</small></span>{cell(ms.dollar)}{cell(ms.realYield)}{cell(ms.vix)}{cell(ms.credit)}<small>{row.sensitivity ?? '—'}</small></div>;
+          const cell = (value, key) => {
+            const detail = ms.detail?.[key];
+            const slow = detail?.status === 'calculated' && detail.daily === false;
+            return <span
+              className={!Number.isFinite(value) ? 'neutral' : value >= 0.25 ? 'positive' : value <= -0.25 ? 'negative' : 'neutral'}
+              title={detail ? detail.status === 'calculated' ? `${detail.windowLabel} · ${detail.observations} aligned changes${detail.asOf ? ` to ${detail.asOf}` : ''}` : detail.reason : 'No sensitivity published'}
+            >{Number.isFinite(value) ? `${value > 0 ? '+' : ''}${value.toFixed(2)}` : '—'}{slow ? <i className="slow-cadence" aria-label="weekly driver">·w</i> : null}</span>;
+          };
+          return <div className="equity-rotation-row macro-row" key={`ms-${row.symbol}`}><span><strong>{row.name}</strong><small>{row.symbol}</small></span>{cell(ms.dollar, 'dollar')}{cell(ms.realYield, 'realYield')}{cell(ms.vix, 'vix')}{cell(ms.credit, 'credit')}<small>{row.sensitivity ?? '—'}</small></div>;
         })}
         <p className="equity-source-line">Pearson correlations of 60-day daily ETF changes against stored FRED histories ({Object.entries(sectorData?.macroSensitivity?.sources ?? {}).filter(([, source]) => source).map(([key]) => key).join(', ') || 'FRED sources pending'}). Subsectors without catalog sensitivity show a dash.</p>
       </article>

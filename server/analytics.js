@@ -754,6 +754,27 @@ export function calculateCryptoRotation({ bitcoinChange24hPct = null, totalMarke
 }
 
 
+/**
+ * CFTC publishes its Commitments of Traders data through Socrata. Anonymous
+ * callers share one throttled pool; a free application token gives the caller
+ * its own budget. The token is an identifier rather than a secret credential,
+ * but it still travels as a header rather than in the query string so it stays
+ * out of proxy and server logs.
+ */
+export function buildSocrataRequest(host, dataset, { appToken = '', params = {} } = {}) {
+  const url = new URL(`https://${String(host).replace(/^https?:\/\//, '').replace(/\/$/, '')}/resource/${dataset}.json`);
+  for (const [name, value] of Object.entries(params)) {
+    if (value !== undefined && value !== null && value !== '') url.searchParams.set(name, String(value));
+  }
+  const token = String(appToken ?? '').trim();
+  return {
+    url: url.toString(),
+    headers: token ? { 'X-App-Token': token } : null,
+    authenticated: Boolean(token),
+  };
+}
+
+
 export function buildHeatmapRow({ symbol, name, group, technical, alignment, crowdingPercentile }) {
   if (!technical) return { symbol, name, group, status: 'unavailable' };
   const vol = technical.indicators?.annualizedVolatility20d;
