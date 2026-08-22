@@ -992,6 +992,104 @@ const MACRO_REGIME_SETTINGS = {
   'Stress / deleveraging': { riskBudget: 'Minimal', alertThreshold: 80, holdingPeriod: '1-10 sessions', emphasis: 'Capital preservation and convexity' },
 };
 
+const DOLLAR_SCENARIO_DEFINITIONS = [
+  { key: 'globalStress', name: 'Global stress', outcome: 'USD, CHF, JPY bid' },
+  { key: 'usOutperformance', name: 'Strong U.S. growth', outcome: 'USD carry strengthens' },
+  { key: 'weakGlobalGrowth', name: 'Weak global growth', outcome: 'USD defensive premium' },
+];
+
+/**
+ * Scores the three arms of the dollar smile from live inputs instead of
+ * asserting them. The arms are separated by what is actually different about
+ * them, not by direction alone: a stress bid and a carry bid both lift the
+ * dollar, so the carry arm additionally requires rising U.S. yields and the
+ * defensive arm requires that neither yields nor panic is doing the work.
+ *
+ * `growthSpread60d` is the 60-session return of a global equity proxy minus
+ * the U.S. one; negative means the U.S. is outperforming.
+ */
+export function calculateDollarScenarios(seriesList, { growthSpread60d = null } = {}) {
+  const series = Object.fromEntries((seriesList ?? []).map((item) => [item.key, item]));
+  const volatility = pointsForSeries(series.vix).at(-1)?.value ?? null;
+  const creditSpread = pointsForSeries(series.highYieldSpread).at(-1)?.value ?? null;
+  const creditChange = absoluteChangeOverDays(pointsForSeries(series.highYieldSpread), 91);
+  const conditions = pointsForSeries(series.financialConditions).at(-1)?.value ?? null;
+  const realYieldChange = absoluteChangeOverDays(pointsForSeries(series.realYield10y), 91);
+  const frontEndChange = absoluteChangeOverDays(pointsForSeries(series.us2yYield), 91);
+
+  const stressVol = Number.isFinite(volatility) ? clamp(50 + ((volatility - 20) * 3)) : null;
+  const stressCredit = Number.isFinite(creditSpread)
+    ? clamp(50 + ((creditSpread - 4) * 8) + ((creditChange ?? 0) * 40))
+    : null;
+  const stressConditions = Number.isFinite(conditions) ? clamp(50 + (conditions * 35)) : null;
+  const carryReal = Number.isFinite(realYieldChange) ? clamp(50 + (Math.tanh(realYieldChange / 0.5) * 50)) : null;
+  const carryFront = Number.isFinite(frontEndChange) ? clamp(50 + (Math.tanh(frontEndChange / 0.75) * 50)) : null;
+  const usLeadership = Number.isFinite(growthSpread60d) ? clamp(50 - (growthSpread60d * 3)) : null;
+  const invert = (score) => (Number.isFinite(score) ? 100 - score : null);
+
+  const legsByScenario = {
+    globalStress: [
+      { key: 'volatility', name: 'Equity volatility', score: stressVol, value: volatility, source: 'FRED VIXCLS' },
+      { key: 'credit', name: 'High-yield spread level and 91d change', score: stressCredit, value: creditSpread, source: 'FRED BAMLH0A0HYM2' },
+      { key: 'conditions', name: 'Financial conditions', score: stressConditions, value: conditions, source: 'FRED NFCI' },
+    ],
+    usOutperformance: [
+      { key: 'realYield', name: '10Y real-yield impulse', score: carryReal, value: realYieldChange, source: 'FRED DFII10' },
+      { key: 'frontEnd', name: '2Y yield impulse', score: carryFront, value: frontEndChange, source: 'FRED DGS2' },
+      { key: 'creditCalm', name: 'Credit calm', score: invert(stressCredit), value: creditSpread, source: 'FRED BAMLH0A0HYM2' },
+      { key: 'leadership', name: 'U.S. equity leadership, 60 sessions', score: usLeadership, value: growthSpread60d, source: 'Yahoo SPY vs EEM' },
+    ],
+    weakGlobalGrowth: [
+      { key: 'leadership', name: 'U.S. equity leadership, 60 sessions', score: usLeadership, value: growthSpread60d, source: 'Yahoo SPY vs EEM' },
+      { key: 'yieldsIdle', name: 'U.S. carry not the driver', score: invert(carryReal), value: realYieldChange, source: 'FRED DFII10' },
+      { key: 'calmTape', name: 'No volatility panic', score: invert(stressVol), value: volatility, source: 'FRED VIXCLS' },
+    ],
+  };
+
+  const scenarios = DOLLAR_SCENARIO_DEFINITIONS.map((definition) => {
+    const legs = legsByScenario[definition.key];
+    const scored = legs.filter((leg) => Number.isFinite(leg.score));
+    const score = scored.length >= 2 ? Math.round(mean(scored.map((leg) => leg.score))) : null;
+    return {
+      ...definition,
+      score,
+      status: score === null ? 'unavailable' : 'calculated',
+      coverage: Math.round((scored.length / legs.length) * 100),
+      legs: legs.map((leg) => ({ ...leg, score: Number.isFinite(leg.score) ? Math.round(leg.score) : null })),
+      missing: legs.filter((leg) => !Number.isFinite(leg.score)).map((leg) => leg.name),
+    };
+  });
+
+  const calculated = scenarios.filter((scenario) => scenario.score !== null);
+  if (!calculated.length) {
+    return {
+      version: 'dollar-scenarios-v1',
+      status: 'unavailable',
+      reason: 'Each path needs at least two of its own calculated legs.',
+      scenarios,
+      leading: null,
+    };
+  }
+  const total = calculated.reduce((sum, scenario) => sum + scenario.score, 0);
+  for (const scenario of scenarios) {
+    scenario.share = scenario.score === null || total === 0 ? null : Math.round((scenario.score / total) * 100);
+  }
+  const ranked = [...calculated].sort((left, right) => right.score - left.score);
+  // Two arms within a few points of each other is a tape without a dominant
+  // driver, and saying so beats naming a winner by a rounding error.
+  const decisive = ranked.length === 1 || (ranked[0].score - ranked[1].score) >= 5;
+  return {
+    version: 'dollar-scenarios-v1',
+    status: calculated.length === scenarios.length ? 'calculated' : 'provisional',
+    scenarios,
+    leading: decisive ? { key: ranked[0].key, name: ranked[0].name, outcome: ranked[0].outcome, score: ranked[0].score, margin: ranked.length > 1 ? ranked[0].score - ranked[1].score : null } : null,
+    read: decisive
+      ? `${ranked[0].name} is the dominant dollar path at ${ranked[0].score}/100`
+      : `${ranked[0].name} and ${ranked[1].name} are within ${ranked[0].score - ranked[1].score} points, so no path dominates`,
+    methodology: 'Each arm of the dollar smile scores its own evidence 0-100 and publishes only with at least two calculated legs. Stress reads VIX, the high-yield spread level and its 91-day change, and NFCI. U.S. outperformance reads the 10Y real-yield and 2Y impulses, credit calm, and 60-session U.S. equity leadership over emerging markets. The defensive path requires that leadership without either a rising-yield carry story or a volatility panic, which is what separates it from the other two. Shares are each arm\'s score over the calculated total; a lead narrower than five points is reported as no dominant path.',
+  };
+}
+
 export function calculateMacroRegimeModel(seriesList, liquidityModel = null, usdStrengthModel = null, globalLiquidityModel = null) {
   const series = Object.fromEntries(seriesList.map((item) => [item.key, item]));
   const financialConditions = pointsForSeries(series.financialConditions);

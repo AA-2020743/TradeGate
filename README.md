@@ -212,6 +212,18 @@ The narrative panel compares the two most recent persisted outputs of `us-liquid
 
 DXY/BTC uses aligned daily log returns rather than price levels. It calculates 20-day, 60-day, and one-year Pearson correlations, momentum alignment, and a 20-session dollar breakout state. It also runs the same lead-lag scan as the macro relationship map over those log returns, so the Crypto workspace states plainly whether the dollar moves first and by how many days, with the peak correlation shown against the zero-lag reading. Twelve Data DXY is preferred; FRED's broad-dollar index is explicitly labeled as a proxy when used.
 
+### `dollar-scenarios-v1`
+
+The USD scenario map scores each arm of the dollar smile from live inputs instead of describing them. The arms are separated by what is genuinely different about them rather than by direction alone — a stress bid and a carry bid both lift the dollar:
+
+| Path | Evidence |
+| --- | --- |
+| Global stress (USD, CHF, JPY bid) | VIX level, high-yield spread level and its 91-day change, NFCI |
+| Strong U.S. growth (USD carry strengthens) | 10Y real-yield and 2Y impulses, credit calm, 60-session U.S. equity leadership over EM |
+| Weak global growth (USD defensive premium) | The same U.S. leadership, but requiring that neither rising yields nor a volatility panic is doing the work |
+
+U.S. leadership is the 60-session return of EEM minus SPY from Yahoo closes; the FRED legs come from series the macro snapshot already loads. A path publishes only with at least two of its own calculated legs and lists the ones it is missing, so a blocked provider narrows the evidence rather than inventing it. Shares are each path's score over the calculated total, and a lead narrower than five points is reported as no dominant path rather than naming a winner by a rounding error.
+
 ### `usd-strength-v1`
 
 USD strength combines FRED's broad trade-weighted dollar trend and momentum with 10-year real-yield impulse, 2-year Treasury impulse, VIX/NFCI dollar-smile stress, and inverse dollar-liquidity pressure. It is marked provisional below 75% driver coverage. DTWEXBGS is always identified as a broad-dollar proxy and is never displayed as the ICE DXY level.
@@ -238,7 +250,7 @@ Market close histories work without any API key: Twelve Data is preferred when c
 
 ### FX workspace
 
-`fx-workspace-v1` covers six currencies (EUR, JPY, GBP, CAD, AUD, CHF). Currency strength uses Yahoo FX crosses oriented so positive momentum always means currency strength; each pair carries a `technical-v1` score plus CFTC COT net-speculative percentile from verified contract codes (099741 EUR, 097741 JPY, 096742 GBP, 090741 CAD, 232741 AUD, 092741 CHF). Commodity links correlate 60-day daily changes (CAD/WTI, AUD/copper, AUD/gold, CHF/S&P 500) and additionally report which side of each link moves first, using the same lead-lag scan as the macro relationship map, so a currency that follows its commodity is distinguishable from one that leads it. Rotation signals compare 20-session momenta by sign: commodity-FX versus crude, broad USD versus EEM, and yen versus S&P 500. The USD scenario map remains an explicitly labeled qualitative framework.
+`fx-workspace-v1` covers six currencies (EUR, JPY, GBP, CAD, AUD, CHF). Currency strength uses Yahoo FX crosses oriented so positive momentum always means currency strength; each pair carries a `technical-v1` score plus CFTC COT net-speculative percentile from verified contract codes (099741 EUR, 097741 JPY, 096742 GBP, 090741 CAD, 232741 AUD, 092741 CHF). Commodity links correlate 60-day daily changes (CAD/WTI, AUD/copper, AUD/gold, CHF/S&P 500) and additionally report which side of each link moves first, using the same lead-lag scan as the macro relationship map, so a currency that follows its commodity is distinguishable from one that leads it. Rotation signals compare 20-session momenta by sign: commodity-FX versus crude, broad USD versus EEM, and yen versus S&P 500. The USD scenario map is now calculated by `dollar-scenarios-v1` rather than asserted.
 
 The metals COT panel also publishes the disaggregated report (dataset `72hh-3qpy`): three-year percentile ranks of net managed-money, producer/merchant, and swap-dealer gold positions with weekly changes, alongside the legacy net-non-commercial percentile. The FX positioning panel additionally carries the ICE US Dollar Index futures contract (`098662`) so USD speculative crowding sits beside the six currency pairs.
 

@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { buildAtomFeed, buildHeatmapRow, buildLiquidityNarrative, buildLiquidityTransmission, buildWorkspaceNarrative, calculateChangeCorrelations, calculateLeadLag, calculatePositioningModel, calculateCrossMarketRelationship, calculateGlobalLiquidityModel, calculateMacroRegimeModel, calculateRsi, calculateScreenerScores, calculateSeriesLeadLag, calculateTechnicalSnapshot, calculateTrendQuality, classifyHeadlineSentiment, calculateUsdStrengthModel, calculateUsLiquidityModel, escapeXml, pearsonCorrelation } from './analytics.js';
+import { buildAtomFeed, buildHeatmapRow, buildLiquidityNarrative, buildLiquidityTransmission, buildWorkspaceNarrative, calculateChangeCorrelations, calculateDollarScenarios, calculateLeadLag, calculatePositioningModel, calculateCrossMarketRelationship, calculateGlobalLiquidityModel, calculateMacroRegimeModel, calculateRsi, calculateScreenerScores, calculateSeriesLeadLag, calculateTechnicalSnapshot, calculateTrendQuality, classifyHeadlineSentiment, calculateUsdStrengthModel, calculateUsLiquidityModel, escapeXml, pearsonCorrelation } from './analytics.js';
 
 test('RSI reaches 100 for an uninterrupted advance', () => {
   const values = Array.from({ length: 30 }, (_, index) => 100 + index);
@@ -631,4 +631,100 @@ test('a cross-market pair moving in lockstep claims no leader', () => {
     dates.map((date, index) => ({ date, value: left[index] * 300 })),
   );
   assert.equal(model.leadLag.leads, 'none');
+});
+
+function fredSeries(key, latest, ninetyOneDaysAgo = latest) {
+  const day = (offset) => new Date(Date.UTC(2026, 6, 1) - (offset * 86_400_000)).toISOString().slice(0, 10);
+  return { key, multiplier: 1, history: [{ date: day(120), value: ninetyOneDaysAgo }, { date: day(91), value: ninetyOneDaysAgo }, { date: day(0), value: latest }] };
+}
+
+test('a panic tape ranks global stress as the dominant dollar path', () => {
+  const model = calculateDollarScenarios([
+    fredSeries('vix', 34),
+    fredSeries('highYieldSpread', 7.2, 4.9),
+    fredSeries('financialConditions', 0.8),
+    fredSeries('realYield10y', 1.4, 1.5),
+    fredSeries('us2yYield', 3.6, 3.9),
+  ], { growthSpread60d: -4 });
+  assert.equal(model.status, 'calculated');
+  assert.equal(model.leading.key, 'globalStress');
+  assert.match(model.read, /Global stress is the dominant dollar path/);
+  assert.ok(model.scenarios.find((item) => item.key === 'globalStress').score > 80);
+});
+
+test('rising real yields into a calm tape rank U.S. outperformance first', () => {
+  const model = calculateDollarScenarios([
+    fredSeries('vix', 13),
+    fredSeries('highYieldSpread', 2.9, 3.1),
+    fredSeries('financialConditions', -0.55),
+    fredSeries('realYield10y', 2.3, 1.5),
+    fredSeries('us2yYield', 4.6, 3.7),
+  ], { growthSpread60d: -6 });
+  assert.equal(model.leading.key, 'usOutperformance');
+  assert.ok(model.scenarios.find((item) => item.key === 'globalStress').score < 40);
+});
+
+test('U.S. leadership without carry or panic ranks the defensive path first', () => {
+  const model = calculateDollarScenarios([
+    fredSeries('vix', 14),
+    fredSeries('highYieldSpread', 3.6, 3.6),
+    fredSeries('financialConditions', -0.2),
+    fredSeries('realYield10y', 1.2, 1.9),
+    fredSeries('us2yYield', 3.2, 3.9),
+  ], { growthSpread60d: -9 });
+  assert.equal(model.leading.key, 'weakGlobalGrowth');
+});
+
+test('shares of the calculated paths sum to about one hundred', () => {
+  const model = calculateDollarScenarios([
+    fredSeries('vix', 21),
+    fredSeries('highYieldSpread', 4.1, 4),
+    fredSeries('financialConditions', 0),
+    fredSeries('realYield10y', 1.8, 1.7),
+    fredSeries('us2yYield', 4, 3.9),
+  ], { growthSpread60d: -1 });
+  const shares = model.scenarios.map((item) => item.share).filter(Number.isFinite);
+  assert.equal(shares.length, 3);
+  assert.ok(Math.abs(shares.reduce((total, value) => total + value, 0) - 100) <= 2);
+});
+
+test('two paths within five points report no dominant path rather than a winner', () => {
+  const model = calculateDollarScenarios([
+    fredSeries('vix', 20),
+    fredSeries('highYieldSpread', 4, 4),
+    fredSeries('financialConditions', 0),
+    fredSeries('realYield10y', 1.8, 1.8),
+    fredSeries('us2yYield', 4, 4),
+  ], { growthSpread60d: 0 });
+  assert.equal(model.leading, null);
+  assert.match(model.read, /no path dominates/);
+});
+
+test('a path missing its growth leg still publishes on its remaining evidence', () => {
+  const model = calculateDollarScenarios([
+    fredSeries('vix', 30),
+    fredSeries('highYieldSpread', 6.5, 4.8),
+    fredSeries('financialConditions', 0.6),
+    fredSeries('realYield10y', 1.4, 1.5),
+    fredSeries('us2yYield', 3.6, 3.9),
+  ], {});
+  assert.equal(model.status, 'calculated');
+  const defensive = model.scenarios.find((item) => item.key === 'weakGlobalGrowth');
+  assert.deepEqual(defensive.missing, ['U.S. equity leadership, 60 sessions']);
+  assert.equal(defensive.coverage, 67);
+  assert.equal(defensive.status, 'calculated');
+});
+
+test('no FRED inputs leaves every path explicitly unavailable', () => {
+  const model = calculateDollarScenarios([], {});
+  assert.equal(model.status, 'unavailable');
+  assert.equal(model.leading, null);
+  assert.equal(model.scenarios.length, 3);
+  assert.ok(model.scenarios.every((item) => item.status === 'unavailable' && item.score === null));
+});
+
+test('a single leg is not enough for a path to publish a score', () => {
+  const model = calculateDollarScenarios([fredSeries('vix', 28)], {});
+  assert.equal(model.scenarios.find((item) => item.key === 'globalStress').score, null);
+  assert.equal(model.status, 'unavailable');
 });

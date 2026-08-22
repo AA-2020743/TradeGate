@@ -1,7 +1,7 @@
 import { config } from './config.js';
 import { withCache } from './cache.js';
 import { settle, unwrap } from './settled.js';
-import { buildHeatmapRow, buildLiquidityNarrative, buildLiquidityTransmission, buildWorkspaceNarrative, calculateChangeCorrelations, calculateLeadLag, calculatePositioningModel, calculateCrossMarketRelationship, calculateGlobalLiquidityModel, calculateMacroRegimeModel, calculateRsi, calculateScreenerScores, calculateTechnicalSnapshot, calculateTrendQuality, classifyHeadlineSentiment, calculateUsdStrengthModel, calculateUsLiquidityModel } from './analytics.js';
+import { buildHeatmapRow, buildLiquidityNarrative, buildLiquidityTransmission, buildWorkspaceNarrative, calculateChangeCorrelations, calculateDollarScenarios, calculateLeadLag, calculatePositioningModel, calculateCrossMarketRelationship, calculateGlobalLiquidityModel, calculateMacroRegimeModel, calculateRsi, calculateScreenerScores, calculateTechnicalSnapshot, calculateTrendQuality, classifyHeadlineSentiment, calculateUsdStrengthModel, calculateUsLiquidityModel } from './analytics.js';
 import { getStoredFredSeries, getStoredMarketHistory, getStoredMarketSnapshot, getRecentModelOutputs, isDatabaseConfigured, reserveProviderCredits } from './database.js';
 import { getAllEquityHistorySymbols, getCoreEquityHistorySymbols } from './equityCatalog.js';
 import { isCryptoHistoryStale, isCotReportStale, isDailyCloseStale, isFredSeriesStale, isPbocObservationStale, monthsBetween } from './freshness.js';
@@ -1953,6 +1953,26 @@ export async function getCryptoGlobal() {
   });
 }
 
+// 60-session emerging-market return minus the U.S. one. Negative means the U.S.
+// is leading, which is the leg that separates the two dollar-bid scenarios.
+async function getGlobalGrowthSpread() {
+  return withCache('analytics:growth-spread', 6 * 3_600_000, async () => {
+    const [globalResult, usResult] = await Promise.allSettled([getYahooHistory('EEM'), getYahooHistory('SPY')]);
+    const changeOver60 = (result) => {
+      if (result.status !== 'fulfilled') return null;
+      const values = (result.value ?? []).map((point) => point.value).filter(Number.isFinite);
+      if (values.length < 61) return null;
+      const base = values.at(-61);
+      return base > 0 ? ((values.at(-1) / base) - 1) * 100 : null;
+    };
+    const globalChange = changeOver60(globalResult);
+    const usChange = changeOver60(usResult);
+    return Number.isFinite(globalChange) && Number.isFinite(usChange)
+      ? Number((globalChange - usChange).toFixed(2))
+      : null;
+  }).catch(() => null);
+}
+
 export async function getLiquiditySnapshot(options = {}) {
   return withCache('liquidity-snapshot', 15 * 60_000, async () => {
     const storedSeries = await getStoredFredSeries().catch(() => []);
@@ -1972,6 +1992,7 @@ export async function getLiquiditySnapshot(options = {}) {
     const globalLiquidity = calculateGlobalLiquidityModel(modelSeries);
     const usdStrength = calculateUsdStrengthModel(modelSeries, model);
     const macroRegime = calculateMacroRegimeModel(modelSeries, model, usdStrength, globalLiquidity);
+    const dollarScenarios = calculateDollarScenarios(modelSeries, { growthSpread60d: await getGlobalGrowthSpread() });
     const stablecoins = await getStablecoinIssuance().catch(() => null);
     let narrative = null;
     if (isDatabaseConfigured()) {
@@ -2015,6 +2036,7 @@ export async function getLiquiditySnapshot(options = {}) {
       globalLiquidity,
       usdStrength,
       macroRegime,
+      dollarScenarios,
       stablecoins,
       narrative,
       errors,
