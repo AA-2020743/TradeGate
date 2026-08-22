@@ -84,7 +84,13 @@ app.get('/api/analytics/technical/:symbol', async (request, response, next) => {
 
 app.get('/api/analytics/dxy-btc', async (_request, response, next) => {
   try {
-    response.json(await getDxyBitcoinRelationship());
+    // The transmission read needs the dollar model too, so it is composed here
+    // rather than duplicated in the browser: one calculation, one answer.
+    const [relationshipResult, liquidityResult] = await Promise.allSettled([getDxyBitcoinRelationship(), getLiquiditySnapshot()]);
+    if (relationshipResult.status === 'rejected') throw relationshipResult.reason;
+    const relationship = relationshipResult.value;
+    const liquidity = liquidityResult.status === 'fulfilled' ? liquidityResult.value : null;
+    response.json({ ...relationship, dollarTransmission: calculateDollarTransmission(liquidity, relationship) });
   } catch (error) {
     next(error);
   }

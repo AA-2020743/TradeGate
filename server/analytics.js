@@ -811,6 +811,61 @@ export function calculateSeriesLeadLag(leftChanges, rightChanges, dates) {
   };
 }
 
+const DOLLAR_LINK_MINIMUM = 0.2;
+
+/**
+ * Turns dollar direction into a bitcoin read using the measured DXY/BTC link
+ * rather than an assumed one. A falling dollar only helps bitcoin while the
+ * link is inverse; under a positive link the same move is a headwind, and
+ * while the link is too weak to carry anything, dollar direction transmits
+ * nothing and saying so beats naming a tailwind the data does not support.
+ */
+export function calculateDollarTransmissionRead({ usdMomentum = null, usdScore = null, corr60 = null } = {}) {
+  const votes = [];
+  if (Number.isFinite(usdMomentum)) votes.push(usdMomentum < -0.3 ? 1 : usdMomentum > 0.3 ? -1 : 0);
+  if (Number.isFinite(usdScore)) votes.push(usdScore < 48 ? 1 : usdScore > 55 ? -1 : 0);
+  const dollarWeakness = votes.reduce((total, vote) => total + vote, 0);
+
+  if (!Number.isFinite(corr60)) {
+    return {
+      status: votes.length ? 'provisional' : 'unavailable',
+      label: null,
+      score: null,
+      dollarWeakness: votes.length ? dollarWeakness : null,
+      linkSign: null,
+      linkStrength: null,
+      reason: 'The DXY/BTC link has to be measured before dollar direction can be transmitted.',
+    };
+  }
+  const linkStrength = Math.round(Math.abs(corr60) * 100) / 100;
+  if (linkStrength < DOLLAR_LINK_MINIMUM) {
+    return {
+      status: 'calculated',
+      label: 'Link too weak to transmit',
+      score: 0,
+      dollarWeakness: votes.length ? dollarWeakness : null,
+      linkSign: 0,
+      linkStrength,
+      reason: `The 60-day correlation is ${corr60 > 0 ? '+' : ''}${corr60.toFixed(2)}, inside the ±${DOLLAR_LINK_MINIMUM} band where dollar moves carry no reliable bitcoin signal.`,
+    };
+  }
+  // An inverse link passes dollar weakness through as support; a positive link
+  // reverses it.
+  const linkSign = corr60 < 0 ? 1 : -1;
+  const score = votes.length ? dollarWeakness * linkSign : null;
+  return {
+    status: votes.length ? 'calculated' : 'provisional',
+    label: score === null ? null : score >= 1 ? 'Dollar tailwind' : score <= -1 ? 'Dollar headwind' : 'Neutral dollar',
+    score,
+    dollarWeakness,
+    linkSign,
+    linkStrength,
+    reason: score === null
+      ? 'Broad-dollar momentum or level is required before the link can be applied.'
+      : `Dollar direction scores ${dollarWeakness > 0 ? '+' : ''}${dollarWeakness} for weakness against ${corr60 < 0 ? 'an inverse' : 'a positive'} link of ${corr60 > 0 ? '+' : ''}${corr60.toFixed(2)}.`,
+  };
+}
+
 export function buildLiquidityNarrative(usOutputs = [], globalOutputs = []) {
   const entries = [];
   const usLatest = usOutputs[0]?.output ?? null;

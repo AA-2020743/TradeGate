@@ -1256,12 +1256,12 @@ function CryptoDashboard({ data }) {
   const liquidityModel = data.liquidity?.model;
   const usdMomentum = usdStrength?.indicators?.momentum20d;
   const corr60 = dxyBtcModel?.correlations?.['60D'];
-  const votes = [];
-  if (Number.isFinite(usdMomentum)) votes.push(usdMomentum < -0.3 ? 1 : usdMomentum > 0.3 ? -1 : 0);
-  if (Number.isFinite(usdStrength?.score)) votes.push(usdStrength.score < 48 ? 1 : usdStrength.score > 55 ? -1 : 0);
-  const tailwindScore = votes.reduce((total, vote) => total + vote, 0);
-  const hasDollarInputs = votes.length > 0 || Number.isFinite(corr60);
-  const tailwindLabel = !hasDollarInputs ? 'Awaiting dollar inputs' : tailwindScore >= 1 ? 'Dollar tailwind' : tailwindScore <= -1 ? 'Dollar headwind' : 'Neutral dollar';
+  // Calculated server-side so the browser and the persisted alerts can never
+  // disagree about whether the dollar is helping or hurting.
+  const transmission = data.dxyBtc?.dollarTransmission ?? null;
+  const tailwindScore = transmission?.tailwindScore ?? null;
+  const hasDollarInputs = transmission?.status === 'calculated';
+  const tailwindLabel = transmission?.tailwindLabel ?? (transmission?.status === 'provisional' ? 'Link not yet measured' : 'Awaiting dollar inputs');
 
   return <div className="crypto-dashboard">
     <section className="macro-intro">
@@ -1269,16 +1269,16 @@ function CryptoDashboard({ data }) {
       <div className="model-tabs"><button className="active">Cycle &amp; crowding</button></div>
     </section>
     <DataDisclosure data={data} message="Trend, MVRV-Z, short-term-holder cost basis, funding, open interest, stablecoins, and the DXY/BTC relationship are versioned calculations. Spot ETF flows remain unavailable without a licensed source." />
-    <section className="macro-section-heading"><div><p className="section-kicker">DOLLAR TRANSMISSION · CALCULATED</p><h2>{tailwindLabel} for bitcoin</h2></div><span className="data-pill">Favorability read</span></section>
+    <section className="macro-section-heading"><div><p className="section-kicker">DOLLAR TRANSMISSION · {transmission?.status?.toUpperCase() ?? 'UNAVAILABLE'}</p><h2>{transmission?.linkSign === 0 ? 'The dollar link is too weak to move bitcoin' : `${tailwindLabel} for bitcoin`}</h2></div><span className="data-pill">Favorability read</span></section>
     <section className="crypto-grid">
-      <article className={`crypto-tailwind-panel panel ${hasDollarInputs ? '' : 'preview-section'}`}><div className="panel-title"><div><p className="section-kicker">IS THE DOLLAR A TAILWIND?</p><h3>{tailwindLabel}</h3></div><span className="data-pill">{hasDollarInputs ? `${tailwindScore > 0 ? '+' : ''}${tailwindScore} signal` : 'Unavailable'}</span></div>
+      <article className={`crypto-tailwind-panel panel ${hasDollarInputs ? '' : 'preview-section'}`}><div className="panel-title"><div><p className="section-kicker">IS THE DOLLAR A TAILWIND?</p><h3>{tailwindLabel}</h3></div><span className="data-pill">{Number.isFinite(tailwindScore) ? `${tailwindScore > 0 ? '+' : ''}${tailwindScore} signal` : 'Unavailable'}</span></div>
         <div className="btc-cycle-grid">
           <div className="btc-cycle-cell"><small>Broad-dollar momentum</small><b>{formatPercent(usdMomentum)}</b><span>20-session change · {usdStrength?.regime ?? 'regime unavailable'}</span></div>
           <div className="btc-cycle-cell"><small>Dollar strength score</small><b>{usdStrength?.score ?? '—'}</b><span>{usdStrength ? `${usdStrength.coverage}% coverage · a weaker dollar favors BTC` : 'Awaiting FRED broad-dollar history'}</span></div>
           <div className="btc-cycle-cell"><small>DXY ↔ BTC link</small><b>{Number.isFinite(corr60) ? corr60.toFixed(2) : '—'}</b><span>{dxyBtcModel ? `${dxyBtcModel.regime} · an inverse link means a falling dollar lifts BTC` : 'Awaiting synchronized histories'}</span></div>
           <div className="btc-cycle-cell"><small>Liquidity impulse</small><b>{liquidityModel?.momentum ?? '—'}</b><span>{liquidityModel ? `Net US liquidity regime: ${liquidityModel.regime}` : 'Awaiting FRED'}</span></div>
         </div>
-        <p className="model-footnote">Favorability combines broad-dollar direction and level with the measured DXY/BTC correlation: a falling, weak dollar against an inverse link reads as a tailwind; a rising, strong dollar reads as a headwind.</p>
+        <p className="model-footnote">{transmission?.reason ? `${transmission.reason} ` : ''}Favorability applies broad-dollar direction and level through the measured DXY/BTC correlation rather than an assumed one: a falling dollar only helps bitcoin while the link is inverse, the same move reads as a headwind under a positive link, and inside a ±0.2 correlation band the dollar transmits nothing.</p>
       </article>
       <article className={`crypto-tailwind-panel panel ${data.bitcoin?.ethRotation?.status === 'calculated' ? '' : 'preview-section'}`}><div className="panel-title"><div><p className="section-kicker">ETHEREUM &amp; ROTATION · CALCULATED</p><h3>{data.bitcoin?.ethRotation?.btcEthRatio?.read ?? 'Awaiting histories'}</h3></div><span className="data-pill">{data.bitcoin?.ethRotation?.version ?? 'Unavailable'}</span></div>
         <div className="btc-cycle-grid">

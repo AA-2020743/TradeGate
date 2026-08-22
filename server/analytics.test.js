@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { buildAtomFeed, buildHeatmapRow, buildLiquidityNarrative, buildLiquidityTransmission, buildWorkspaceNarrative, calculateChangeCorrelations, calculateDollarScenarios, calculateLeadLag, calculatePositioningModel, calculateCrossMarketRelationship, calculateGlobalLiquidityModel, calculateMacroRegimeModel, calculateRsi, calculateScreenerScores, calculateSeriesLeadLag, calculateTechnicalSnapshot, calculateTrendQuality, classifyHeadlineSentiment, calculateUsdStrengthModel, calculateUsLiquidityModel, escapeXml, pearsonCorrelation } from './analytics.js';
+import { buildAtomFeed, buildHeatmapRow, buildLiquidityNarrative, buildLiquidityTransmission, buildWorkspaceNarrative, calculateChangeCorrelations, calculateDollarScenarios, calculateDollarTransmissionRead, calculateLeadLag, calculatePositioningModel, calculateCrossMarketRelationship, calculateGlobalLiquidityModel, calculateMacroRegimeModel, calculateRsi, calculateScreenerScores, calculateSeriesLeadLag, calculateTechnicalSnapshot, calculateTrendQuality, classifyHeadlineSentiment, calculateUsdStrengthModel, calculateUsLiquidityModel, escapeXml, pearsonCorrelation } from './analytics.js';
 
 test('RSI reaches 100 for an uninterrupted advance', () => {
   const values = Array.from({ length: 30 }, (_, index) => 100 + index);
@@ -727,4 +727,61 @@ test('a single leg is not enough for a path to publish a score', () => {
   const model = calculateDollarScenarios([fredSeries('vix', 28)], {});
   assert.equal(model.scenarios.find((item) => item.key === 'globalStress').score, null);
   assert.equal(model.status, 'unavailable');
+});
+
+test('a weakening dollar is a tailwind only while the link is inverse', () => {
+  const weakDollar = { usdMomentum: -1.5, usdScore: 40 };
+  const inverse = calculateDollarTransmissionRead({ ...weakDollar, corr60: -0.55 });
+  assert.equal(inverse.label, 'Dollar tailwind');
+  assert.equal(inverse.score, 2);
+  assert.equal(inverse.linkSign, 1);
+});
+
+test('the same weakening dollar is a headwind under a positive link', () => {
+  const positive = calculateDollarTransmissionRead({ usdMomentum: -1.5, usdScore: 40, corr60: 0.55 });
+  assert.equal(positive.label, 'Dollar headwind');
+  assert.equal(positive.score, -2);
+  assert.equal(positive.linkSign, -1);
+  assert.equal(positive.dollarWeakness, 2);
+});
+
+test('a strengthening dollar flips with the link in the same way', () => {
+  assert.equal(calculateDollarTransmissionRead({ usdMomentum: 1.5, usdScore: 70, corr60: -0.5 }).label, 'Dollar headwind');
+  assert.equal(calculateDollarTransmissionRead({ usdMomentum: 1.5, usdScore: 70, corr60: 0.5 }).label, 'Dollar tailwind');
+});
+
+test('a link inside the dead band transmits nothing rather than a tailwind', () => {
+  const weak = calculateDollarTransmissionRead({ usdMomentum: -2, usdScore: 35, corr60: 0.08 });
+  assert.equal(weak.label, 'Link too weak to transmit');
+  assert.equal(weak.score, 0);
+  assert.equal(weak.linkSign, 0);
+  assert.match(weak.reason, /no reliable bitcoin signal/);
+});
+
+test('an unmeasured link withholds the read instead of assuming inverse', () => {
+  const unmeasured = calculateDollarTransmissionRead({ usdMomentum: -2, usdScore: 35, corr60: null });
+  assert.equal(unmeasured.label, null);
+  assert.equal(unmeasured.status, 'provisional');
+  assert.equal(unmeasured.dollarWeakness, 2);
+  assert.match(unmeasured.reason, /has to be measured/);
+});
+
+test('a measured link with no dollar reading stays provisional', () => {
+  const noDollar = calculateDollarTransmissionRead({ corr60: -0.6 });
+  assert.equal(noDollar.status, 'provisional');
+  assert.equal(noDollar.label, null);
+  assert.equal(noDollar.linkSign, 1);
+});
+
+test('a dollar going nowhere reads neutral under a live link', () => {
+  const flat = calculateDollarTransmissionRead({ usdMomentum: 0.1, usdScore: 50, corr60: -0.6 });
+  assert.equal(flat.label, 'Neutral dollar');
+  assert.equal(flat.score, 0);
+});
+
+test('no inputs at all is explicitly unavailable', () => {
+  const empty = calculateDollarTransmissionRead({});
+  assert.equal(empty.status, 'unavailable');
+  assert.equal(empty.score, null);
+  assert.equal(empty.dollarWeakness, null);
 });
