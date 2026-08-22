@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { buildAtomFeed, buildHeatmapRow, buildLiquidityNarrative, buildLiquidityTransmission, buildWorkspaceNarrative, calculateBitcoinCyclePhase, calculateChangeCorrelations, calculateDollarScenarios, calculateDollarTransmissionRead, calculateLeadLag, calculatePositioningModel, calculateCrossMarketRelationship, calculateGlobalLiquidityModel, calculateHeatmapRisk, calculateMacroRegimeModel, calculateMacroRegimeProximity, classifyMacroRegimeByScore, calculateMetalsCostStructure, calculateRsi, calculateScreenerScores, calculateSeriesLeadLag, calculateTechnicalSnapshot, calculateTrendQuality, classifyHeadlineSentiment, calculateUsdStrengthModel, calculateUsLiquidityModel, escapeXml, pearsonCorrelation } from './analytics.js';
+import { buildAtomFeed, buildCoingeckoRequest, buildHeatmapRow, buildLiquidityNarrative, buildLiquidityTransmission, buildWorkspaceNarrative, calculateBitcoinCyclePhase, calculateChangeCorrelations, calculateCryptoRotation, calculateDollarScenarios, calculateDollarTransmissionRead, calculateLeadLag, calculatePositioningModel, calculateCrossMarketRelationship, calculateGlobalLiquidityModel, calculateHeatmapRisk, calculateMacroRegimeModel, calculateMacroRegimeProximity, classifyMacroRegimeByScore, calculateMetalsCostStructure, calculateRsi, calculateScreenerScores, calculateSeriesLeadLag, calculateTechnicalSnapshot, calculateTrendQuality, classifyHeadlineSentiment, calculateUsdStrengthModel, calculateUsLiquidityModel, escapeXml, pearsonCorrelation } from './analytics.js';
 
 test('RSI reaches 100 for an uninterrupted advance', () => {
   const values = Array.from({ length: 30 }, (_, index) => 100 + index);
@@ -1088,4 +1088,117 @@ test('an entirely unavailable workspace places no phase at all', () => {
   assert.equal(model.leading, null);
   assert.equal(model.phases.length, 4);
   assert.ok(model.phases.every((phase) => phase.score === null));
+});
+
+test('a keyless CoinGecko request stays on the public host with no key header', () => {
+  const request = buildCoingeckoRequest('/global');
+  assert.equal(request.plan, 'keyless');
+  assert.equal(request.url, 'https://api.coingecko.com/api/v3/global');
+  assert.equal(request.headers, null);
+});
+
+test('a demo key keeps the public host but carries the demo header', () => {
+  const request = buildCoingeckoRequest('/global', { apiKey: 'CG-demo123' });
+  assert.equal(request.plan, 'demo');
+  assert.equal(request.url, 'https://api.coingecko.com/api/v3/global');
+  assert.deepEqual(request.headers, { 'x-cg-demo-api-key': 'CG-demo123' });
+});
+
+test('a pro key moves host and header together', () => {
+  const request = buildCoingeckoRequest('/global', { apiKey: 'CG-pro456', plan: 'pro' });
+  assert.equal(request.plan, 'pro');
+  assert.equal(request.url, 'https://pro-api.coingecko.com/api/v3/global');
+  assert.deepEqual(request.headers, { 'x-cg-pro-api-key': 'CG-pro456' });
+});
+
+test('asking for the pro plan without a key falls back to keyless rather than a host that will reject it', () => {
+  const request = buildCoingeckoRequest('/global', { plan: 'pro' });
+  assert.equal(request.plan, 'keyless');
+  assert.equal(request.url, 'https://api.coingecko.com/api/v3/global');
+  assert.equal(request.headers, null);
+});
+
+test('a blank or whitespace key is treated as no key at all', () => {
+  for (const apiKey of ['', '   ', null, undefined]) {
+    const request = buildCoingeckoRequest('/global', { apiKey, plan: 'pro' });
+    assert.equal(request.plan, 'keyless');
+    assert.equal(request.headers, null);
+  }
+});
+
+test('parameters are encoded and empty ones are dropped', () => {
+  const request = buildCoingeckoRequest('/simple/price', {
+    apiKey: 'CG-x',
+    params: { ids: 'bitcoin', vs_currencies: 'usd', include_24hr_change: 'true', precision: '', missing: null, skipped: undefined },
+  });
+  const url = new URL(request.url);
+  assert.equal(url.searchParams.get('ids'), 'bitcoin');
+  assert.equal(url.searchParams.get('include_24hr_change'), 'true');
+  assert.equal(url.searchParams.has('precision'), false);
+  assert.equal(url.searchParams.has('missing'), false);
+  assert.equal(url.searchParams.has('skipped'), false);
+});
+
+test('a path is accepted with or without its leading slash', () => {
+  assert.equal(buildCoingeckoRequest('global').url, buildCoingeckoRequest('/global').url);
+});
+
+test('a rising market with bitcoin ahead is a concentrating bid', () => {
+  const model = calculateCryptoRotation({ bitcoinChange24hPct: 4.2, totalMarketCapChange24hPct: 2.1, btcDominancePct: 58.4 });
+  assert.equal(model.regime, 'Bitcoin-led advance');
+  assert.equal(model.spread, 2.1);
+  assert.equal(model.btcDominancePct, 58.4);
+  assert.match(model.read, /concentrating rather than broadening/);
+});
+
+test('a rising market with bitcoin behind is the bid broadening out', () => {
+  const model = calculateCryptoRotation({ bitcoinChange24hPct: 0.8, totalMarketCapChange24hPct: 3.4 });
+  assert.equal(model.regime, 'Altcoin-led advance');
+  assert.equal(model.spread, -2.6);
+});
+
+test('the same positive spread reads as a haven bid when the market is falling', () => {
+  const rising = calculateCryptoRotation({ bitcoinChange24hPct: 2, totalMarketCapChange24hPct: 0.5 });
+  const falling = calculateCryptoRotation({ bitcoinChange24hPct: -1, totalMarketCapChange24hPct: -2.5 });
+  assert.equal(rising.spread, falling.spread);
+  assert.equal(rising.regime, 'Bitcoin-led advance');
+  assert.equal(falling.regime, 'Flight to bitcoin');
+  assert.match(falling.read, /haven within crypto/);
+});
+
+test('weakness starting at the centre is a bitcoin-led decline', () => {
+  const model = calculateCryptoRotation({ bitcoinChange24hPct: -5.1, totalMarketCapChange24hPct: -3.2 });
+  assert.equal(model.regime, 'Bitcoin-led decline');
+  assert.match(model.read, /starts at the centre/);
+});
+
+test('a spread inside the band is a broad move rather than a named rotation', () => {
+  const up = calculateCryptoRotation({ bitcoinChange24hPct: 2.1, totalMarketCapChange24hPct: 2.0 });
+  assert.equal(up.regime, 'Broad advance');
+  assert.equal(up.decisive, false);
+  const down = calculateCryptoRotation({ bitcoinChange24hPct: -1.9, totalMarketCapChange24hPct: -2.0 });
+  assert.equal(down.regime, 'Broad decline');
+  assert.equal(down.decisive, false);
+  assert.match(down.read, /indiscriminate rather than rotational/);
+});
+
+test('the band edge is inclusive so a quarter point already counts as rotation', () => {
+  assert.equal(calculateCryptoRotation({ bitcoinChange24hPct: 1.25, totalMarketCapChange24hPct: 1 }).regime, 'Bitcoin-led advance');
+  assert.equal(calculateCryptoRotation({ bitcoinChange24hPct: 1.24, totalMarketCapChange24hPct: 1 }).regime, 'Broad advance');
+});
+
+test('a missing change withholds the rotation read entirely', () => {
+  assert.equal(calculateCryptoRotation({ bitcoinChange24hPct: 2 }).status, 'unavailable');
+  assert.equal(calculateCryptoRotation({ totalMarketCapChange24hPct: 2 }).status, 'unavailable');
+  const empty = calculateCryptoRotation({});
+  assert.equal(empty.regime, null);
+  assert.match(empty.reason, /Both the bitcoin 24-hour change/);
+});
+
+test('dominance is carried for context but does not decide the regime', () => {
+  const high = calculateCryptoRotation({ bitcoinChange24hPct: 0.5, totalMarketCapChange24hPct: 3, btcDominancePct: 72, ethDominancePct: 11 });
+  // Dominance is high, yet the flow is out of bitcoin — the level must not override it.
+  assert.equal(high.regime, 'Altcoin-led advance');
+  assert.equal(high.btcDominancePct, 72);
+  assert.equal(high.ethDominancePct, 11);
 });

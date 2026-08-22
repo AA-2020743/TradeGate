@@ -675,6 +675,85 @@ export function calculateGlobalLiquidityModel(seriesList) {
   };
 }
 
+const COINGECKO_PUBLIC_HOST = 'https://api.coingecko.com/api/v3';
+const COINGECKO_PRO_HOST = 'https://pro-api.coingecko.com/api/v3';
+
+/**
+ * CoinGecko serves the same paths on three tiers. Keyless requests share a
+ * heavily contended pool and are the first thing to start returning 429 or 403;
+ * a free demo key moves the caller onto its own quota, and a pro key changes
+ * the host as well as the header. Building the request in one place keeps the
+ * three call sites from each getting the pairing subtly wrong.
+ */
+export function buildCoingeckoRequest(path, { apiKey = '', plan = 'demo', params = {} } = {}) {
+  const key = String(apiKey ?? '').trim();
+  const normalizedPlan = key && String(plan).toLowerCase() === 'pro' ? 'pro' : key ? 'demo' : 'keyless';
+  const url = new URL(`${normalizedPlan === 'pro' ? COINGECKO_PRO_HOST : COINGECKO_PUBLIC_HOST}${path.startsWith('/') ? path : `/${path}`}`);
+  for (const [name, value] of Object.entries(params)) {
+    if (value !== undefined && value !== null && value !== '') url.searchParams.set(name, String(value));
+  }
+  const headers = normalizedPlan === 'pro'
+    ? { 'x-cg-pro-api-key': key }
+    : normalizedPlan === 'demo' ? { 'x-cg-demo-api-key': key } : null;
+  return { url: url.toString(), headers, plan: normalizedPlan };
+}
+
+
+/**
+ * Whether capital is rotating toward bitcoin or away from it. Dominance alone
+ * is a level, not a direction: it rises both when bitcoin leads a rally and
+ * when alts are sold harder in a decline, and those are opposite tapes. Pairing
+ * the bitcoin/total performance spread with the direction of the whole market
+ * separates them without needing a dominance history the global endpoint does
+ * not publish.
+ */
+export function calculateCryptoRotation({ bitcoinChange24hPct = null, totalMarketCapChange24hPct = null, btcDominancePct = null, ethDominancePct = null } = {}) {
+  if (!Number.isFinite(bitcoinChange24hPct) || !Number.isFinite(totalMarketCapChange24hPct)) {
+    return {
+      version: 'crypto-rotation-v1',
+      status: 'unavailable',
+      reason: 'Both the bitcoin 24-hour change and the total market-capitalisation change are required.',
+      regime: null,
+      spread: null,
+    };
+  }
+  const spread = Math.round((bitcoinChange24hPct - totalMarketCapChange24hPct) * 100) / 100;
+  const marketRising = totalMarketCapChange24hPct >= 0;
+  const bitcoinLeading = spread >= 0;
+  // Inside this band the two moved together and naming a leader would be noise.
+  const decisive = Math.abs(spread) >= 0.25;
+
+  const regime = !decisive
+    ? (marketRising ? 'Broad advance' : 'Broad decline')
+    : marketRising
+      ? (bitcoinLeading ? 'Bitcoin-led advance' : 'Altcoin-led advance')
+      : (bitcoinLeading ? 'Flight to bitcoin' : 'Bitcoin-led decline');
+
+  const reads = {
+    'Bitcoin-led advance': 'The market is up and bitcoin is outpacing it, so the bid is concentrating rather than broadening.',
+    'Altcoin-led advance': 'The market is up and bitcoin is lagging it, so the bid is broadening out of bitcoin into the rest of the complex.',
+    'Flight to bitcoin': 'The market is down and bitcoin is falling less than the rest, which is the classic rotation into it as a haven within crypto.',
+    'Bitcoin-led decline': 'The market is down and bitcoin is falling faster than the rest, so the weakness starts at the centre rather than the edges.',
+    'Broad advance': 'The market is up and bitcoin is moving with it, so no rotation is visible at this horizon.',
+    'Broad decline': 'The market is down and bitcoin is moving with it, so the selling is indiscriminate rather than rotational.',
+  };
+
+  return {
+    version: 'crypto-rotation-v1',
+    status: 'calculated',
+    regime,
+    spread,
+    decisive,
+    marketChange24hPct: Math.round(totalMarketCapChange24hPct * 100) / 100,
+    bitcoinChange24hPct: Math.round(bitcoinChange24hPct * 100) / 100,
+    btcDominancePct: Number.isFinite(btcDominancePct) ? Math.round(btcDominancePct * 10) / 10 : null,
+    ethDominancePct: Number.isFinite(ethDominancePct) ? Math.round(ethDominancePct * 10) / 10 : null,
+    read: reads[regime],
+    methodology: 'The spread is bitcoin\'s 24-hour change minus the total crypto market capitalisation\'s, so a positive spread means bitcoin outperformed the complex. That spread is read against whether the whole market rose or fell, because a rising dominance means opposite things in the two cases. A spread inside 0.25 points is reported as a broad move rather than a rotation. Dominance levels are carried for context but are not what the regime is derived from.',
+  };
+}
+
+
 export function buildHeatmapRow({ symbol, name, group, technical, alignment, crowdingPercentile }) {
   if (!technical) return { symbol, name, group, status: 'unavailable' };
   const vol = technical.indicators?.annualizedVolatility20d;

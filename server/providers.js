@@ -2,7 +2,7 @@ import { config } from './config.js';
 import { withCache } from './cache.js';
 import { settle, unwrap } from './settled.js';
 import { calculateBreadthDivergence } from './equityAnalytics.js';
-import { buildHeatmapRow, buildLiquidityNarrative, buildLiquidityTransmission, buildWorkspaceNarrative, calculateBitcoinCyclePhase, calculateChangeCorrelations, calculateDollarScenarios, calculateDollarTransmissionRead, calculateLeadLag, calculatePositioningModel, calculateCrossMarketRelationship, calculateGlobalLiquidityModel, calculateHeatmapRisk, calculateMacroRegimeModel, calculateMetalsCostStructure, calculateRsi, calculateScreenerScores, calculateTechnicalSnapshot, calculateTrendQuality, classifyHeadlineSentiment, calculateUsdStrengthModel, calculateUsLiquidityModel } from './analytics.js';
+import { buildCoingeckoRequest, buildHeatmapRow, buildLiquidityNarrative, buildLiquidityTransmission, buildWorkspaceNarrative, calculateBitcoinCyclePhase, calculateChangeCorrelations, calculateCryptoRotation, calculateDollarScenarios, calculateDollarTransmissionRead, calculateLeadLag, calculatePositioningModel, calculateCrossMarketRelationship, calculateGlobalLiquidityModel, calculateHeatmapRisk, calculateMacroRegimeModel, calculateMetalsCostStructure, calculateRsi, calculateScreenerScores, calculateTechnicalSnapshot, calculateTrendQuality, classifyHeadlineSentiment, calculateUsdStrengthModel, calculateUsLiquidityModel } from './analytics.js';
 import { getStoredFredSeries, getStoredMarketHistory, getStoredMarketSnapshot, getRecentModelOutputs, isDatabaseConfigured, reserveProviderCredits } from './database.js';
 import { getAllEquityHistorySymbols, getCoreEquityHistorySymbols } from './equityCatalog.js';
 import { isCryptoHistoryStale, isCotReportStale, isDailyCloseStale, isFredSeriesStale, isPbocObservationStale, monthsBetween } from './freshness.js';
@@ -217,7 +217,8 @@ function parseTwelveQuote(payload, symbol) {
 }
 
 async function getBitcoin() {
-  const payload = await fetchJson('https://api.coingecko.com/api/v3/simple/price?ids=bitcoin&vs_currencies=usd&include_24hr_change=true&include_last_updated_at=true');
+  const priceRequest = coingecko('/simple/price', { ids: 'bitcoin', vs_currencies: 'usd', include_24hr_change: 'true', include_last_updated_at: 'true' });
+  const payload = await fetchJson(priceRequest.url, 0, 2, priceRequest.headers);
   const bitcoin = payload.bitcoin;
   if (!bitcoin?.usd) throw new Error('CoinGecko did not return a Bitcoin quote');
 
@@ -335,7 +336,7 @@ export async function getMarketSnapshot(options = {}) {
       assets,
       errors,
       providers: {
-        coingecko: { configured: true, mode: 'public' },
+        coingecko: { configured: true, mode: config.coingeckoApiKey ? `credentialed-${config.coingeckoPlan}` : 'public' },
         twelveData: { configured: Boolean(config.twelveDataApiKey), mode: config.twelveDataApiKey ? 'credentialed' : 'not-configured' },
       },
     };
@@ -344,10 +345,8 @@ export async function getMarketSnapshot(options = {}) {
 
 async function getBitcoinHistory(range) {
   const settings = HISTORY_RANGES[range];
-  const url = new URL('https://api.coingecko.com/api/v3/coins/bitcoin/market_chart');
-  url.searchParams.set('vs_currency', 'usd');
-  url.searchParams.set('days', settings.days);
-  const payload = await fetchJson(url);
+  const historyRequest = coingecko('/coins/bitcoin/market_chart', { vs_currency: 'usd', days: settings.days });
+  const payload = await fetchJson(historyRequest.url, 0, 2, historyRequest.headers);
 
   return (payload.prices ?? []).map(([timestamp, price]) => ({
     timestamp: new Date(timestamp).toISOString(),
@@ -1972,9 +1971,23 @@ export async function getStablecoinLeadLag() {
   });
 }
 
+// Every CoinGecko call routes through here so the host/header pairing and the
+// optional key are applied identically.
+function coingecko(path, params = {}) {
+  return buildCoingeckoRequest(path, { apiKey: config.coingeckoApiKey, plan: config.coingeckoPlan, params });
+}
+
+
 export async function getCryptoGlobal() {
   return withCache('analytics:crypto-global', 30 * 60_000, async () => {
-    const payload = await fetchJson('https://api.coingecko.com/api/v3/global');
+    const request = coingecko('/global');
+    const [globalResult, quoteResult] = await Promise.allSettled([
+      fetchJson(request.url, 0, 2, request.headers),
+      getBitcoin(),
+    ]);
+    if (globalResult.status === 'rejected') throw globalResult.reason;
+    const payload = globalResult.value;
+    const bitcoinChange24hPct = quoteResult.status === 'fulfilled' ? asNumber(quoteResult.value?.changePercent) : null;
     const data = payload?.data ?? {};
     const dominance = data.market_cap_percentage ?? {};
     const totalMcap = asNumber(data.total_market_cap?.usd);
@@ -1988,6 +2001,12 @@ export async function getCryptoGlobal() {
       btcDominance: asNumber(dominance.btc),
       ethDominance: asNumber(dominance.eth),
       totalVolumeUsd: asNumber(data.total_volume?.usd),
+      rotation: calculateCryptoRotation({
+        bitcoinChange24hPct: bitcoinChange24hPct ?? null,
+        totalMarketCapChange24hPct: asNumber(data.market_cap_change_percentage_24h_usd),
+        btcDominancePct: asNumber(dominance.btc),
+        ethDominancePct: asNumber(dominance.eth),
+      }),
       methodology: 'CoinGecko global aggregates: total crypto market capitalization, its 24-hour change, and BTC/ETH dominance shares.',
     };
   });
@@ -2118,7 +2137,7 @@ export function getProviderHealth() {
     },
     yahooSpark: { configured: true, mode: 'keyless-public', purpose: 'Batch daily and intraday closes for the screener, breadth, sectors, crypto pairs, and VIX term structure' },
     wikipedia: { configured: true, mode: 'keyless-public', purpose: 'S&P 500 constituent universe' },
-    coingecko: { configured: true, mode: 'public', purpose: 'Bitcoin on-chain proxies and global market aggregates (dominance, total capitalization)' },
+    coingecko: { configured: true, mode: config.coingeckoApiKey ? `credentialed-${config.coingeckoPlan}` : 'keyless-public', purpose: 'Bitcoin on-chain proxies and global market aggregates (dominance, total capitalization)' },
     defiLlama: { configured: true, mode: 'keyless-public', purpose: 'Aggregate stablecoin supply history for the issuance liquidity leg' },
     binanceBybit: { configured: true, mode: 'keyless-public', purpose: 'Perpetual funding rates, open-interest history, and BTC cycle derivatives legs' },
     bitcoinData: { configured: true, mode: 'keyless-public', serialized: true, purpose: 'MVRV Z-score and short-term holder realized price' },

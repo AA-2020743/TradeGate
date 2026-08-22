@@ -1298,6 +1298,7 @@ function CryptoDashboard({ data }) {
   const bitcoinHistory = normalizeSparkline(dxyBtcModel?.history?.right ?? []);
   const btc = data.bitcoin;
   const cyclePhase = btc?.phase;
+  const cryptoRotation = btc?.cryptoGlobal?.rotation;
   const hasBtc = Boolean(btc?.calculatedCount);
   const usdStrength = data.liquidity?.usdStrength;
   const liquidityModel = data.liquidity?.model;
@@ -1343,7 +1344,7 @@ function CryptoDashboard({ data }) {
         <p className="model-footnote">{data.bitcoin?.ethRotation?.methodology ?? 'Ethereum rotation publishes once Yahoo ETH-USD and BTC-USD histories respond.'}</p>
       </article>
       <IntradayRotationPanel fallback={data.bitcoin?.intraday ?? null} />
-      <article className={`crypto-tailwind-panel panel ${data.bitcoin?.cryptoGlobal?.status === 'calculated' ? '' : 'preview-section'}`}><div className="panel-title"><div><p className="section-kicker">GLOBAL CRYPTO LIQUIDITY · CALCULATED</p><h3>{Number.isFinite(data.bitcoin?.cryptoGlobal?.mcapChange24hPct) ? `${data.bitcoin.cryptoGlobal.mcapChange24hPct >= 0 ? 'Expanding' : 'Contracting'} ${Math.abs(data.bitcoin.cryptoGlobal.mcapChange24hPct).toFixed(2)}% today` : 'Awaiting CoinGecko'}</h3></div><span className="data-pill">{data.bitcoin?.cryptoGlobal?.version ?? 'Unavailable'}</span></div>
+      <article className={`crypto-tailwind-panel panel ${data.bitcoin?.cryptoGlobal?.status === 'calculated' ? '' : 'preview-section'}`}><div className="panel-title"><div><p className="section-kicker">GLOBAL CRYPTO LIQUIDITY · CALCULATED</p><h3>{cryptoRotation?.status === 'calculated' ? cryptoRotation.regime : Number.isFinite(data.bitcoin?.cryptoGlobal?.mcapChange24hPct) ? `${data.bitcoin.cryptoGlobal.mcapChange24hPct >= 0 ? 'Expanding' : 'Contracting'} ${Math.abs(data.bitcoin.cryptoGlobal.mcapChange24hPct).toFixed(2)}% today` : 'Awaiting CoinGecko'}</h3></div><span className="data-pill">{cryptoRotation?.status === 'calculated' ? `BTC ${cryptoRotation.bitcoinChange24hPct > 0 ? '+' : ''}${cryptoRotation.bitcoinChange24hPct}% vs total ${cryptoRotation.marketChange24hPct > 0 ? '+' : ''}${cryptoRotation.marketChange24hPct}%` : data.bitcoin?.cryptoGlobal?.version ?? 'Unavailable'}</span></div>{cryptoRotation ? <p className="cycle-phase-read">{cryptoRotation.read ?? cryptoRotation.reason}{cryptoRotation.status === 'calculated' ? ` Bitcoin's 24-hour spread against the whole complex is ${cryptoRotation.spread > 0 ? '+' : ''}${cryptoRotation.spread} points${Number.isFinite(cryptoRotation.btcDominancePct) ? `, with dominance at ${cryptoRotation.btcDominancePct}%` : ''}.` : ''}</p> : null}
         <div className="btc-cycle-grid">
           <div className="btc-cycle-cell"><small>Total market cap</small><b>{Number.isFinite(data.bitcoin?.cryptoGlobal?.totalMcapUsd) ? formatLiquidityValue(data.bitcoin.cryptoGlobal.totalMcapUsd / 1e6) : '—'}</b><span>All tracked crypto assets</span></div>
           <div className="btc-cycle-cell"><small>24h change</small><b className={data.bitcoin?.cryptoGlobal?.mcapChange24hPct >= 0 ? 'positive' : 'negative'}>{Number.isFinite(data.bitcoin?.cryptoGlobal?.mcapChange24hPct) ? `${data.bitcoin.cryptoGlobal.mcapChange24hPct > 0 ? '+' : ''}${data.bitcoin.cryptoGlobal.mcapChange24hPct.toFixed(2)}%` : '—'}</b><span>Aggregate USD capitalization</span></div>
