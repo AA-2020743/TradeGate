@@ -2,7 +2,7 @@ import { config } from './config.js';
 import { withCache } from './cache.js';
 import { settle, unwrap } from './settled.js';
 import { calculateBreadthDivergence } from './equityAnalytics.js';
-import { buildHeatmapRow, buildLiquidityNarrative, buildLiquidityTransmission, buildWorkspaceNarrative, calculateChangeCorrelations, calculateDollarScenarios, calculateDollarTransmissionRead, calculateLeadLag, calculatePositioningModel, calculateCrossMarketRelationship, calculateGlobalLiquidityModel, calculateHeatmapRisk, calculateMacroRegimeModel, calculateMetalsCostStructure, calculateRsi, calculateScreenerScores, calculateTechnicalSnapshot, calculateTrendQuality, classifyHeadlineSentiment, calculateUsdStrengthModel, calculateUsLiquidityModel } from './analytics.js';
+import { buildHeatmapRow, buildLiquidityNarrative, buildLiquidityTransmission, buildWorkspaceNarrative, calculateBitcoinCyclePhase, calculateChangeCorrelations, calculateDollarScenarios, calculateDollarTransmissionRead, calculateLeadLag, calculatePositioningModel, calculateCrossMarketRelationship, calculateGlobalLiquidityModel, calculateHeatmapRisk, calculateMacroRegimeModel, calculateMetalsCostStructure, calculateRsi, calculateScreenerScores, calculateTechnicalSnapshot, calculateTrendQuality, classifyHeadlineSentiment, calculateUsdStrengthModel, calculateUsLiquidityModel } from './analytics.js';
 import { getStoredFredSeries, getStoredMarketHistory, getStoredMarketSnapshot, getRecentModelOutputs, isDatabaseConfigured, reserveProviderCredits } from './database.js';
 import { getAllEquityHistorySymbols, getCoreEquityHistorySymbols } from './equityCatalog.js';
 import { isCryptoHistoryStale, isCotReportStale, isDailyCloseStale, isFredSeriesStale, isPbocObservationStale, monthsBetween } from './freshness.js';
@@ -1323,12 +1323,14 @@ export async function getBitcoinCycleWorkspace() {
 
     const legs = [trend, valuation, shortTermHolder, leverage, positioning, etfFlows, stablecoins, drawdown, realizedVolatility];
     const calculatedCount = legs.filter((leg) => leg.status === 'calculated').length;
+    const phase = calculateBitcoinCyclePhase({ trend, valuation, drawdown, leverage, stablecoins, shortTermHolder, realizedVolatility });
     return {
       asOf: new Date().toISOString(),
       version: 'bitcoin-cycle-v1',
       status: calculatedCount ? 'calculated' : 'unavailable',
       calculatedCount,
       totalLegs: legs.length,
+      phase,
       trend,
       valuation,
       shortTermHolder,

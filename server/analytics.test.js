@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { buildAtomFeed, buildHeatmapRow, buildLiquidityNarrative, buildLiquidityTransmission, buildWorkspaceNarrative, calculateChangeCorrelations, calculateDollarScenarios, calculateDollarTransmissionRead, calculateLeadLag, calculatePositioningModel, calculateCrossMarketRelationship, calculateGlobalLiquidityModel, calculateHeatmapRisk, calculateMacroRegimeModel, calculateMacroRegimeProximity, classifyMacroRegimeByScore, calculateMetalsCostStructure, calculateRsi, calculateScreenerScores, calculateSeriesLeadLag, calculateTechnicalSnapshot, calculateTrendQuality, classifyHeadlineSentiment, calculateUsdStrengthModel, calculateUsLiquidityModel, escapeXml, pearsonCorrelation } from './analytics.js';
+import { buildAtomFeed, buildHeatmapRow, buildLiquidityNarrative, buildLiquidityTransmission, buildWorkspaceNarrative, calculateBitcoinCyclePhase, calculateChangeCorrelations, calculateDollarScenarios, calculateDollarTransmissionRead, calculateLeadLag, calculatePositioningModel, calculateCrossMarketRelationship, calculateGlobalLiquidityModel, calculateHeatmapRisk, calculateMacroRegimeModel, calculateMacroRegimeProximity, classifyMacroRegimeByScore, calculateMetalsCostStructure, calculateRsi, calculateScreenerScores, calculateSeriesLeadLag, calculateTechnicalSnapshot, calculateTrendQuality, classifyHeadlineSentiment, calculateUsdStrengthModel, calculateUsLiquidityModel, escapeXml, pearsonCorrelation } from './analytics.js';
 
 test('RSI reaches 100 for an uninterrupted advance', () => {
   const values = Array.from({ length: 30 }, (_, index) => 100 + index);
@@ -1000,4 +1000,92 @@ test('a confirmed panic publishes no proximity because it overrides the bands', 
   assert.equal(calm.panicConfirmed, false);
   assert.equal(calm.proximity.regime, calm.regime);
   assert.ok(calm.proximity.nearest.distance > 0);
+});
+
+const cycleLegs = ({ drawdownPct, mvrvZ, vsW, vsD, funding, vol, stable, sth }) => ({
+  trend: Number.isFinite(vsW) || Number.isFinite(vsD) ? { status: 'calculated', pctVsSma200w: vsW, pctVsSma200d: vsD } : { status: 'unavailable' },
+  valuation: Number.isFinite(mvrvZ) ? { status: 'calculated', mvrvZ } : { status: 'unavailable' },
+  drawdown: Number.isFinite(drawdownPct) ? { status: 'calculated', drawdownPct } : { status: 'unavailable' },
+  leverage: Number.isFinite(funding) ? { status: 'calculated', percentile: funding } : { status: 'unavailable' },
+  realizedVolatility: Number.isFinite(vol) ? { status: 'calculated', percentile: vol } : { status: 'unavailable' },
+  stablecoins: Number.isFinite(stable) ? { status: 'calculated', change30dPercent: stable } : { status: 'unavailable' },
+  shortTermHolder: Number.isFinite(sth) ? { status: 'calculated', premiumPercent: sth } : { status: 'unavailable' },
+});
+
+test('a deep bear with a negative Z-score places bitcoin in capitulation', () => {
+  const model = calculateBitcoinCyclePhase(cycleLegs({ drawdownPct: -72, mvrvZ: -0.6, vsW: -22, vsD: -35, funding: 8, vol: 40, stable: -1.5, sth: -28 }));
+  assert.equal(model.leading.key, 'capitulation');
+  assert.match(model.read, /Capitulation \/ accumulation is the best-supported phase/);
+  assert.ok(model.leading.margin >= 5);
+});
+
+test('a stretched Z-score with crowded funding at the highs places it in euphoria', () => {
+  const model = calculateBitcoinCyclePhase(cycleLegs({ drawdownPct: -1, mvrvZ: 6.5, vsW: 180, vsD: 35, funding: 95, vol: 88, stable: 3, sth: 42 }));
+  assert.equal(model.leading.key, 'euphoria');
+  assert.ok(model.phases.find((phase) => phase.key === 'capitulation').score < 25);
+});
+
+test('a shallow drawdown with mid-cycle valuation and calm funding is expansion', () => {
+  const model = calculateBitcoinCyclePhase(cycleLegs({ drawdownPct: -8, mvrvZ: 3.5, vsW: 90, vsD: 14, funding: 30, vol: 45, stable: 1, sth: 12 }));
+  assert.equal(model.leading.key, 'expansion');
+});
+
+test('a base rebuilding above the long average is early recovery', () => {
+  const model = calculateBitcoinCyclePhase(cycleLegs({ drawdownPct: -30, mvrvZ: 1, vsW: 15, vsD: 2, funding: 35, vol: 50, stable: 2.5, sth: 3 }));
+  assert.equal(model.leading.key, 'recovery');
+});
+
+test('two phases within five points are reported as ambiguous rather than resolved', () => {
+  const model = calculateBitcoinCyclePhase(cycleLegs({ drawdownPct: -19, mvrvZ: 2.25, vsW: 52, vsD: 8, funding: 50, vol: 50, stable: 0, sth: 5 }));
+  const ranked = model.phases.filter((phase) => phase.score !== null).sort((a, b) => b.score - a.score);
+  if (ranked[0].score - ranked[1].score < 5) {
+    assert.equal(model.leading, null);
+    assert.match(model.read, /genuinely ambiguous/);
+  } else {
+    assert.ok(model.leading);
+  }
+});
+
+test('a phase with fewer than two calculated legs does not publish a score', () => {
+  const model = calculateBitcoinCyclePhase(cycleLegs({ mvrvZ: 4 }));
+  const euphoria = model.phases.find((phase) => phase.key === 'euphoria');
+  assert.equal(euphoria.score, null);
+  assert.equal(euphoria.status, 'unavailable');
+  assert.equal(euphoria.coverage, 25);
+  assert.equal(model.status, 'unavailable');
+  assert.match(model.read, /required before a cycle phase can be placed/);
+});
+
+test('a phase scoring on half its legs says so through coverage', () => {
+  const model = calculateBitcoinCyclePhase(cycleLegs({ drawdownPct: -70, mvrvZ: -0.5, vsW: -20, sth: -30 }));
+  assert.equal(model.leading.key, 'capitulation');
+  const euphoria = model.phases.find((phase) => phase.key === 'euphoria');
+  // Two legs is enough to score, but the reader is told which two are missing.
+  assert.equal(euphoria.status, 'calculated');
+  assert.equal(euphoria.coverage, 50);
+  assert.deepEqual(euphoria.missing, ['Funding percentile', 'Realized-volatility percentile']);
+  assert.equal(model.phases.find((phase) => phase.key === 'capitulation').coverage, 100);
+});
+
+test('a phase short of two legs drops out and marks the model provisional', () => {
+  const model = calculateBitcoinCyclePhase({
+    trend: { status: 'calculated', pctVsSma200w: -20, pctVsSma200d: -30 },
+    valuation: { status: 'unavailable' },
+    drawdown: { status: 'unavailable' },
+    leverage: { status: 'unavailable' },
+    realizedVolatility: { status: 'unavailable' },
+    stablecoins: { status: 'calculated', change30dPercent: 2 },
+    shortTermHolder: { status: 'calculated', premiumPercent: -25 },
+  });
+  assert.equal(model.status, 'provisional');
+  assert.equal(model.phases.find((phase) => phase.key === 'euphoria').score, null);
+  assert.equal(model.phases.find((phase) => phase.key === 'capitulation').score !== null, true);
+});
+
+test('an entirely unavailable workspace places no phase at all', () => {
+  const model = calculateBitcoinCyclePhase({});
+  assert.equal(model.status, 'unavailable');
+  assert.equal(model.leading, null);
+  assert.equal(model.phases.length, 4);
+  assert.ok(model.phases.every((phase) => phase.score === null));
 });

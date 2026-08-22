@@ -115,3 +115,4 @@ html[data-theme='dark'] .screener-search { background: #1a221d; border-color: #3
 .alert-meta { display: block; margin-top: 3px; color: #9aa19a; font: 9px 'DM Mono', monospace; letter-spacing: .3px; }
 
 .regime-proximity { color: #79837a; font-size: 9px; line-height: 1.45; margin: 9px 0 0; }.data-pill.pill-warning { color: #a35342; background: #f6e4df; border-color: #eccfc7; }html[data-theme='dark'] .regime-proximity { color: #8d968c; }html[data-theme='dark'] .data-pill.pill-warning { color: #dd9c8b; background: #33241f; border-color: #4a352e; }
+.cycle-phase-read { color: #5c665d; font-size: 11px; line-height: 1.5; margin: 0 0 6px; }html[data-theme='dark'] .cycle-phase-read { color: #b3bdb2; }

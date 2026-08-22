@@ -1264,6 +1264,7 @@ function CryptoDashboard({ data }) {
   const dxyHistory = normalizeSparkline(dxyBtcModel?.history?.left ?? []);
   const bitcoinHistory = normalizeSparkline(dxyBtcModel?.history?.right ?? []);
   const btc = data.bitcoin;
+  const cyclePhase = btc?.phase;
   const hasBtc = Boolean(btc?.calculatedCount);
   const usdStrength = data.liquidity?.usdStrength;
   const liquidityModel = data.liquidity?.model;
@@ -1282,6 +1283,13 @@ function CryptoDashboard({ data }) {
       <div className="model-tabs"><button className="active">Cycle &amp; crowding</button></div>
     </section>
     <DataDisclosure data={data} message="Trend, MVRV-Z, short-term-holder cost basis, funding, open interest, stablecoins, and the DXY/BTC relationship are versioned calculations. Spot ETF flows remain unavailable without a licensed source." />
+
+    <section className="macro-section-heading cycle-phase-heading"><div><p className="section-kicker">CYCLE PHASE · {cyclePhase?.status?.toUpperCase() ?? 'UNAVAILABLE'}</p><h2>{cyclePhase?.leading ? cyclePhase.leading.name : cyclePhase?.status && cyclePhase.status !== 'unavailable' ? 'No phase is clearly ahead' : 'Awaiting cycle legs'}</h2></div>{cyclePhase?.leading ? <span className="data-pill">{cyclePhase.leading.score}/100{Number.isFinite(cyclePhase.leading.margin) ? ` · ${cyclePhase.leading.margin} clear` : ''}</span> : null}</section>
+    <section className={`screener-panel panel ${cyclePhase?.status && cyclePhase.status !== 'unavailable' ? '' : 'preview-section'}`}>
+      <p className="cycle-phase-read">{cyclePhase?.read ?? 'Trend, valuation, drawdown and derivatives legs are required before a cycle phase can be placed.'}</p>
+      {(cyclePhase?.phases ?? []).map((phase) => <div className={`scenario-row ${cyclePhase?.leading?.key === phase.key ? 'scenario-leading' : ''}`} key={phase.key} title={phase.legs.map((leg) => `${leg.name}: ${leg.score ?? 'unavailable'}`).join('\n')}><span>{phase.name}<small>{phase.outcome}{phase.missing.length ? ` · missing ${phase.missing.length} of ${phase.legs.length} legs` : ''}</small></span><i><b style={{ width: `${phase.score ?? 0}%` }}></b></i><strong>{Number.isFinite(phase.score) ? phase.score : '—'}</strong></div>)}
+      <p className="model-footnote">{cyclePhase?.methodology ?? 'Trend, valuation, drawdown and derivatives legs are required before a cycle phase can be placed.'}</p>
+    </section>
     <section className="macro-section-heading"><div><p className="section-kicker">DOLLAR TRANSMISSION · {transmission?.status?.toUpperCase() ?? 'UNAVAILABLE'}</p><h2>{transmission?.linkSign === 0 ? 'The dollar link is too weak to move bitcoin' : `${tailwindLabel} for bitcoin`}</h2></div><span className="data-pill">Favorability read</span></section>
     <section className="crypto-grid">
       <article className={`crypto-tailwind-panel panel ${hasDollarInputs ? '' : 'preview-section'}`}><div className="panel-title"><div><p className="section-kicker">IS THE DOLLAR A TAILWIND?</p><h3>{tailwindLabel}</h3></div><span className="data-pill">{Number.isFinite(tailwindScore) ? `${tailwindScore > 0 ? '+' : ''}${tailwindScore} signal` : 'Unavailable'}</span></div>

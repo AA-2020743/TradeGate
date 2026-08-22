@@ -1013,6 +1013,111 @@ export function calculateMetalsCostStructure({ crude = [], naturalGas = [], mine
   };
 }
 
+const BITCOIN_CYCLE_PHASES = [
+  { key: 'capitulation', name: 'Capitulation / accumulation', outcome: 'Deep discount, weak hands cleared' },
+  { key: 'recovery', name: 'Early recovery', outcome: 'Base building back above the long average' },
+  { key: 'expansion', name: 'Expansion', outcome: 'Trend intact, leverage not yet stretched' },
+  { key: 'euphoria', name: 'Euphoria / distribution', outcome: 'Valuation and leverage both extended' },
+];
+
+// A reading peaks at `target` and falls away linearly, for legs where a phase is
+// identified by a value being near a level rather than beyond one.
+const near = (value, target, scale) => (Number.isFinite(value) ? clamp(100 - (Math.abs(value - target) * scale)) : null);
+const beyond = (value, offset, scale) => (Number.isFinite(value) ? clamp((value - offset) * scale) : null);
+const below = (value, offset, scale) => (Number.isFinite(value) ? clamp((offset - value) * scale) : null);
+
+/**
+ * Places bitcoin in its cycle from legs the workspace already publishes. The
+ * workspace answered nine questions separately and never the one its own page
+ * asks, leaving the reader to reconcile a "Mid cycle" valuation against a
+ * "Near highs" drawdown by eye. Each phase scores its own evidence and must
+ * clear the next by a margin, so a genuinely ambiguous tape says so.
+ */
+export function calculateBitcoinCyclePhase({ trend, valuation, drawdown, leverage, stablecoins, shortTermHolder, realizedVolatility } = {}) {
+  const calculated = (leg) => (leg?.status === 'calculated' ? leg : null);
+  const trendLeg = calculated(trend);
+  const valuationLeg = calculated(valuation);
+  const drawdownLeg = calculated(drawdown);
+  const leverageLeg = calculated(leverage);
+  const stablecoinLeg = calculated(stablecoins);
+  const sthLeg = calculated(shortTermHolder);
+  const volatilityLeg = calculated(realizedVolatility);
+
+  const drawdownPct = drawdownLeg?.drawdownPct ?? null;
+  const mvrvZ = valuationLeg?.mvrvZ ?? null;
+  const vsLongAverage = trendLeg?.pctVsSma200w ?? null;
+  const vsDailyAverage = trendLeg?.pctVsSma200d ?? null;
+  const fundingPercentile = leverageLeg?.percentile ?? null;
+  const volatilityPercentile = volatilityLeg?.percentile ?? null;
+  const stablecoinChange = stablecoinLeg?.change30dPercent ?? null;
+  const sthPremium = sthLeg?.premiumPercent ?? null;
+
+  const legsByPhase = {
+    capitulation: [
+      { key: 'drawdown', name: 'Drawdown from the all-time high', score: below(drawdownPct, -20, 2), value: drawdownPct },
+      { key: 'valuation', name: 'MVRV Z-score', score: below(mvrvZ, 0, 25), value: mvrvZ },
+      { key: 'longAverage', name: 'Price versus the 200-week average', score: below(vsLongAverage, 0, 2), value: vsLongAverage },
+      { key: 'shortTermHolder', name: 'Short-term-holder cost basis', score: below(sthPremium, 0, 2), value: sthPremium },
+    ],
+    recovery: [
+      { key: 'drawdown', name: 'Drawdown from the all-time high', score: near(drawdownPct, -30, 3), value: drawdownPct },
+      { key: 'valuation', name: 'MVRV Z-score', score: near(mvrvZ, 1, 40), value: mvrvZ },
+      { key: 'longAverage', name: 'Price versus the 200-week average', score: near(vsLongAverage, 15, 2), value: vsLongAverage },
+      { key: 'stablecoins', name: 'Stablecoin supply, 30 days', score: Number.isFinite(stablecoinChange) ? clamp(50 + (stablecoinChange * 10)) : null, value: stablecoinChange },
+    ],
+    expansion: [
+      { key: 'drawdown', name: 'Drawdown from the all-time high', score: near(drawdownPct, -8, 4), value: drawdownPct },
+      { key: 'valuation', name: 'MVRV Z-score', score: near(mvrvZ, 3.5, 30), value: mvrvZ },
+      { key: 'dailyAverage', name: 'Price versus the 200-day average', score: Number.isFinite(vsDailyAverage) ? clamp(50 + (vsDailyAverage * 2)) : null, value: vsDailyAverage },
+      { key: 'leverageCalm', name: 'Funding percentile, inverted', score: Number.isFinite(fundingPercentile) ? clamp(100 - fundingPercentile) : null, value: fundingPercentile },
+    ],
+    euphoria: [
+      { key: 'valuation', name: 'MVRV Z-score', score: beyond(mvrvZ, 3, 30), value: mvrvZ },
+      { key: 'drawdown', name: 'Drawdown from the all-time high', score: Number.isFinite(drawdownPct) ? clamp(100 + (drawdownPct * 8)) : null, value: drawdownPct },
+      { key: 'leverage', name: 'Funding percentile', score: Number.isFinite(fundingPercentile) ? clamp(fundingPercentile) : null, value: fundingPercentile },
+      { key: 'volatility', name: 'Realized-volatility percentile', score: Number.isFinite(volatilityPercentile) ? clamp(volatilityPercentile) : null, value: volatilityPercentile },
+    ],
+  };
+
+  const phases = BITCOIN_CYCLE_PHASES.map((definition) => {
+    const legs = legsByPhase[definition.key];
+    const scored = legs.filter((leg) => Number.isFinite(leg.score));
+    return {
+      ...definition,
+      score: scored.length >= 2 ? Math.round(mean(scored.map((leg) => leg.score))) : null,
+      status: scored.length >= 2 ? 'calculated' : 'unavailable',
+      coverage: Math.round((scored.length / legs.length) * 100),
+      legs: legs.map((leg) => ({ ...leg, score: Number.isFinite(leg.score) ? Math.round(leg.score) : null })),
+      missing: legs.filter((leg) => !Number.isFinite(leg.score)).map((leg) => leg.name),
+    };
+  });
+
+  const publishable = phases.filter((phase) => phase.score !== null);
+  if (!publishable.length) {
+    return {
+      version: 'bitcoin-cycle-phase-v1',
+      status: 'unavailable',
+      reason: 'Each phase needs at least two of its own calculated legs.',
+      phases,
+      leading: null,
+      read: 'Trend, valuation, drawdown and derivatives legs are required before a cycle phase can be placed.',
+    };
+  }
+  const ranked = [...publishable].sort((left, right) => right.score - left.score);
+  const decisive = ranked.length === 1 || (ranked[0].score - ranked[1].score) >= 5;
+  return {
+    version: 'bitcoin-cycle-phase-v1',
+    status: publishable.length === phases.length ? 'calculated' : 'provisional',
+    phases,
+    leading: decisive ? { key: ranked[0].key, name: ranked[0].name, outcome: ranked[0].outcome, score: ranked[0].score, margin: ranked.length > 1 ? ranked[0].score - ranked[1].score : null } : null,
+    runnerUp: ranked.length > 1 ? { key: ranked[1].key, name: ranked[1].name, score: ranked[1].score } : null,
+    read: decisive
+      ? `${ranked[0].name} is the best-supported phase at ${ranked[0].score}/100${ranked.length > 1 ? `, ${ranked[0].score - ranked[1].score} clear of ${ranked[1].name}` : ''}.`
+      : `${ranked[0].name} and ${ranked[1].name} are within ${ranked[0].score - ranked[1].score} points, so the cycle position is genuinely ambiguous.`,
+    methodology: 'Each phase scores its own evidence 0-100 from legs the workspace already publishes and needs at least two calculated legs to appear. Capitulation reads deep drawdown, a negative MVRV Z-score, price under the 200-week average and recent buyers underwater. Early recovery reads a drawdown around 30%, a Z-score near 1, price just above the 200-week average and expanding stablecoin supply. Expansion reads a shallow drawdown, a mid-cycle Z-score, price above the 200-day average and funding that is not yet stretched. Euphoria reads a Z-score beyond 3, price at the highs, and both funding and realized volatility in their upper percentiles. A lead narrower than five points is reported as ambiguous rather than resolved.',
+  };
+}
+
 export function buildLiquidityNarrative(usOutputs = [], globalOutputs = []) {
   const entries = [];
   const usLatest = usOutputs[0]?.output ?? null;
