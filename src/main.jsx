@@ -215,6 +215,37 @@ function LiquidityChartDialog({ history, title, description, label, onClose }) {
   </div>;
 }
 
+class WorkspaceErrorBoundary extends React.Component {
+  constructor(props) {
+    super(props);
+    this.state = { error: null };
+  }
+
+  static getDerivedStateFromError(error) {
+    return { error };
+  }
+
+  componentDidCatch(error, info) {
+    console.error('Workspace render failed:', error, info?.componentStack);
+  }
+
+  componentDidUpdate(previousProps) {
+    // Moving to another workspace clears the failure, so one bad payload does
+    // not strand the user on an error screen.
+    if (previousProps.resetKey !== this.props.resetKey && this.state.error) this.setState({ error: null });
+  }
+
+  render() {
+    if (!this.state.error) return this.props.children;
+    return <section className="workspace-error panel">
+      <p className="section-kicker">WORKSPACE UNAVAILABLE</p>
+      <h3>This workspace could not be rendered.</h3>
+      <p>A value in the {this.props.resetKey} payload was not the shape the view expected, so the panel was stopped rather than left half-drawn. Every other workspace is unaffected — pick one from the sidebar, or reload once the provider recovers.</p>
+      <code>{this.state.error?.message ?? String(this.state.error)}</code>
+    </section>;
+  }
+}
+
 function App() {
   const initialRoute = React.useRef(parseRoute(window.location.hash, watchlistSymbols)).current;
   const [activeNav, setActiveNav] = React.useState(initialRoute.nav);
@@ -347,6 +378,7 @@ function App() {
         </header>
 
         <div className="dashboard">
+          <WorkspaceErrorBoundary resetKey={activeNav}>
           {activeNav === 'Macro' ? <MacroDashboard data={platformData} /> : activeNav === 'Forex' ? <ForexDashboard data={platformData} /> : activeNav === 'Crypto' ? <CryptoDashboard data={platformData} /> : activeNav === 'Markets' ? <MarketsDashboard data={platformData} /> : activeNav === 'Equities' ? <EquitiesDashboard platformData={platformData} /> : activeNav === 'Metals' ? <MetalsDashboard data={platformData} /> : activeNav === 'Screener' ? <ScreenerDashboard data={platformData} /> : activeNav === 'Watchlists' ? <WatchlistsDashboard data={platformData} /> : <>
           <section className="welcome-row">
             <div><p className="eyebrow">{new Intl.DateTimeFormat('en-US', { weekday: 'long', month: 'long', day: 'numeric' }).format(new Date()).toUpperCase()}</p><h1>Good morning, Alex.</h1><p className="intro">Here is your market pulse for today.</p></div>
@@ -386,6 +418,7 @@ function App() {
           </section>
           <p className="independence-note">TradeGate is an independent market research platform and is not affiliated with Tradegate AG.</p>
           </>}
+          </WorkspaceErrorBoundary>
         </div>
       </section>
       {searchOpen && <div className="command-overlay" onMouseDown={(event) => { if (event.target === event.currentTarget) setSearchOpen(false); }}>
@@ -506,12 +539,12 @@ function EquitiesDashboard({ platformData }) {
     <section className="equity-section-heading"><div><p className="section-kicker">SECTOR AND SUBSECTOR ROTATION</p><h2>Relative strength with stored history</h2></div><EquityStatus status={rotation?.status} /></section>
     {(rotation?.enteringLeadership?.length || rotation?.leavingLeadership?.length) ? <p className="watchlist-summary">Over the last {rotation.rotationLookbackSessions} sessions {rotation.enteringLeadership.length ? `${rotation.enteringLeadership.join(', ')} rotated into leadership` : 'no sector rotated into leadership'}{rotation.leavingLeadership.length ? ` · ${rotation.leavingLeadership.join(', ')} rolled out of it` : ' · none rolled out of it'}</p> : null}
     <section className="equity-sector-layout">
-      <article className="equity-rotation-panel panel"><div className="equity-rotation-head"><span>Rank</span><span>Sector</span><span>Quadrant</span><span>Rotation 20D</span><span>20D vs SPY</span><span>60D vs SPY</span><span>Score</span></div>{rotation?.sectors?.length ? rotation.sectors.map((sector) => <div className="equity-rotation-row" key={sector.symbol}><b>{sector.rank}</b><span><strong>{sector.name}</strong><small>{sector.symbol} · {sector.sensitivity}</small></span><i className={sector.quadrant.toLowerCase()}>{sector.quadrant}</i><RotationCell rotation={sector.rotation} /><span className={sector.relative20 >= 0 ? 'positive' : 'negative'}>{formatPercent(sector.relative20)}</span><span className={sector.relative60 >= 0 ? 'positive' : 'negative'}>{formatPercent(sector.relative60)}</span><b>{sector.score}</b></div>) : <div className="equity-empty">{sectorData?.storage?.configured ? 'Run the daily history ingestion to calculate sector rotation.' : 'PostgreSQL history is required for sector rotation.'}</div>}<p className="equity-source-line">{sectorData?.methodology ?? 'Awaiting sector API.'}</p></article>
+      <article className="equity-rotation-panel panel"><div className="equity-rotation-head"><span>Rank</span><span>Sector</span><span>Quadrant</span><span>Rotation 20D</span><span>20D vs SPY</span><span>60D vs SPY</span><span>Score</span></div>{rotation?.sectors?.length ? rotation.sectors.map((sector) => <div className="equity-rotation-row" key={sector.symbol}><b>{sector.rank}</b><span><strong>{sector.name}</strong><small>{sector.symbol} · {sector.sensitivity}</small></span><i className={sector.quadrant ? sector.quadrant.toLowerCase() : 'neutral'}>{sector.quadrant ?? '—'}</i><RotationCell rotation={sector.rotation} /><span className={sector.relative20 >= 0 ? 'positive' : 'negative'}>{formatPercent(sector.relative20)}</span><span className={sector.relative60 >= 0 ? 'positive' : 'negative'}>{formatPercent(sector.relative60)}</span><b>{sector.score}</b></div>) : <div className="equity-empty">{sectorData?.storage?.configured ? 'Run the daily history ingestion to calculate sector rotation.' : 'PostgreSQL history is required for sector rotation.'}</div>}<p className="equity-source-line">{sectorData?.methodology ?? 'Awaiting sector API.'}</p></article>
       <article className="equity-sector-coverage panel"><div className="panel-title"><div><p className="section-kicker">HISTORY READINESS</p><h3>Sectors and subsectors</h3></div><span className="data-pill">Twelve Data</span></div><div className="equity-coverage-list">{(sectorData?.sectors ?? []).map((sector) => <div key={sector.symbol}><span><b>{sector.symbol}</b><small>{sector.name}</small></span><EquityStatus status={sector.coverage.status} label={`${sector.coverage.observations} obs.`} /></div>)}</div><details><summary>Subsector coverage ({sectorData?.subsectors?.length ?? 0})</summary><div className="equity-subsector-list">{(sectorData?.subsectors ?? []).map((sector) => <div key={sector.symbol}><span>{sector.symbol}</span><b>{sector.name}</b><small>{sector.coverage.status}</small></div>)}</div></details></article>
     </section>
 
     {rotation?.subsectors?.length ? <section className="equity-section-heading"><div><p className="section-kicker">SUBSECTOR ROTATION</p><h2>Granular leadership inside each sector</h2></div><EquityStatus status="calculated" label={`${rotation.subsectors.length} tracked`} /></section> : null}
-    {rotation?.subsectors?.length ? <section className="equity-subsector-rotation"><article className="equity-rotation-panel panel wide"><div className="equity-rotation-head subsector-head"><span>Rank</span><span>Subsector</span><span>Group</span><span>Quadrant</span><span>Rotation 20D</span><span>20D vs SPY</span><span>60D vs SPY</span><span>Score</span></div>{rotation.subsectors.map((row) => <div className="equity-rotation-row subsector-row" key={row.symbol}><b>{row.rank}</b><span><strong>{row.name}</strong><small>{row.symbol}</small></span><small>{row.group}</small><i className={row.quadrant.toLowerCase()}>{row.quadrant}</i><RotationCell rotation={row.rotation} /><span className={row.relative20 >= 0 ? 'positive' : 'negative'}>{formatPercent(row.relative20)}</span><span className={row.relative60 >= 0 ? 'positive' : 'negative'}>{formatPercent(row.relative60)}</span><b>{row.score}</b></div>)}<p className="equity-source-line">Ranks are global across all {rotation.sectors.length + rotation.subsectors.length} tracked ETF proxies. Quadrants use 20- and 60-session relative performance versus SPY.</p></article></section> : null}
+    {rotation?.subsectors?.length ? <section className="equity-subsector-rotation"><article className="equity-rotation-panel panel wide"><div className="equity-rotation-head subsector-head"><span>Rank</span><span>Subsector</span><span>Group</span><span>Quadrant</span><span>Rotation 20D</span><span>20D vs SPY</span><span>60D vs SPY</span><span>Score</span></div>{rotation.subsectors.map((row) => <div className="equity-rotation-row subsector-row" key={row.symbol}><b>{row.rank}</b><span><strong>{row.name}</strong><small>{row.symbol}</small></span><small>{row.group}</small><i className={row.quadrant ? row.quadrant.toLowerCase() : 'neutral'}>{row.quadrant ?? '—'}</i><RotationCell rotation={row.rotation} /><span className={row.relative20 >= 0 ? 'positive' : 'negative'}>{formatPercent(row.relative20)}</span><span className={row.relative60 >= 0 ? 'positive' : 'negative'}>{formatPercent(row.relative60)}</span><b>{row.score}</b></div>)}<p className="equity-source-line">Ranks are global across all {rotation.sectors.length + rotation.subsectors.length} tracked ETF proxies. Quadrants use 20- and 60-session relative performance versus SPY.</p></article></section> : null}
 
     <section className="equity-section-heading"><div><p className="section-kicker">MACRO SENSITIVITY MATRIX · CALCULATED</p><h2>How each ETF trades against macro drivers</h2></div><span className="data-pill">{sectorData?.macroSensitivity?.window ?? '60D changes'}</span></section>
     <section className="equity-macro-matrix">
@@ -1333,11 +1366,11 @@ function CryptoDashboard({ data }) {
           <div className="btc-cycle-grid">
             <div className="btc-cycle-cell"><small>Trend regime</small><b>{btc.trend?.status === 'calculated' ? `${btc.trend.pctVsSma200d > 0 ? '+' : ''}${btc.trend.pctVsSma200d}% / ${btc.trend.pctVsSma200w > 0 ? '+' : ''}${btc.trend.pctVsSma200w}%` : '—'}</b><span>vs 200D / 200W SMA</span></div>
             <div className="btc-cycle-cell"><small>MVRV Z-Score</small><b>{btc.valuation?.status === 'calculated' ? btc.valuation.mvrvZ : '—'}</b><span>{btc.valuation?.status === 'calculated' ? `${btc.valuation.band} · ${btc.valuation.percentile}th pct` : btc.valuation?.reason}</span></div>
-            <div className="btc-cycle-cell"><small>STH realized price</small><b>{btc.shortTermHolder?.status === 'calculated' ? `$${btc.shortTermHolder.sthRealizedPrice.toLocaleString()}` : '—'}</b><span>{btc.shortTermHolder?.status === 'calculated' ? `${btc.shortTermHolder.premiumPercent > 0 ? '+' : ''}${btc.shortTermHolder.premiumPercent}% · ${btc.shortTermHolder.state}` : btc.shortTermHolder?.reason}</span></div>
+            <div className="btc-cycle-cell"><small>STH realized price</small><b>{btc.shortTermHolder?.status === 'calculated' ? `$${Number.isFinite(btc.shortTermHolder.sthRealizedPrice) ? btc.shortTermHolder.sthRealizedPrice.toLocaleString() : '—'}` : '—'}</b><span>{btc.shortTermHolder?.status === 'calculated' ? `${btc.shortTermHolder.premiumPercent > 0 ? '+' : ''}${btc.shortTermHolder.premiumPercent}% · ${btc.shortTermHolder.state}` : btc.shortTermHolder?.reason}</span></div>
             <div className="btc-cycle-cell"><small>Funding (agg.)</small><b>{btc.leverage?.status === 'calculated' ? `${btc.leverage.annualizedPercent}% APR` : '—'}</b><span>{btc.leverage?.status === 'calculated' ? `${btc.leverage.percentile}th pct · ${btc.leverage.note}` : btc.leverage?.reason}</span></div>
             <div className="btc-cycle-cell"><small>OI vs price (7d)</small><b>{btc.positioning?.status === 'calculated' ? btc.positioning.quadrant : '—'}</b><span>{btc.positioning?.status === 'calculated' ? `OI ${btc.positioning.oiChange7d > 0 ? '+' : ''}${btc.positioning.oiChange7d.toFixed(1)}% vs price ${btc.positioning.priceChange7d > 0 ? '+' : ''}${btc.positioning.priceChange7d.toFixed(1)}%` : btc.positioning?.reason}</span></div>
             <div className="btc-cycle-cell"><small>Stablecoin supply</small><b>{btc.stablecoins?.status === 'calculated' ? `$${btc.stablecoins.supplyUsdBillions}B` : '—'}</b><span>{btc.stablecoins?.status === 'calculated' ? `${btc.stablecoins.change30dUsdBillions > 0 ? '+' : ''}${btc.stablecoins.change30dUsdBillions}B 30d (${btc.stablecoins.state})` : btc.stablecoins?.reason}</span></div>
-            <div className="btc-cycle-cell"><small>Drawdown from 10Y high</small><b>{btc.drawdown?.status === 'calculated' ? `${btc.drawdown.drawdownPct}%` : '—'}</b><span>{btc.drawdown?.status === 'calculated' ? `${btc.drawdown.read} · ATH $${btc.drawdown.allTimeHigh.toLocaleString()} · ${btc.drawdown.daysSinceAth}d ago` : btc.drawdown?.reason}</span></div>
+            <div className="btc-cycle-cell"><small>Drawdown from 10Y high</small><b>{btc.drawdown?.status === 'calculated' ? `${btc.drawdown.drawdownPct}%` : '—'}</b><span>{btc.drawdown?.status === 'calculated' ? `${btc.drawdown.read} · ATH $${Number.isFinite(btc.drawdown.allTimeHigh) ? btc.drawdown.allTimeHigh.toLocaleString() : '—'} · ${btc.drawdown.daysSinceAth}d ago` : btc.drawdown?.reason}</span></div>
             <div className="btc-cycle-cell"><small>Realized vol (30d)</small><b>{btc.realizedVolatility?.status === 'calculated' ? `${btc.realizedVolatility.realizedVol30dPct}%` : '—'}</b><span>{btc.realizedVolatility?.status === 'calculated' ? `${btc.realizedVolatility.read}${Number.isFinite(btc.realizedVolatility.percentile) ? ` · ${btc.realizedVolatility.percentile}th pct of 10Y` : ''}` : btc.realizedVolatility?.reason}</span></div>
             <div className="btc-cycle-cell"><small>Spot ETF flows</small><b>—</b><span>{btc.etfFlows?.reason}</span></div>
           </div>
