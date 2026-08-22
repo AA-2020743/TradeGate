@@ -2,7 +2,7 @@ import { config } from './config.js';
 import { withCache } from './cache.js';
 import { settle, unwrap } from './settled.js';
 import { calculateBreadthDivergence } from './equityAnalytics.js';
-import { buildHeatmapRow, buildLiquidityNarrative, buildLiquidityTransmission, buildWorkspaceNarrative, calculateChangeCorrelations, calculateDollarScenarios, calculateDollarTransmissionRead, calculateLeadLag, calculatePositioningModel, calculateCrossMarketRelationship, calculateGlobalLiquidityModel, calculateMacroRegimeModel, calculateRsi, calculateScreenerScores, calculateTechnicalSnapshot, calculateTrendQuality, classifyHeadlineSentiment, calculateUsdStrengthModel, calculateUsLiquidityModel } from './analytics.js';
+import { buildHeatmapRow, buildLiquidityNarrative, buildLiquidityTransmission, buildWorkspaceNarrative, calculateChangeCorrelations, calculateDollarScenarios, calculateDollarTransmissionRead, calculateLeadLag, calculatePositioningModel, calculateCrossMarketRelationship, calculateGlobalLiquidityModel, calculateMacroRegimeModel, calculateMetalsCostStructure, calculateRsi, calculateScreenerScores, calculateTechnicalSnapshot, calculateTrendQuality, classifyHeadlineSentiment, calculateUsdStrengthModel, calculateUsLiquidityModel } from './analytics.js';
 import { getStoredFredSeries, getStoredMarketHistory, getStoredMarketSnapshot, getRecentModelOutputs, isDatabaseConfigured, reserveProviderCredits } from './database.js';
 import { getAllEquityHistorySymbols, getCoreEquityHistorySymbols } from './equityCatalog.js';
 import { isCryptoHistoryStale, isCotReportStale, isDailyCloseStale, isFredSeriesStale, isPbocObservationStale, monthsBetween } from './freshness.js';
@@ -1359,6 +1359,22 @@ export async function getMetalsWorkspace() {
     const miners = minerResults.flatMap((result) => result.status === 'fulfilled' && result.value.summary ? [{ symbol: result.value.entry.symbol, ...result.value.summary }] : []);
 
     const ratioResults = await Promise.allSettled([getYahooHistory('GC=F'), getYahooHistory('SI=F'), getYahooHistory('HG=F')]);
+    // Producer economics: energy is the fast-moving input cost, and GDX over GLD
+    // is the market's own running verdict on whether the metal outpaces it.
+    const [crudeResult, gasResult, minerResult, metalResult] = await Promise.allSettled([
+      getYahooHistory('CL=F'),
+      getYahooHistory('NG=F'),
+      getYahooHistory('GDX'),
+      getYahooHistory('GLD'),
+    ]);
+    const valuesOf = (result) => (result.status === 'fulfilled' ? (result.value ?? []).map((point) => point.value).filter(Number.isFinite) : []);
+    const minerValues = valuesOf(minerResult);
+    const metalValues = valuesOf(metalResult);
+    const costStructure = calculateMetalsCostStructure({
+      crude: valuesOf(crudeResult),
+      naturalGas: valuesOf(gasResult),
+      minerToMetalRatio: minerValues.length && metalValues.length ? alignedRatioSeries(minerValues, metalValues) : [],
+    });
     const buildRatioLeg = (goldPoints, otherPoints, format, readFor) => {
       if (!Array.isArray(goldPoints) || !Array.isArray(otherPoints)) return { status: 'unavailable', reason: 'Futures history is required.' };
       const ratios = alignedRatioSeries(goldPoints.map((point) => point.value), otherPoints.map((point) => point.value));
@@ -1390,6 +1406,7 @@ export async function getMetalsWorkspace() {
       cot: goldContract ? { percentile: goldContract.percentile, netNoncomm: goldContract.netNoncomm, weeklyChange: goldContract.weeklyChange, crowd: goldContract.crowd, stance: goldContract.stance, asOf: goldContract.asOf } : null,
       cotDetail,
       ratios: { goldSilver: goldSilverRatio, goldCopper: goldCopperRatio },
+      costStructure,
       macro: liquidity?.usdStrength && liquidity?.globalLiquidity ? { dollar: { score: liquidity.usdStrength.score, regime: liquidity.usdStrength.regime }, globalLiquidity: { score: liquidity.globalLiquidity.score, regime: liquidity.globalLiquidity.regime } } : null,
       methodology: 'Spot metals use front CME/COMEX futures (GC, SI, PL, PA) and miners use ETF close histories from Yahoo Finance; scores are technical-v1 with 20-day annualized volatility and 20-session momentum. COT figures reuse the platform gold contract percentile. Cross-ratios divide aligned GC/SI and GC/HG futures closes, percentile-ranked over the shared one-year window.',
     };

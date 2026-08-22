@@ -866,6 +866,79 @@ export function calculateDollarTransmissionRead({ usdMomentum = null, usdScore =
   };
 }
 
+function windowPercentile(values, value) {
+  if (!values.length || !Number.isFinite(value)) return null;
+  return Math.round((values.filter((item) => item <= value).length / values.length) * 100);
+}
+
+function costLeg({ key, name, source, unit, values, minimumObservations = 60 }) {
+  const clean = (values ?? []).filter(Number.isFinite);
+  if (clean.length < minimumObservations) {
+    return { key, name, source, status: 'unavailable', reason: `Needs ${minimumObservations} sessions of history.`, value: null, change20d: null, percentile: null };
+  }
+  const latest = clean.at(-1);
+  const prior = clean.length > 21 ? clean.at(-21) : null;
+  return {
+    key,
+    name,
+    source,
+    unit,
+    status: 'calculated',
+    value: Math.round(latest * 100) / 100,
+    change20d: Number.isFinite(prior) && prior > 0 ? Math.round(((latest / prior) - 1) * 10000) / 100 : null,
+    percentile: windowPercentile(clean.slice(-252), latest),
+    observations: clean.length,
+  };
+}
+
+/**
+ * Producer economics from prices rather than from filings. Energy is the input
+ * cost that moves fastest; the miner-to-metal ratio is the market's own running
+ * verdict on whether the metal price is outpacing the cost of pulling it out of
+ * the ground. All-in sustaining costs need company filings and stay unavailable
+ * rather than being approximated into a number that looks reported.
+ */
+export function calculateMetalsCostStructure({ crude = [], naturalGas = [], minerToMetalRatio = [] } = {}) {
+  const legs = [
+    costLeg({ key: 'crude', name: 'WTI crude', source: 'Yahoo CL=F', unit: 'USD/bbl', values: crude }),
+    costLeg({ key: 'naturalGas', name: 'Natural gas', source: 'Yahoo NG=F', unit: 'USD/MMBtu', values: naturalGas }),
+    costLeg({ key: 'minerMargin', name: 'Miners vs metal', source: 'Yahoo GDX / GLD', unit: 'ratio', values: minerToMetalRatio }),
+    { key: 'aisc', name: 'All-in sustaining cost', source: 'Company filings', status: 'unavailable', reason: 'Producer cost curves require a filings-based feed; no public keyless source publishes them.', value: null, change20d: null, percentile: null },
+  ];
+  const byKey = Object.fromEntries(legs.map((leg) => [leg.key, leg]));
+  const energyPercentiles = [byKey.crude, byKey.naturalGas]
+    .filter((leg) => leg.status === 'calculated' && Number.isFinite(leg.percentile))
+    .map((leg) => leg.percentile);
+  const energyPressure = energyPercentiles.length
+    ? Math.round(energyPercentiles.reduce((total, value) => total + value, 0) / energyPercentiles.length)
+    : null;
+  const marginChange = byKey.minerMargin.status === 'calculated' ? byKey.minerMargin.change20d : null;
+
+  let headline = null;
+  if (Number.isFinite(marginChange) && Number.isFinite(energyPressure)) {
+    const marginsUp = marginChange > 0;
+    const energyEasy = energyPressure < 50;
+    headline = marginsUp && energyEasy ? 'Margins expanding'
+      : !marginsUp && !energyEasy ? 'Margins compressing'
+        : 'Margins mixed';
+  } else if (Number.isFinite(marginChange)) {
+    headline = marginChange > 0 ? 'Miners outpacing the metal' : 'Miners lagging the metal';
+  }
+
+  const calculated = legs.filter((leg) => leg.status === 'calculated').length;
+  return {
+    version: 'metals-cost-structure-v1',
+    status: calculated ? (calculated === legs.length - 1 ? 'calculated' : 'provisional') : 'unavailable',
+    headline,
+    energyPressure,
+    legs,
+    read: headline
+      ? `${headline}: miners have moved ${marginChange > 0 ? '+' : ''}${marginChange}% against the metal over 20 sessions with energy input costs in the ${energyPressure === null ? 'unmeasured' : `${energyPressure}th`} percentile of the past year.`
+      : 'Energy histories and a miner-to-metal ratio are required before producer economics can be read.',
+    methodology: 'WTI crude and natural gas carry their level, 20-session change, and one-year percentile as the fast-moving input costs. The miner-to-metal ratio is GDX over GLD: a rising ratio means the metal price is outpacing what the market believes it costs to produce, which is the only margin read available without company filings. All-in sustaining cost stays explicitly unavailable.',
+  };
+}
+
 export function buildLiquidityNarrative(usOutputs = [], globalOutputs = []) {
   const entries = [];
   const usLatest = usOutputs[0]?.output ?? null;

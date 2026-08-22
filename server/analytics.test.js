@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { buildAtomFeed, buildHeatmapRow, buildLiquidityNarrative, buildLiquidityTransmission, buildWorkspaceNarrative, calculateChangeCorrelations, calculateDollarScenarios, calculateDollarTransmissionRead, calculateLeadLag, calculatePositioningModel, calculateCrossMarketRelationship, calculateGlobalLiquidityModel, calculateMacroRegimeModel, calculateRsi, calculateScreenerScores, calculateSeriesLeadLag, calculateTechnicalSnapshot, calculateTrendQuality, classifyHeadlineSentiment, calculateUsdStrengthModel, calculateUsLiquidityModel, escapeXml, pearsonCorrelation } from './analytics.js';
+import { buildAtomFeed, buildHeatmapRow, buildLiquidityNarrative, buildLiquidityTransmission, buildWorkspaceNarrative, calculateChangeCorrelations, calculateDollarScenarios, calculateDollarTransmissionRead, calculateLeadLag, calculatePositioningModel, calculateCrossMarketRelationship, calculateGlobalLiquidityModel, calculateMacroRegimeModel, calculateMetalsCostStructure, calculateRsi, calculateScreenerScores, calculateSeriesLeadLag, calculateTechnicalSnapshot, calculateTrendQuality, classifyHeadlineSentiment, calculateUsdStrengthModel, calculateUsLiquidityModel, escapeXml, pearsonCorrelation } from './analytics.js';
 
 test('RSI reaches 100 for an uninterrupted advance', () => {
   const values = Array.from({ length: 30 }, (_, index) => 100 + index);
@@ -784,4 +784,79 @@ test('no inputs at all is explicitly unavailable', () => {
   assert.equal(empty.status, 'unavailable');
   assert.equal(empty.score, null);
   assert.equal(empty.dollarWeakness, null);
+});
+
+const flatThen = (length, start, end) => Array.from({ length }, (_, index) => (index < length - 21 ? start : start + ((end - start) * ((index - (length - 22)) / 21))));
+
+test('cheap energy with miners outpacing the metal reads as expanding margins', () => {
+  const model = calculateMetalsCostStructure({
+    crude: Array.from({ length: 260 }, (_, index) => 90 - (index * 0.1)),
+    naturalGas: Array.from({ length: 260 }, (_, index) => 4 - (index * 0.008)),
+    minerToMetalRatio: Array.from({ length: 260 }, (_, index) => 0.2 + (index * 0.0004)),
+  });
+  assert.equal(model.status, 'calculated');
+  assert.equal(model.headline, 'Margins expanding');
+  assert.ok(model.energyPressure < 50);
+  assert.match(model.read, /Margins expanding/);
+});
+
+test('expensive energy with miners lagging reads as compressing margins', () => {
+  const model = calculateMetalsCostStructure({
+    crude: Array.from({ length: 260 }, (_, index) => 60 + (index * 0.12)),
+    naturalGas: Array.from({ length: 260 }, (_, index) => 2 + (index * 0.01)),
+    minerToMetalRatio: Array.from({ length: 260 }, (_, index) => 0.3 - (index * 0.0004)),
+  });
+  assert.equal(model.headline, 'Margins compressing');
+  assert.ok(model.energyPressure > 50);
+});
+
+test('the cost model never invents an all-in sustaining cost', () => {
+  const model = calculateMetalsCostStructure({
+    crude: Array.from({ length: 260 }, () => 75),
+    naturalGas: Array.from({ length: 260 }, () => 3),
+    minerToMetalRatio: Array.from({ length: 260 }, () => 0.25),
+  });
+  const aisc = model.legs.find((leg) => leg.key === 'aisc');
+  assert.equal(aisc.status, 'unavailable');
+  assert.equal(aisc.value, null);
+  assert.match(aisc.reason, /filings-based feed/);
+  // Three of four legs calculated, so the model is provisional rather than complete.
+  assert.equal(model.status, 'calculated');
+});
+
+test('each leg carries its level, 20-session change and one-year percentile', () => {
+  const crude = Array.from({ length: 260 }, (_, index) => 50 + index);
+  const model = calculateMetalsCostStructure({ crude, naturalGas: [], minerToMetalRatio: [] });
+  const leg = model.legs.find((item) => item.key === 'crude');
+  assert.equal(leg.value, 309);
+  assert.equal(leg.percentile, 100);
+  assert.equal(leg.change20d, Math.round(((309 / 289) - 1) * 10000) / 100);
+  assert.equal(leg.source, 'Yahoo CL=F');
+});
+
+test('a leg without enough history is unavailable rather than approximated', () => {
+  const model = calculateMetalsCostStructure({ crude: Array.from({ length: 30 }, () => 70), naturalGas: [], minerToMetalRatio: [] });
+  const crude = model.legs.find((leg) => leg.key === 'crude');
+  assert.equal(crude.status, 'unavailable');
+  assert.equal(crude.value, null);
+  assert.match(crude.reason, /60 sessions/);
+  assert.equal(model.status, 'unavailable');
+  assert.equal(model.headline, null);
+  assert.match(model.read, /required before producer economics/);
+});
+
+test('a margin read without energy still says which way miners moved', () => {
+  const model = calculateMetalsCostStructure({
+    crude: [], naturalGas: [],
+    minerToMetalRatio: Array.from({ length: 260 }, (_, index) => 0.2 + (index * 0.0004)),
+  });
+  assert.equal(model.headline, 'Miners outpacing the metal');
+  assert.equal(model.energyPressure, null);
+  assert.equal(model.status, 'provisional');
+});
+
+test('no inputs at all leaves the cost structure unavailable', () => {
+  const model = calculateMetalsCostStructure({});
+  assert.equal(model.status, 'unavailable');
+  assert.equal(model.legs.filter((leg) => leg.status === 'calculated').length, 0);
 });

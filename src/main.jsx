@@ -63,20 +63,15 @@ const heatmapColumns = [
 ];
 
 
+// Market plumbing has no keyless public source. Each row names the feed it
+// needs rather than showing a reading nobody measured.
 const physicalMarket = [
-  ['LBMA vs futures', 'Normal', 'No dislocation', 'positive'],
-  ['Spot/futures spread', '+0.12%', 'Orderly carry', 'neutral'],
-  ['Futures basis', 'Positive', 'Within range', 'neutral'],
-  ['Physical premiums', 'Firm', 'Asia demand stable', 'positive'],
-  ['Supply stress', 'Low', 'Refining flows normal', 'positive'],
-  ['Delivery stress', 'Low', 'Exchange stocks ample', 'positive'],
-];
-
-const metalCosts = [
-  ['Oil', '$78.40', 'Input cost contained', 'positive'],
-  ['Natural gas', '$2.11', 'Below 1Y median', 'positive'],
-  ['Mining margins', 'Expanding', 'Gold price outpaces AISC', 'positive'],
-  ['Producer cost pressure', 'Moderate', 'Labor remains the watch item', 'neutral'],
+  ['LBMA vs futures', 'LBMA benchmark prices (licensed)'],
+  ['Spot/futures spread', 'Spot fixings alongside COMEX settlements'],
+  ['Futures basis', 'Full COMEX forward curve'],
+  ['Physical premiums', 'Regional dealer premium survey'],
+  ['Supply stress', 'Refinery and mine output filings'],
+  ['Delivery stress', 'Exchange registered-stock reports'],
 ];
 
 function Sparkline({ color, values }) {
@@ -710,6 +705,7 @@ function MarketsDashboard({ data }) {
 function MetalsDashboard({ data }) {
   const [selectedSymbol, setSelectedSymbol] = React.useState('XAU');
   const workspace = data.metals;
+  const costStructure = workspace?.costStructure;
   const metalColors = { XAU: '#d2a644', XAG: '#b6c5d2', XPT: '#a8aeba', XPD: '#879291' };
   const assets = workspace?.assets ?? [];
   const selectedMetal = assets.find((asset) => asset.symbol === selectedSymbol) ?? assets[0];
@@ -752,12 +748,12 @@ function MetalsDashboard({ data }) {
     <section className="metals-flow-grid">
       <article className={`positioning-panel panel ${cot ? '' : 'preview-section'}`}><div className="panel-title"><div><p className="section-kicker">CFTC COT · GOLD · CALCULATED</p><h3>Leveraged-fund exposure</h3></div><span className="positioning-percentile">{cot && Number.isFinite(cot.percentile) ? cot.percentile : '—'}<span>th pct.</span></span></div><div className="positioning-rows"><div><span>Managed Money</span><i><b className="managed" style={{ width: `${Math.min(workspace?.cotDetail?.managedMoney?.percentile ?? 0, 100)}%` }}></b></i><small>{Number.isFinite(workspace?.cotDetail?.managedMoney?.net) ? `${workspace.cotDetail.managedMoney.net.toLocaleString()} (${workspace.cotDetail.managedMoney.percentile}th)` : '—'}</small></div><div><span>Producers / Merchants</span><i><b className="producer" style={{ width: `${Math.min(Math.abs(workspace?.cotDetail?.producers?.percentile ?? 0), 100)}%` }}></b></i><small>{Number.isFinite(workspace?.cotDetail?.producers?.net) ? `${workspace.cotDetail.producers.net.toLocaleString()} (${workspace.cotDetail.producers.percentile}th)` : '—'}</small></div><div><span>Swap Dealers</span><i><b className="swap" style={{ width: `${Math.min(Math.abs(workspace?.cotDetail?.swapDealers?.percentile ?? 0), 100)}%` }}></b></i><small>{Number.isFinite(workspace?.cotDetail?.swapDealers?.net) ? `${workspace.cotDetail.swapDealers.net.toLocaleString()} (${workspace.cotDetail.swapDealers.percentile}th)` : '—'}</small></div><div><span>Net non-commercial</span><i><b className="commercial" style={{ width: `${Math.min(((cot?.percentile ?? 0)), 100)}%` }}></b></i><small>{Number.isFinite(cot?.netNoncomm) ? `${cot.netNoncomm.toLocaleString()} · ${cot.crowd}` : '—'}</small></div><div><span>Weekly change (MM)</span><i><b className="speculator" style={{ width: `${Math.min(Math.abs(workspace?.cotDetail?.managedMoney?.weeklyChange ?? 0) / 200, 100)}%` }}></b></i><small>{Number.isFinite(workspace?.cotDetail?.managedMoney?.weeklyChange) ? `${workspace.cotDetail.managedMoney.weeklyChange >= 0 ? '+' : ''}${workspace.cotDetail.managedMoney.weeklyChange.toLocaleString()}` : '—'}</small></div></div><div className="positioning-note"><b>Positioning percentile</b><span>{cot ? `Three-year ranks of net disaggregated and legacy speculative positions as of ${workspace?.cotDetail?.asOf ?? cot.asOf}.` : 'CFTC commitment histories are required before positioning can publish.'}</span></div></article>
       <article className={`metal-flows-panel panel ${workspace?.ratios?.goldSilver?.status === 'calculated' || workspace?.ratios?.goldCopper?.status === 'calculated' ? '' : 'preview-section'}`}><div className="panel-title"><div><p className="section-kicker">CROSS RATIOS · CALCULATED</p><h3>Relative monetary vs industrial demand</h3></div><span className="data-pill">1Y percentile</span></div><div className="metal-flow-row" key="gs"><div><b>Gold / Silver</b><small>{workspace?.ratios?.goldSilver?.status === 'calculated' ? `${workspace.ratios.goldSilver.change20d >= 0 ? '+' : ''}${workspace.ratios.goldSilver.change20d}% 20d · ${workspace.ratios.goldSilver.observations} obs` : workspace?.ratios?.goldSilver?.reason}</small></div><span className="neutral">{workspace?.ratios?.goldSilver?.status === 'calculated' ? `${workspace.ratios.goldSilver.ratio} · ${workspace.ratios.goldSilver.percentile}th` : '—'}</span></div><div className="metal-flow-row" key="gc"><div><b>Gold / Copper</b><small>{workspace?.ratios?.goldCopper?.status === 'calculated' ? `${workspace.ratios.goldCopper.change20d >= 0 ? '+' : ''}${workspace.ratios.goldCopper.change20d}% 20d · ${workspace.ratios.goldCopper.read}` : workspace?.ratios?.goldCopper?.reason}</small></div><span className="neutral">{workspace?.ratios?.goldCopper?.status === 'calculated' ? `${workspace.ratios.goldCopper.ratio} · ${workspace.ratios.goldCopper.percentile}th` : '—'}</span></div><div className="cost-callout"><span>What matters next</span><p>A rising gold/silver ratio signals a monetary bid dominating industrial demand; the gold/copper ratio is a compact risk-appetite gauge for the metals complex.</p></div></article>
-      <article className="physical-market-panel panel preview-section"><div className="panel-title"><div><p className="section-kicker">PHYSICAL VS PAPER</p><h3>Market plumbing is orderly.</h3></div><PreviewBadge /></div>{physicalMarket.map(([name, value, detail, tone]) => <div className="physical-row" key={name}><div><b>{name}</b><small>{detail}</small></div><span className={tone}>{value}</span></div>)}</article>
+      <article className="physical-market-panel panel preview-section"><div className="panel-title"><div><p className="section-kicker">PHYSICAL VS PAPER</p><h3>Market plumbing has no keyless source.</h3></div><PreviewBadge label="Inputs required" /></div>{physicalMarket.map(([name, requirement]) => <div className="physical-row" key={name}><div><b>{name}</b><small>{requirement}</small></div><span className="neutral">Unavailable</span></div>)}<p className="model-footnote">Spot-versus-paper dislocation is only meaningful when measured. Each row names the feed it needs; none is published on a keyless public endpoint, so none is estimated here.</p></article>
     </section>
 
     <section className="metals-bottom-grid">
       <article className={`miners-panel panel ${(workspace?.miners ?? []).length ? '' : 'preview-section'}`}><div className="panel-title"><div><p className="section-kicker">MINER EQUITY EXPRESSION · CALCULATED</p><h3>Miner ETF momentum</h3></div><span className="data-pill">20-session</span></div><div className="miner-list">{(workspace?.miners ?? []).map((miner) => <button key={miner.symbol}><span>{miner.symbol}</span><b>{miner.name}</b><small className={(miner.change20d ?? 0) >= 0 ? 'positive' : 'negative'}>{Number.isFinite(miner.change20d) ? `${miner.change20d > 0 ? '+' : ''}${miner.change20d}%` : '—'}</small><i>↗</i></button>)}{!(workspace?.miners ?? []).length && <div className="equity-empty">Miner histories are required before momentum can publish.</div>}</div><p>Miners add operating leverage to metal prices, but input costs and equity-beta remain separate risks.</p></article>
-      <article className="metal-costs-panel panel preview-section"><div className="panel-title"><div><p className="section-kicker">METALS COST STRUCTURE</p><h3>Margins are expanding.</h3></div><PreviewBadge /></div>{metalCosts.map(([name, value, detail, tone]) => <div className="metal-cost-row" key={name}><div><b>{name}</b><small>{detail}</small></div><span className={tone}>{value}</span></div>)}<div className="cost-callout"><span>What matters next</span><p>A sustained oil or labor-cost shock would compress producer margins before it reaches spot metals. Producer cost curves remain a preview until filings-based feeds are connected.</p></div></article>
+      <article className={`metal-costs-panel panel ${costStructure?.status === 'unavailable' ? 'preview-section' : ''}`}><div className="panel-title"><div><p className="section-kicker">METALS COST STRUCTURE · {costStructure?.status?.toUpperCase() ?? 'UNAVAILABLE'}</p><h3>{costStructure?.headline ?? 'Awaiting energy and miner histories'}</h3></div>{costStructure?.status === 'unavailable' ? <PreviewBadge label="Inputs required" /> : <span className="data-pill">{Number.isFinite(costStructure?.energyPressure) ? `Energy ${costStructure.energyPressure}th pct` : 'Energy pending'}</span>}</div>{(costStructure?.legs ?? []).map((leg) => <div className="metal-cost-row" key={leg.key}><div><b>{leg.name}</b><small>{leg.status === 'calculated' ? `${leg.source} · ${Number.isFinite(leg.percentile) ? `${leg.percentile}th pct of 1Y` : 'percentile pending'}` : leg.reason}</small></div><span className={leg.status !== 'calculated' ? 'neutral' : leg.change20d > 0 ? 'positive' : leg.change20d < 0 ? 'negative' : 'neutral'}>{leg.status === 'calculated' ? `${leg.unit === 'ratio' ? leg.value : `$${leg.value}`}${Number.isFinite(leg.change20d) ? ` · ${leg.change20d > 0 ? '+' : ''}${leg.change20d}%` : ''}` : 'Unavailable'}</span></div>)}<div className="cost-callout"><span>What matters next</span><p>{costStructure?.read ?? 'Energy histories and a miner-to-metal ratio are required before producer economics can be read.'} {costStructure?.methodology}</p></div></article>
     </section>
     <p className="independence-note">TradeGate is an independent market research platform and is not affiliated with Tradegate AG.</p>
   </div>;
