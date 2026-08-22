@@ -608,3 +608,27 @@ test('change correlations publish a lead-lag block alongside the windows', () =>
   assert.equal(result.leadLag.leadBars, 2);
   assert.equal(typeof result.correlations['60D'], 'number');
 });
+
+test('the cross-market model reports which side moves first', () => {
+  const dates = dailyDates(200);
+  // Bitcoin mirrors the dollar four sessions later, so the dollar leads.
+  const dollar = dates.map((_, index) => 100 + Math.sin(index / 5) * 4 + Math.cos(index / 13) * 2);
+  const bitcoin = dates.map((_, index) => 60_000 * (1 + (index >= 4 ? -(dollar[index - 4] - 100) / 100 : 0)));
+  const model = calculateCrossMarketRelationship(
+    dates.map((date, index) => ({ date, value: dollar[index] })),
+    dates.map((date, index) => ({ date, value: bitcoin[index] })),
+  );
+  assert.equal(model.leadLag.leads, 'left');
+  assert.equal(model.leadLag.leadBars, 4);
+  assert.ok(model.leadLag.corrAtBest < 0);
+});
+
+test('a cross-market pair moving in lockstep claims no leader', () => {
+  const dates = dailyDates(200);
+  const left = dates.map((_, index) => 100 + Math.sin(index / 6) * 5);
+  const model = calculateCrossMarketRelationship(
+    dates.map((date, index) => ({ date, value: left[index] })),
+    dates.map((date, index) => ({ date, value: left[index] * 300 })),
+  );
+  assert.equal(model.leadLag.leads, 'none');
+});

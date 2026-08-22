@@ -1453,6 +1453,15 @@ export async function getDxyBitcoinRelationship() {
 
     const bitcoin = unwrap(await bitcoinPromise);
     const model = dollarPoints.length && !bitcoin.stale ? calculateCrossMarketRelationship(dollarPoints, bitcoin.points) : null;
+    if (model?.leadLag) {
+      const leader = model.leadLag.leads === 'left' ? 'The dollar' : model.leadLag.leads === 'right' ? 'Bitcoin' : null;
+      const follower = model.leadLag.leads === 'left' ? 'bitcoin' : model.leadLag.leads === 'right' ? 'the dollar' : null;
+      model.leadLag.leader = leader;
+      model.leadLag.follower = follower;
+      model.leadLag.read = leader
+        ? `${leader} moves first, with ${follower} following about ${model.leadLag.leadDays} days later`
+        : 'Neither side leads: the relationship peaks at zero lag';
+    }
     return {
       source: { left: dollarSource, right: bitcoin.source },
       asOf: model?.asOf ?? null,
@@ -1662,7 +1671,11 @@ export async function getFxWorkspace() {
       })();
       const marketPoints = seriesMap.get(link.yahooSymbol) ?? [];
       if (currencyPoints.length < 23 || marketPoints.length < 23) return [];
-      const correlation = calculateChangeCorrelations(currencyPoints, marketPoints)?.correlations?.['60D'] ?? null;
+      const changes = calculateChangeCorrelations(currencyPoints, marketPoints);
+      const correlation = changes?.correlations?.['60D'] ?? null;
+      const leadLag = changes?.leadLag ?? null;
+      const leader = leadLag?.leads === 'left' ? link.currency : leadLag?.leads === 'right' ? link.market : null;
+      const follower = leadLag?.leads === 'left' ? link.market : leadLag?.leads === 'right' ? link.currency : null;
       return [{
         currency: link.currency,
         currencyMomentum20d: momentumPercent(currencyPoints),
@@ -1671,6 +1684,7 @@ export async function getFxWorkspace() {
         correlation60d: Number.isFinite(correlation) ? Number(correlation.toFixed(2)) : null,
         state: !Number.isFinite(correlation) ? 'Unavailable' : correlation >= 0.3 ? 'Aligned' : correlation <= -0.3 ? 'Inverse' : 'Mixed',
         observations: Math.min(currencyPoints.length, marketPoints.length),
+        leadLag: leadLag ? { ...leadLag, leader, follower, read: leader ? `${leader} · ${leadLag.leadDays}d` : 'Neither' } : null,
       }];
     });
     const spyPoints = seriesMap.get('SPY') ?? [];

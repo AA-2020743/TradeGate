@@ -210,7 +210,7 @@ The narrative panel compares the two most recent persisted outputs of `us-liquid
 
 ### `cross-market-correlation-v1`
 
-DXY/BTC uses aligned daily log returns rather than price levels. It calculates 20-day, 60-day, and one-year Pearson correlations, momentum alignment, and a 20-session dollar breakout state. Twelve Data DXY is preferred; FRED's broad-dollar index is explicitly labeled as a proxy when used.
+DXY/BTC uses aligned daily log returns rather than price levels. It calculates 20-day, 60-day, and one-year Pearson correlations, momentum alignment, and a 20-session dollar breakout state. It also runs the same lead-lag scan as the macro relationship map over those log returns, so the Crypto workspace states plainly whether the dollar moves first and by how many days, with the peak correlation shown against the zero-lag reading. Twelve Data DXY is preferred; FRED's broad-dollar index is explicitly labeled as a proxy when used.
 
 ### `usd-strength-v1`
 
@@ -238,7 +238,7 @@ Market close histories work without any API key: Twelve Data is preferred when c
 
 ### FX workspace
 
-`fx-workspace-v1` covers six currencies (EUR, JPY, GBP, CAD, AUD, CHF). Currency strength uses Yahoo FX crosses oriented so positive momentum always means currency strength; each pair carries a `technical-v1` score plus CFTC COT net-speculative percentile from verified contract codes (099741 EUR, 097741 JPY, 096742 GBP, 090741 CAD, 232741 AUD, 092741 CHF). Commodity links correlate 60-day daily changes (CAD/WTI, AUD/copper, AUD/gold, CHF/S&P 500), and rotation signals compare 20-session momenta by sign: commodity-FX versus crude, broad USD versus EEM, and yen versus S&P 500. The USD scenario map remains an explicitly labeled qualitative framework.
+`fx-workspace-v1` covers six currencies (EUR, JPY, GBP, CAD, AUD, CHF). Currency strength uses Yahoo FX crosses oriented so positive momentum always means currency strength; each pair carries a `technical-v1` score plus CFTC COT net-speculative percentile from verified contract codes (099741 EUR, 097741 JPY, 096742 GBP, 090741 CAD, 232741 AUD, 092741 CHF). Commodity links correlate 60-day daily changes (CAD/WTI, AUD/copper, AUD/gold, CHF/S&P 500) and additionally report which side of each link moves first, using the same lead-lag scan as the macro relationship map, so a currency that follows its commodity is distinguishable from one that leads it. Rotation signals compare 20-session momenta by sign: commodity-FX versus crude, broad USD versus EEM, and yen versus S&P 500. The USD scenario map remains an explicitly labeled qualitative framework.
 
 The metals COT panel also publishes the disaggregated report (dataset `72hh-3qpy`): three-year percentile ranks of net managed-money, producer/merchant, and swap-dealer gold positions with weekly changes, alongside the legacy net-non-commercial percentile. The FX positioning panel additionally carries the ICE US Dollar Index futures contract (`098662`) so USD speculative crowding sits beside the six currency pairs.
 

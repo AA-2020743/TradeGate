@@ -314,6 +314,7 @@ export function calculateCrossMarketRelationship(leftPoints, rightPoints) {
       ? Math.sign(leftMomentum) === Math.sign(rightMomentum) ? 'Inverse relationship diverging' : 'Inverse relationship aligned'
       : activeCorrelation >= 0.4 ? 'Positive relationship' : 'Relationship unstable',
     leftBreakout,
+    leadLag: calculateSeriesLeadLag(leftReturns, rightReturns, dates),
     interpretation: leftBreakout === 'upside' ? 'BTC headwind' : leftBreakout === 'downside' ? 'BTC tailwind' : 'No dollar breakout',
     history: {
       dates: dates.slice(-60),
