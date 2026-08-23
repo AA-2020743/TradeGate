@@ -45,6 +45,54 @@ export function isFredSeriesStale(id, date, now = Date.now()) {
   return !Number.isFinite(timestamp) || now - timestamp > ((FRED_MAX_OBSERVATION_AGE_DAYS[id] ?? 14) * DAY_MS);
 }
 
+// How long a series can normally go between prints before the next one is
+// genuinely late. These are wider than the nominal cadence on purpose: a
+// business-daily series is four days old over a long weekend without anything
+// being wrong, and the Fed's H.10 releases land weekly for the prior week.
+const FRED_EXPECTED_WITHIN_DAYS = {
+  WALCL: 9,
+  WTREGEN: 4,
+  RRPONTSYD: 4,
+  M2SL: 40,
+  DGS2: 4,
+  DFII10: 4,
+  NFCI: 9,
+  BAMLH0A0HYM2: 4,
+  VIXCLS: 4,
+  ECBASSETSW: 12,
+  JPNASSETS: 45,
+  DEXUSEU: 9,
+  DEXJPUS: 9,
+  DEXCHUS: 9,
+  DTWEXBGS: 9,
+};
+
+/**
+ * Separates a series that is simply between prints from one whose next print is
+ * genuinely late. Age alone cannot tell them apart: a monthly series at 45 days
+ * is on schedule while a weekly one at 12 is overdue, and rendering both as an
+ * age in days makes a data outage look identical to a quiet month.
+ */
+export function describeSeriesFreshness(id, date, now = Date.now()) {
+  const maxAgeDays = FRED_MAX_OBSERVATION_AGE_DAYS[id] ?? 14;
+  const expectedWithinDays = FRED_EXPECTED_WITHIN_DAYS[id] ?? Math.max(1, Math.round(maxAgeDays / 2));
+  if (!date) {
+    return { id, state: 'stale', ageDays: null, expectedWithinDays, maxAgeDays, read: 'No observation date was returned.' };
+  }
+  const timestamp = new Date(`${date}T00:00:00.000Z`).getTime();
+  if (!Number.isFinite(timestamp)) {
+    return { id, state: 'stale', ageDays: null, expectedWithinDays, maxAgeDays, read: 'The observation date could not be read.' };
+  }
+  const ageDays = Math.max(0, Math.floor((now - timestamp) / DAY_MS));
+  const state = ageDays >= maxAgeDays ? 'stale' : ageDays > expectedWithinDays ? 'overdue' : 'current';
+  const reads = {
+    current: `${ageDays} ${ageDays === 1 ? 'day' : 'days'} old, within this series' normal ${expectedWithinDays}-day publication gap.`,
+    overdue: `${ageDays} days old against a normal ${expectedWithinDays}-day gap, so the next print is late but the series is still inside the ${maxAgeDays}-day tolerance and remains in the models.`,
+    stale: `${ageDays} days old, past the ${maxAgeDays}-day tolerance, so it is excluded from the models.`,
+  };
+  return { id, state, ageDays, expectedWithinDays, maxAgeDays, read: reads[state] };
+}
+
 export function isDailyCloseStale(timestamp, now = Date.now()) {
   const observedAt = new Date(timestamp).getTime();
   return !Number.isFinite(observedAt) || now - observedAt > 5 * DAY_MS;
