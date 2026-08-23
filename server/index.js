@@ -232,7 +232,14 @@ app.put('/api/watchlists', async (request, response, next) => {
       response.json({ status: 'unconfigured', saved: false });
       return;
     }
-    await replaceWatchlists(normalized);
+    // The return value used to be discarded, so a failed write was reported to
+    // the caller as a successful save and the next read quietly served the old
+    // lists back.
+    const saved = await replaceWatchlists(normalized);
+    if (!saved) {
+      response.status(503).json({ asOf: new Date().toISOString(), status: 'error', saved: false, reason: 'The watchlists could not be written; the previous lists are unchanged.' });
+      return;
+    }
     response.json({ asOf: new Date().toISOString(), status: 'calculated', saved: true });
   } catch (error) {
     next(error);

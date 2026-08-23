@@ -1,4 +1,5 @@
 import { config } from './config.js';
+import { deliverAlerts } from './alertDelivery.js';
 import { observationTimestamp, runIngestionJob } from './ingestionRun.js';
 import { buildWorkspaceNarrative, calculateTechnicalSnapshot, isPublished } from './analytics.js';
 import {
@@ -205,6 +206,12 @@ export async function ingestLiquiditySnapshot() {
     if (alertRows.length) {
       macroAlertsRaised = await insertModelAlerts('macro-alerts-v1', alertRows, runId);
     }
+    // Delivery is opt-in and never allowed to fail the run.
+    const alertDelivery = await deliverAlerts(snapshot.macroAlerts, {
+      url: config.alertWebhookUrl,
+      severities: config.alertWebhookSeverities,
+    });
+
     if (snapshot.macroAlerts) {
       // Stored so the next run knows what was live at this one.
       await persistModelOutput('macro-alerts', { ...snapshot.macroAlerts, asOf: new Date().toISOString() }, lineageFor(macroKeys), runId);
@@ -240,7 +247,7 @@ export async function ingestLiquiditySnapshot() {
 
     return {
       status: snapshot.errors.length || !snapshot.model ? 'partial' : 'completed',
-      details: { seriesReceived: snapshot.series.length, modelVersion: snapshot.model?.version ?? null, usdStrengthVersion: snapshot.usdStrength?.version ?? null, macroRegimeVersion: snapshot.macroRegime?.version ?? null, regimeCorrelationVersion, persistedMacroModels, macroAlertsRaised, backfilledRows, providerErrors: [...snapshot.errors, ...persistenceErrors] },
+      details: { seriesReceived: snapshot.series.length, modelVersion: snapshot.model?.version ?? null, usdStrengthVersion: snapshot.usdStrength?.version ?? null, macroRegimeVersion: snapshot.macroRegime?.version ?? null, regimeCorrelationVersion, persistedMacroModels, macroAlertsRaised, backfilledRows, alertDelivery, providerErrors: [...snapshot.errors, ...persistenceErrors] },
     };
   });
 }

@@ -8,6 +8,7 @@
     "dev:api": "node --watch server/index.js",
     "dev:web": "vite",
     "test": "node --test server/*.test.js src/*.test.js",
+    "test:db": "node --test server/database.integration.test.js",
     "db:migrate": "node server/migrate.js",
     "ingest:once": "node server/ingest-once.js",
     "build": "vite build",

@@ -38,6 +38,9 @@ export const config = {
   marketRefreshMs: numberFromEnvironment('MARKET_REFRESH_MS', 15 * 60_000),
   macroRefreshMs: numberFromEnvironment('MACRO_REFRESH_MS', 6 * 60 * 60_000),
   historyRefreshMs: numberFromEnvironment('HISTORY_REFRESH_MS', 24 * 60 * 60_000),
+  // Opt-in webhook for high-severity alert transitions. Off unless set.
+  alertWebhookUrl: process.env.ALERT_WEBHOOK_URL ?? '',
+  alertWebhookSeverities: (process.env.ALERT_WEBHOOK_SEVERITIES ?? 'high').split(',').map((entry) => entry.trim()).filter(Boolean),
   apiRateLimit: numberFromEnvironment('API_RATE_LIMIT', 120),
   apiRateWindowMs: numberFromEnvironment('API_RATE_WINDOW_MS', 60_000),
 };

@@ -170,13 +170,31 @@ export async function getRecentModelAlerts(limit = 50) {
   return result.rows.map((row) => ({ modelId: row.model_id, key: row.entry_key, text: row.text, detectedAt: row.detected_at }));
 }
 
+/**
+ * Accepts either the `{ name: symbols }` map the API route builds or the
+ * `[{ name, symbols }]` array `getWatchlists` returns.
+ *
+ * Taking only the map meant the output of getWatchlists could not be fed back
+ * in: Object.entries on an array yields index keys, so a round trip silently
+ * produced lists named "0", "1" and "2" holding whole row objects as symbols.
+ */
+function normalizeWatchlistInput(lists) {
+  if (Array.isArray(lists)) {
+    return lists
+      .filter((list) => list && typeof list.name === 'string' && Array.isArray(list.symbols))
+      .map((list) => [list.name, list.symbols]);
+  }
+  return Object.entries(lists ?? {}).filter(([, symbols]) => Array.isArray(symbols));
+}
+
 export async function replaceWatchlists(lists, ownerKey = 'local') {
   if (!pool) return false;
+  const entries = normalizeWatchlistInput(lists);
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
     await client.query('DELETE FROM watchlists WHERE owner_key = $1', [ownerKey]);
-    for (const [name, symbols] of Object.entries(lists)) {
+    for (const [name, symbols] of entries) {
       await client.query(
         'INSERT INTO watchlists (owner_key, name, symbols) VALUES ($1, $2, $3::jsonb)',
         [ownerKey, name, JSON.stringify(symbols)],
@@ -184,8 +202,11 @@ export async function replaceWatchlists(lists, ownerKey = 'local') {
     }
     await client.query('COMMIT');
     return true;
-  } catch {
+  } catch (error) {
     await client.query('ROLLBACK');
+    // Swallowed to keep a failed save from taking the request down, but the
+    // reason is kept so the caller can report the failure instead of success.
+    replaceWatchlists.lastError = error.message;
     return false;
   } finally {
     client.release();

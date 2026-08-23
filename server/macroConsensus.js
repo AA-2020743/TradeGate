@@ -703,3 +703,67 @@ export function buildBackfillRows(modelId, scoreAt, dates, { source = 'backfill'
       : `No date could be scored for ${modelId}.`,
   };
 }
+
+/**
+ * How the consensus has moved. A spread that has been widening for a month is a
+ * different signal from one that widened today, and the panel could only ever
+ * show the latter.
+ */
+export function calculateConsensusHistory(outputs = [], { minimumObservations = 4 } = {}) {
+  const version = 'macro-consensus-history-v1';
+  const points = (outputs ?? [])
+    .map((entry) => ({
+      date: String(entry?.output?.asOf ?? entry?.effective_at ?? '').slice(0, 10),
+      average: Number(entry?.output?.averageScore),
+      spread: Number(entry?.output?.spread),
+      state: entry?.output?.state ?? null,
+    }))
+    .filter((point) => point.date && Number.isFinite(point.average) && Number.isFinite(point.spread))
+    .sort((left, right) => left.date.localeCompare(right.date));
+  // One reading per vintage, so repeated runs over the same data cannot show as
+  // movement that never happened.
+  const deduped = [...new Map(points.map((point) => [point.date, point])).values()];
+  if (deduped.length < minimumObservations) {
+    return {
+      version,
+      status: 'unavailable',
+      reason: `Needs ${minimumObservations} stored consensus readings; ${deduped.length} available. They accumulate once PostgreSQL is configured and ingestion has run.`,
+      points: [],
+    };
+  }
+
+  const latest = deduped.at(-1);
+  const earliest = deduped[0];
+  const spreadChange = latest.spread - earliest.spread;
+  const averageChange = latest.average - earliest.average;
+  // A run of consecutive readings moving the same way, which is what "has been
+  // widening" means rather than "is wider than it was".
+  let widenRun = 0;
+  for (let index = deduped.length - 1; index >= 1; index -= 1) {
+    if (deduped[index].spread > deduped[index - 1].spread) widenRun += 1;
+    else break;
+  }
+  let narrowRun = 0;
+  for (let index = deduped.length - 1; index >= 1; index -= 1) {
+    if (deduped[index].spread < deduped[index - 1].spread) narrowRun += 1;
+    else break;
+  }
+  const trend = widenRun >= 3 ? 'widening' : narrowRun >= 3 ? 'narrowing' : 'unchanged in direction';
+  const stateChanges = deduped.slice(1).flatMap((point, index) => (point.state && point.state !== deduped[index].state
+    ? [{ date: point.date, from: deduped[index].state, to: point.state }]
+    : []));
+
+  return {
+    version,
+    status: 'calculated',
+    asOf: latest.date,
+    observations: deduped.length,
+    coveredFrom: earliest.date,
+    points: deduped,
+    spread: { latest: latest.spread, earliest: earliest.spread, change: Math.round(spreadChange), trend, consecutiveMoves: Math.max(widenRun, narrowRun) },
+    average: { latest: latest.average, earliest: earliest.average, change: Math.round(averageChange) },
+    stateChanges,
+    read: `Across ${deduped.length} readings since ${earliest.date} the spread between models moved from ${earliest.spread} to ${latest.spread} and is ${trend}${Math.max(widenRun, narrowRun) >= 3 ? ` on ${Math.max(widenRun, narrowRun)} consecutive readings` : ''}. The average moved ${averageChange > 0 ? '+' : ''}${Math.round(averageChange)} points.${stateChanges.length ? ` ${stateChanges.length} state ${stateChanges.length === 1 ? 'change' : 'changes'}, the last from ${stateChanges.at(-1).from} to ${stateChanges.at(-1).to} on ${stateChanges.at(-1).date}.` : ''}`,
+    methodology: 'Stored consensus readings, one per vintage so repeated runs over the same data cannot appear as movement. "Widening" means consecutive readings moving the same way rather than simply being wider than the first, because a single jump and a month of drift are different signals with the same endpoints.',
+  };
+}

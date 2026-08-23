@@ -1282,6 +1282,23 @@ function WeightOverlapPanel({ overlap }) {
   </article>;
 }
 
+/** Which models actually move together, and how the consensus has been moving. */
+function ConsensusHistoryPanel({ history }) {
+  const status = history?.status ?? 'unavailable';
+  const publishedNow = status !== 'unavailable';
+  return <article className={`panel ${publishedNow ? '' : 'preview-section'}`}>
+    <div className="panel-title"><div><p className="section-kicker">CONSENSUS HISTORY · {status.toUpperCase()}</p><h3>{publishedNow ? `Spread ${history.spread.trend}` : 'Awaiting stored consensus readings'}</h3></div>{publishedNow ? <span className="data-pill">{history.observations} readings since {history.coveredFrom}</span> : null}</div>
+    {publishedNow ? <>
+      <div className="stat-row"><span><strong>Spread between models</strong><small>{`${history.spread.earliest} at the start, ${history.spread.latest} now · ${history.spread.consecutiveMoves} consecutive ${history.spread.trend === 'unchanged in direction' ? 'moves' : `${history.spread.trend} readings`}`}</small></span><b className={history.spread.change > 0 ? 'negative' : 'positive'}>{history.spread.change > 0 ? '+' : ''}{history.spread.change}</b></div>
+      <div className="stat-row"><span><strong>Average score</strong><small>{`${history.average.earliest} at the start, ${history.average.latest} now`}</small></span><b className={history.average.change >= 0 ? 'positive' : 'negative'}>{history.average.change > 0 ? '+' : ''}{history.average.change}</b></div>
+      {(history.stateChanges ?? []).slice(-4).reverse().map((change) => <div className="stat-row" key={change.date}>
+        <span><strong>{`${change.from} → ${change.to}`}</strong><small>{change.date}</small></span><b>state</b>
+      </div>)}
+    </> : <div className="equity-empty">{history?.reason ?? 'Consensus readings accumulate once ingestion has run.'}</div>}
+    <p className="model-footnote">{publishedNow ? history.read : ''} {history?.methodology ?? ''}</p>
+  </article>;
+}
+
 function MacroDashboard({ data }) {
   const [activeModel, setActiveModel] = React.useState('Overview');
   const [correlationWindow, setCorrelationWindow] = React.useState('60D');
@@ -1407,6 +1424,7 @@ function MacroDashboard({ data }) {
       <ConsensusPanel consensus={data.liquidity?.consensus} />
       <ContradictionPanel consensus={data.liquidity?.consensus} />
       <MacroAlertsPanel alerts={data.liquidity?.macroAlerts} />
+      <ConsensusHistoryPanel history={data.liquidity?.consensusHistory} />
       <ModelCorrelationPanel matrix={data.liquidity?.modelCorrelation} />
       <WeightOverlapPanel overlap={data.liquidity?.weightOverlap} />
     </section> : activeModel === 'Correlations' ? <section className="correlation-detail-grid">

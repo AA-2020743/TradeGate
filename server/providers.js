@@ -8,7 +8,7 @@ import { calculateBitcoinRangeModels } from './bitcoinOhlc.js';
 import { buildCoingeckoRequest, buildHeatmapRow, buildSocrataRequest, buildLiquidityNarrative, buildLiquidityTransmission, buildWorkspaceNarrative, calculateBitcoinCyclePhase, calculateChangeCorrelations, calculateCryptoRotation, calculateDollarScenarios, calculateDollarTransmissionRead, calculateLeadLag, calculateLiquidityRunway, calculateOpenInterestQuadrant, calculatePositioningModel, calculateCrossMarketRelationship, calculateGlobalLiquidityModel, calculateHeatmapRisk, calculateMacroRegimeModel, calculateMetalsCostStructure, calculateRsi, calculateScreenerScores, calculateTechnicalSnapshot, calculateTrendQuality, classifyHeadlineSentiment, isPublished, calculateUsdStrengthModel, calculateUsLiquidityModel } from './analytics.js';
 import { getStoredFredSeries, getStoredMarketHistory, getStoredMarketSnapshot, getRecentModelOutputs, isDatabaseConfigured, reserveProviderCredits } from './database.js';
 import { getAllEquityHistorySymbols, getCoreEquityHistorySymbols } from './equityCatalog.js';
-import { buildBackfillRows, calculateModelConsensus, calculateModelCorrelationMatrix, calculateWeightOverlap, evaluateMacroAlerts } from './macroConsensus.js';
+import { buildBackfillRows, calculateConsensusHistory, calculateModelConsensus, calculateModelCorrelationMatrix, calculateWeightOverlap, evaluateMacroAlerts } from './macroConsensus.js';
 import { calculateDataSurprise, calculateLiquidityPayoff, calculateNominalDecomposition, calculateRateDivergence, calculateReserveScarcity, calculateTermPremium } from './macroRates.js';
 import { calculateGrowthNowcast, calculateInflationNowcast, calculateLiquidityCalendar, calculateRatePath, calculateRegimeTransitions, calculateYieldCurveModel, seriesPoints } from './macroModels.js';
 import { describeSeriesFreshness, isCryptoHistoryStale, isCotReportStale, isDailyCloseStale, isFredSeriesStale, isPbocObservationStale, monthsBetween } from './freshness.js';
@@ -2390,13 +2390,40 @@ export async function getLiquiditySnapshot(options = {}) {
       const sliced = points.filter((point) => point.date <= date);
       return sliced.length ? scorer(sliced) : null;
     };
-    const liquidityPoints = model?.history ?? [];
+    // One impulse scorer, applied to each pooled series. It mirrors the live
+    // models' 91-day impulse and clamp so the backfilled scores sit on the same
+    // scale, which is the only property the overlap matrix needs from them.
+    const impulseScorer = (points, scale) => scoreSeriesAt(points, (window) => {
+      const latest = window.at(-1);
+      const cutoff = new Date(new Date(latest.date).getTime() - (91 * 86_400_000));
+      const prior = window.find((point) => new Date(point.date) >= cutoff);
+      if (!prior || prior.value <= 0 || prior.date === latest.date) return null;
+      return Math.round(Math.min(100, Math.max(0, 50 + ((((latest.value / prior.value) - 1) * 100) * scale))));
+    });
+    // Built once rather than re-derived per point: looking the short leg up
+    // inside the map made this quadratic in the length of the yield history.
+    const curveSpreadPoints = (() => {
+      const short = seriesPoints(modelSeries, 'us2yYield');
+      if (!short.length) return [];
+      const shortByDate = new Map(short.map((point) => [point.date, point.value]));
+      let carried = null;
+      return seriesPoints(modelSeries, 'us10yYield').flatMap((point) => {
+        if (shortByDate.has(point.date)) carried = { date: point.date, value: shortByDate.get(point.date) };
+        if (!carried) return [];
+        // Bounded like every other aligned pair: a short leg more than a week
+        // stale is not the other side of today's spread.
+        if ((new Date(point.date) - new Date(carried.date)) / 86_400_000 > 7) return [];
+        return [{ date: point.date, value: point.value - carried.value }];
+      });
+    })();
+
     const macroBackfill = [
-      buildBackfillRows('us-liquidity', scoreSeriesAt(liquidityPoints, (points) => {
-        const latest = points.at(-1);
-        const prior = points.find((point) => new Date(point.date) >= new Date(new Date(latest.date).getTime() - (91 * 86_400_000)));
-        return prior && prior.value > 0 ? Math.round(Math.min(100, Math.max(0, 50 + ((((latest.value / prior.value) - 1) * 100) * 16)))) : null;
-      }), backfillDates),
+      buildBackfillRows('us-liquidity', impulseScorer(model?.history ?? [], 16), backfillDates),
+      buildBackfillRows('global-liquidity', impulseScorer(globalLiquidity?.history ?? [], 16), backfillDates),
+      // The dollar leg is inverted: a stronger dollar is the tighter reading,
+      // which is the axis the live usd-strength score already sits on.
+      buildBackfillRows('usd-strength', impulseScorer(seriesPoints(modelSeries, 'dxy'), -16), backfillDates),
+      buildBackfillRows('yield-curve', scoreSeriesAt(curveSpreadPoints, (window) => Math.round(Math.min(100, Math.max(0, 50 + (window.at(-1).value * 25))))), backfillDates),
     ].filter((entry) => entry.rows.length >= 12);
 
     const macroModels = {
@@ -2433,11 +2460,13 @@ export async function getLiquiditySnapshot(options = {}) {
     };
     // The matrix reads stored output history, so it only has anything to say
     // once PostgreSQL is configured and ingestion has run more than once.
+    let consensusHistory = calculateConsensusHistory([]);
     let modelCorrelation = calculateModelCorrelationMatrix({});
     let weightOverlap = calculateWeightOverlap(macroRegime, modelCorrelation, { driverToModelId: REGIME_DRIVER_MODELS });
     if (isDatabaseConfigured()) {
       try {
         const tracked = ['us-liquidity', 'global-liquidity', 'usd-strength', 'macro-regime', 'growth-nowcast', 'yield-curve', 'data-surprise', 'reserve-scarcity'];
+        consensusHistory = calculateConsensusHistory(await getRecentModelOutputs('macro-consensus', 120).catch(() => []));
         const stored = await Promise.all(tracked.map((modelId) => getRecentModelOutputs(modelId, 120).catch(() => [])));
         modelCorrelation = calculateModelCorrelationMatrix(Object.fromEntries(tracked.map((modelId, index) => [modelId, stored[index]])));
         weightOverlap = calculateWeightOverlap(macroRegime, modelCorrelation, { driverToModelId: REGIME_DRIVER_MODELS });
@@ -2520,6 +2549,7 @@ export async function getLiquiditySnapshot(options = {}) {
       reserveScarcity,
       liquidityPayoff,
       consensus,
+      consensusHistory,
       macroAlerts,
       modelCorrelation,
       weightOverlap,

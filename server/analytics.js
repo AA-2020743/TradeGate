@@ -852,7 +852,6 @@ export function calculateGlobalLiquidityModel(seriesList) {
     regime: null,
     momentum: 'Unavailable',
     globalLiquidityUsdMillions: null,
-    cyclePercentile: null,
     cycle: null,
     centralBanks: [],
     history: [],
@@ -906,12 +905,6 @@ export function calculateGlobalLiquidityModel(seriesList) {
 
   const latestTotal = globalLiquidity.at(-1)?.value ?? null;
   const cycle = calculateLiquidityCyclePosition(globalLiquidity);
-  // Kept for callers that still read it, but it is the trailing-window level
-  // percentile now rather than the whole-history one. Ranking a trending level
-  // against its entire past answers "is this the largest the pool has ever
-  // been", which in any expansion is yes - a number that reads like a cycle
-  // gauge and moves like a ratchet.
-  const cyclePercentile = cycle.levelPercentile;
   // The pool prints on the union of its legs' dates, but a leg that publishes
   // monthly is carried forward between its own prints — so the total updates
   // weekly while part of it is a month old. The effective resolution is the
@@ -972,7 +965,11 @@ export function calculateGlobalLiquidityModel(seriesList) {
     confidenceScore,
     breadth: { positive: positiveDrivers, negative: negativeDrivers, total: drivers.length },
     globalLiquidityUsdMillions: latestTotal,
-    cyclePercentile,
+    // `cyclePercentile` is gone. It was retained as an alias for the
+    // trailing-window level reading after that model was corrected, which left
+    // a field whose name promised a cycle gauge and whose value was a level
+    // rank. The cycle position lives under `cycle`, where the growth reading
+    // that actually turns is published beside it.
     cycle,
     resolution,
     centralBanks: legSummary,

@@ -140,7 +140,10 @@ test('Global liquidity model aggregates USD-converted central-bank legs', () => 
   const shareTotal = model.centralBanks.reduce((total, leg) => total + leg.sharePercent, 0);
   assert.ok(Math.abs(shareTotal - 100) <= 1);
   assert.equal(model.history.length, 120);
-  assert.ok(Number.isFinite(model.cyclePercentile));
+  // The old cyclePercentile field is gone: it ranked a trending level against
+  // its entire history, which is a ratchet rather than a gauge.
+  assert.equal('cyclePercentile' in model, false);
+  assert.ok(Number.isFinite(model.cycle.levelPercentile));
 });
 
 test('Global liquidity model refuses to publish without FX conversion rates', () => {

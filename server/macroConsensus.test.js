@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   buildBackfillRows,
+  calculateConsensusHistory,
   calculateModelConsensus,
   calculateModelCorrelationMatrix,
   calculateWeightOverlap,
@@ -447,4 +448,50 @@ test('a positive duplicate still adjusts the score even alongside an offsetting 
   assert.equal(overlap.pairs[0].redundantDriver, 'globalLiquidity');
   assert.equal(overlap.offsetting.length, 1);
   assert.equal(Number.isFinite(overlap.adjustedScore), true);
+});
+
+function consensusOutputs(rows) {
+  return rows.map(([date, average, spread, state]) => ({ effective_at: date, output: { asOf: date, averageScore: average, spread, state } }));
+}
+
+test('consensus history separates a drift from a single jump with the same endpoints', () => {
+  const drift = calculateConsensusHistory(consensusOutputs([
+    ['2026-01-05', 60, 20, 'Models broadly agree'],
+    ['2026-01-12', 59, 30, 'Models broadly agree'],
+    ['2026-01-19', 58, 42, 'Models partly divided'],
+    ['2026-01-26', 57, 55, 'Models partly divided'],
+    ['2026-02-02', 56, 68, 'Models sharply divided'],
+  ]));
+  assert.equal(drift.status, 'calculated');
+  assert.equal(drift.spread.trend, 'widening');
+  assert.equal(drift.spread.consecutiveMoves, 4);
+  assert.equal(drift.stateChanges.length, 2);
+  assert.match(drift.read, /on 4 consecutive readings/);
+
+  const jump = calculateConsensusHistory(consensusOutputs([
+    ['2026-01-05', 60, 20, 'Models broadly agree'],
+    ['2026-01-12', 60, 20, 'Models broadly agree'],
+    ['2026-01-19', 60, 20, 'Models broadly agree'],
+    ['2026-01-26', 60, 19, 'Models broadly agree'],
+    ['2026-02-02', 56, 68, 'Models sharply divided'],
+  ]));
+  // Same endpoints as the drift, but only one reading moved.
+  assert.equal(jump.spread.latest, drift.spread.latest);
+  assert.equal(jump.spread.trend, 'unchanged in direction');
+  assert.equal(jump.spread.consecutiveMoves, 1);
+});
+
+test('consensus history keeps one reading per vintage', () => {
+  const repeated = calculateConsensusHistory(consensusOutputs([
+    ['2026-01-05', 60, 20, 'a'], ['2026-01-05', 55, 40, 'a'], ['2026-01-05', 50, 60, 'a'],
+    ['2026-01-12', 59, 22, 'a'], ['2026-01-19', 58, 24, 'a'], ['2026-01-26', 57, 26, 'a'],
+  ]));
+  assert.equal(repeated.observations, 4, 'four vintages, not six runs');
+});
+
+test('consensus history refuses without enough stored readings', () => {
+  const result = calculateConsensusHistory(consensusOutputs([['2026-01-05', 60, 20, 'a']]));
+  assert.equal(result.status, 'unavailable');
+  assert.match(result.reason, /PostgreSQL is configured/);
+  assert.deepEqual(result.points, []);
 });
