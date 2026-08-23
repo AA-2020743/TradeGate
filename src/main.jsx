@@ -1164,6 +1164,81 @@ function ReserveScarcityPanel({ scarcity }) {
   </article>;
 }
 
+/** What the macro models say when read against each other. */
+function ConsensusPanel({ consensus }) {
+  const status = consensus?.status ?? 'unavailable';
+  const publishedNow = status !== 'unavailable';
+  return <article className={`panel ${publishedNow ? '' : 'preview-section'}`}>
+    <div className="panel-title"><div><p className="section-kicker">MODEL CONSENSUS · {status.toUpperCase()}</p><h3>{publishedNow ? consensus.state : 'Awaiting three published models'}</h3></div>{publishedNow ? <span className={`data-pill ${consensus.spread >= 60 ? 'pill-warning' : ''}`}>{consensus.averageScore}/100 · {consensus.spread}-point spread</span> : null}</div>
+    {publishedNow ? <>
+      {(consensus.signals ?? []).filter((signal) => signal.available).map((signal) => <div className="stat-row" key={signal.key}>
+        <span><strong>{signal.name}</strong><small>{signal.detail ?? signal.family}</small></span>
+        <b className={signal.score >= 60 ? 'positive' : signal.score <= 40 ? 'negative' : ''}>{signal.score}</b>
+      </div>)}
+      {(consensus.cautions ?? []).filter((signal) => signal.available).map((signal) => <div className="stat-row" key={signal.key}>
+        <span><strong>{signal.name}<i className="slow-cadence" aria-label="caution, not a direction"> ·c</i></strong><small>{signal.note}</small></span>
+        <b>{signal.score}</b>
+      </div>)}
+    </> : <div className="equity-empty">{consensus?.reason ?? 'At least three macro models must publish before they can be compared.'}</div>}
+    <p className="model-footnote">{publishedNow ? consensus.read : ''} {consensus?.methodology ?? ''}</p>
+  </article>;
+}
+
+/** The pairs that genuinely disagree, which an average would have hidden. */
+function ContradictionPanel({ consensus }) {
+  const contradictions = consensus?.contradictions ?? [];
+  const outliers = consensus?.outliers ?? [];
+  const publishedNow = consensus?.status && consensus.status !== 'unavailable';
+  return <article className={`panel ${publishedNow ? '' : 'preview-section'}`}>
+    <div className="panel-title"><div><p className="section-kicker">CONTRADICTIONS · {publishedNow ? 'CALCULATED' : 'UNAVAILABLE'}</p><h3>{!publishedNow ? 'Awaiting the consensus layer' : outliers.length ? `${outliers.map((entry) => entry.name).join(' and ')} stand${outliers.length === 1 ? 's' : ''} apart` : contradictions.length ? `${contradictions.length} disagreeing ${contradictions.length === 1 ? 'pair' : 'pairs'}` : 'No pair disagrees materially'}</h3></div>{publishedNow && consensus.sameFamilyContradictions ? <span className="data-pill pill-warning">{consensus.sameFamilyContradictions} inside one family</span> : null}</div>
+    {outliers.length ? <>
+      <div className="stat-head"><span>Standing apart</span><span>vs median</span></div>
+      {outliers.map((entry) => <div className="stat-row" key={`outlier-${entry.key}`}>
+        <span><strong>{entry.name}</strong><small>{entry.read}</small></span>
+        <b className={entry.distance < 0 ? 'negative' : 'positive'}>{entry.distance > 0 ? '+' : ''}{entry.distance}</b>
+      </div>)}
+    </> : null}
+    {contradictions.length ? <>
+      <div className="stat-head"><span>Widest pairs</span><span>Apart</span></div>
+      {contradictions.slice(0, 4).map((entry) => <div className="stat-row" key={entry.key}>
+        <span><strong>{`${entry.higher.name} vs ${entry.lower.name}`}</strong><small>{entry.read}</small></span>
+        <b className={entry.sameFamily ? 'negative' : ''}>{entry.distance}</b>
+      </div>)}
+    </> : <div className="equity-empty">{publishedNow ? `Every published model sits within ${consensus.spread} points of the others, so nothing here is pulling against anything else.` : 'The consensus layer must publish first.'}</div>}
+    <p className="model-footnote">Two readings from the same family disagreeing is a data problem worth seeing; two from different families disagreeing is the ordinary tension between, say, liquidity and growth. Both are surfaced and labelled apart.</p>
+  </article>;
+}
+
+/** Which models actually move together, from their stored output history. */
+function ModelCorrelationPanel({ matrix }) {
+  const status = matrix?.status ?? 'unavailable';
+  const publishedNow = status !== 'unavailable';
+  const pairs = (matrix?.pairs ?? []).filter((pair) => pair.status === 'calculated').sort((left, right) => Math.abs(right.correlation) - Math.abs(left.correlation));
+  return <article className={`panel ${publishedNow ? '' : 'preview-section'}`}>
+    <div className="panel-title"><div><p className="section-kicker">MODEL OVERLAP · {status.toUpperCase()}</p><h3>{publishedNow ? `${pairs.length} correlated pairs` : 'Awaiting stored model history'}</h3></div>{publishedNow && matrix.redundantPairs?.length ? <span className="data-pill pill-warning">{matrix.redundantPairs.length} near-duplicate</span> : null}</div>
+    {pairs.length ? pairs.slice(0, 8).map((pair) => <div className="stat-row" key={pair.key}>
+      <span><strong>{`${pair.left} vs ${pair.right}`}</strong><small>{`${pair.observations} shared vintages${Math.abs(pair.correlation) >= 0.9 ? ' · near-duplication rather than confirmation' : ''}`}</small></span>
+      <b className={Math.abs(pair.correlation) >= 0.9 ? 'negative' : ''}>{pair.correlation > 0 ? '+' : ''}{pair.correlation}</b>
+    </div>) : <div className="equity-empty">{matrix?.reason ?? 'Model outputs accumulate only once PostgreSQL is configured and ingestion has run.'}</div>}
+    <p className="model-footnote">{publishedNow ? matrix.read : ''} {matrix?.methodology ?? ''}</p>
+  </article>;
+}
+
+/** The time-sensitive readings, raised. */
+function MacroAlertsPanel({ alerts }) {
+  const entries = alerts?.entries ?? [];
+  const skipped = alerts?.skipped ?? [];
+  return <article className={`panel ${entries.length ? '' : 'preview-section'}`}>
+    <div className="panel-title"><div><p className="section-kicker">MACRO ALERTS · {(alerts?.status ?? 'unavailable').toUpperCase()}</p><h3>{entries.length ? `${entries.length} live ${entries.length === 1 ? 'condition' : 'conditions'}` : 'Nothing live'}</h3></div>{alerts?.counts?.high ? <span className="data-pill pill-warning">{alerts.counts.high} high</span> : null}</div>
+    {entries.length ? entries.map((entry) => <div className="stat-row" key={entry.key}>
+      <span><strong>{entry.key.replace(/-/g, ' ').replace(/^./, (letter) => letter.toUpperCase())}</strong><small>{entry.text}</small></span>
+      <b className={entry.severity === 'high' ? 'negative' : entry.severity === 'low' ? '' : 'positive'}>{entry.severity}</b>
+    </div>) : <div className="equity-empty">{alerts?.read ?? 'Alert rules publish once their models do.'}</div>}
+    {skipped.length ? <p className="model-footnote">{`${skipped.length} of the rules could not be evaluated because their model did not publish: ${skipped.map((entry) => entry.key).join(', ')}. "We cannot tell" and "it is not happening" are different answers.`}</p> : null}
+    <p className="model-footnote">{alerts?.methodology ?? ''}</p>
+  </article>;
+}
+
 function MacroDashboard({ data }) {
   const [activeModel, setActiveModel] = React.useState('Liquidity');
   const [correlationWindow, setCorrelationWindow] = React.useState('60D');
@@ -1204,7 +1279,7 @@ function MacroDashboard({ data }) {
   return <div className="macro-dashboard">
     <section className="macro-intro">
       <div><p className="eyebrow">MACRO RESEARCH SYSTEM</p><h1>Liquidity leads. Risk confirms.</h1><p className="intro">A cross-asset view of the forces shaping capital availability and market regime.</p></div>
-      <div className="model-tabs"><button className={activeModel === 'Liquidity' ? 'active' : ''} onClick={() => setActiveModel('Liquidity')}>US liquidity</button><button className={activeModel === 'Global' ? 'active' : ''} onClick={() => setActiveModel('Global')}>Global liquidity</button><button className={activeModel === 'Risk' ? 'active' : ''} onClick={() => setActiveModel('Risk')}>Macro regime</button><button className={activeModel === 'Correlations' ? 'active' : ''} onClick={() => setActiveModel('Correlations')}>Correlations {regimeCorrelations?.status !== 'calculated' && <small className="tab-preview">Preview</small>}</button><button className={activeModel === 'Rates' ? 'active' : ''} onClick={() => setActiveModel('Rates')}>Rates &amp; growth</button><button className={activeModel === 'FX' ? 'active' : ''} onClick={() => setActiveModel('FX')}>USD &amp; FX</button></div>
+      <div className="model-tabs"><button className={activeModel === 'Liquidity' ? 'active' : ''} onClick={() => setActiveModel('Liquidity')}>US liquidity</button><button className={activeModel === 'Global' ? 'active' : ''} onClick={() => setActiveModel('Global')}>Global liquidity</button><button className={activeModel === 'Risk' ? 'active' : ''} onClick={() => setActiveModel('Risk')}>Macro regime</button><button className={activeModel === 'Correlations' ? 'active' : ''} onClick={() => setActiveModel('Correlations')}>Correlations {regimeCorrelations?.status !== 'calculated' && <small className="tab-preview">Preview</small>}</button><button className={activeModel === 'Rates' ? 'active' : ''} onClick={() => setActiveModel('Rates')}>Rates &amp; growth</button><button className={activeModel === 'Consensus' ? 'active' : ''} onClick={() => setActiveModel('Consensus')}>Cross-model</button><button className={activeModel === 'FX' ? 'active' : ''} onClick={() => setActiveModel('FX')}>USD &amp; FX</button></div>
     </section>
     <DataDisclosure data={data} message="Every model here is a versioned calculation from keyless public sources; only panels whose sources are confirmed blocked remain preview-labeled." />
     {data.liquidity?.series?.length ? <section className="official-data-strip panel"><div><p className="section-kicker">OFFICIAL FRED OBSERVATIONS</p><b>Latest released data</b></div>{data.liquidity.series.slice(0, 5).map((series) => <div key={series.id}><span>{series.name}</span><strong>{formatMacroValue(series)}</strong><small className={series.freshness?.state === 'overdue' ? 'freshness-overdue' : undefined} title={series.freshness?.read ?? undefined}>{series.date}{series.stale ? ' · stale' : series.freshness?.state === 'overdue' ? ' · print overdue' : series.stored ? ' · stored' : ' · live'}</small></div>)}</section> : <section className="provider-setup-note"><b>Live macro feed unavailable</b><span>The server could not reach FRED (API or public CSV endpoint) and no stored observations exist yet.</span></section>}
@@ -1253,7 +1328,7 @@ function MacroDashboard({ data }) {
       </div>
     </section>
 
-    <section className="macro-section-heading"><div><p className="section-kicker">{activeModel === 'Liquidity' ? 'NET US LIQUIDITY' : activeModel === 'Global' ? 'GLOBAL CENTRAL-BANK LIQUIDITY' : activeModel === 'Risk' ? 'CROSS-ASSET CONFIRMATION' : activeModel === 'Correlations' ? 'RELATIONSHIP INTELLIGENCE' : activeModel === 'Rates' ? 'RATES, INFLATION & GROWTH' : 'USD MACRO ENGINE'}</p><h2>{activeModel === 'Liquidity' ? 'The calculated drivers behind the impulse' : activeModel === 'Global' ? 'World central-bank liquidity in dollars' : activeModel === 'Risk' ? 'What markets are pricing now' : activeModel === 'Correlations' ? 'Correlations through the current regime' : activeModel === 'Rates' ? 'What the curve is pricing, and what growth proxies say' : 'Where macro points for the dollar'} {activeModel === 'Correlations' && regimeCorrelations?.status !== 'calculated' && <PreviewBadge label="Contains previews" />}</h2></div>{activeModel === 'Liquidity' && <span className="data-pill">13W calculated window</span>}{activeModel === 'Global' && <span className="data-pill">13W calculated window</span>}{activeModel === 'Correlations' && <div className="window-buttons">{[['20D', '20 obs'], ['60D', '60 obs'], ['1Y', '252 obs']].map(([item, label]) => <button className={correlationWindow === item ? 'selected' : ''} key={item} onClick={() => setCorrelationWindow(item)}>{label}</button>)}</div>}{activeModel === 'FX' && <span className="data-pill">FRED driver stack</span>}</section>
+    <section className="macro-section-heading"><div><p className="section-kicker">{activeModel === 'Liquidity' ? 'NET US LIQUIDITY' : activeModel === 'Global' ? 'GLOBAL CENTRAL-BANK LIQUIDITY' : activeModel === 'Risk' ? 'CROSS-ASSET CONFIRMATION' : activeModel === 'Correlations' ? 'RELATIONSHIP INTELLIGENCE' : activeModel === 'Rates' ? 'RATES, INFLATION & GROWTH' : activeModel === 'Consensus' ? 'CROSS-MODEL READ' : 'USD MACRO ENGINE'}</p><h2>{activeModel === 'Liquidity' ? 'The calculated drivers behind the impulse' : activeModel === 'Global' ? 'World central-bank liquidity in dollars' : activeModel === 'Risk' ? 'What markets are pricing now' : activeModel === 'Correlations' ? 'Correlations through the current regime' : activeModel === 'Rates' ? 'What the curve is pricing, and what growth proxies say' : activeModel === 'Consensus' ? 'Where the models agree, where they do not, and what is live' : 'Where macro points for the dollar'} {activeModel === 'Correlations' && regimeCorrelations?.status !== 'calculated' && <PreviewBadge label="Contains previews" />}</h2></div>{activeModel === 'Liquidity' && <span className="data-pill">13W calculated window</span>}{activeModel === 'Global' && <span className="data-pill">13W calculated window</span>}{activeModel === 'Correlations' && <div className="window-buttons">{[['20D', '20 obs'], ['60D', '60 obs'], ['1Y', '252 obs']].map(([item, label]) => <button className={correlationWindow === item ? 'selected' : ''} key={item} onClick={() => setCorrelationWindow(item)}>{label}</button>)}</div>}{activeModel === 'FX' && <span className="data-pill">FRED driver stack</span>}</section>
 
     {activeModel === 'Liquidity' ? <section className="liquidity-detail-grid">
       <article className="driver-panel panel"><div className="driver-panel-head"><span>Indicator</span><span>Impulse</span><span>13W change</span></div>{liquidityModel?.drivers?.length ? liquidityModel.drivers.map((driver) => { const tone = driver.impulse > 0.05 ? 'positive' : driver.impulse < -0.05 ? 'negative' : 'neutral'; return <div className="driver-row" key={driver.key}><span>{driver.name}</span><b className={tone}>{driver.impulse > 0.05 ? 'Supportive' : driver.impulse < -0.05 ? 'Restrictive' : 'Neutral'}</b><strong>{driver.changePercent >= 0 ? '+' : ''}{driver.changePercent.toFixed(2)}%</strong></div>; }) : <div className="calculation-empty">No calculated FRED drivers are available.</div>}<p className="model-footnote"><code>us-liquidity-v1</code> uses 55% Fed net liquidity, 25% US M2 growth, and 20% inverse dollar transmission. Inputs retain provider dates and units.</p></article>
@@ -1281,6 +1356,11 @@ function MacroDashboard({ data }) {
       <RateDivergencePanel divergence={data.liquidity?.rateDivergence} />
       <GrowthNowcastPanel nowcast={data.liquidity?.growthNowcast} />
       <DataSurprisePanel surprise={data.liquidity?.dataSurprise} />
+    </section> : activeModel === 'Consensus' ? <section className="risk-detail-grid">
+      <ConsensusPanel consensus={data.liquidity?.consensus} />
+      <ContradictionPanel consensus={data.liquidity?.consensus} />
+      <MacroAlertsPanel alerts={data.liquidity?.macroAlerts} />
+      <ModelCorrelationPanel matrix={data.liquidity?.modelCorrelation} />
     </section> : activeModel === 'Correlations' ? <section className="correlation-detail-grid">
       <article className={`correlation-map-panel panel ${regimeCorrelations?.status === 'calculated' ? '' : 'preview-section'}`}><div className="panel-title"><div><p className="section-kicker">ROLLING CORRELATION · {correlationWindow === '1Y' ? '252' : correlationWindow.replace('D', '')} OBSERVATIONS</p><h3>Cross-market relationship map</h3></div><span className="data-pill">{regimeCorrelations?.status === 'calculated' ? `${regimeCorrelations.calculatedCount} of ${rcPairs.length} calculated` : 'Awaiting inputs'}</span></div><div className="correlation-legend"><span><i className="correlation-negative"></i>Inverse</span><span><i className="correlation-neutral"></i>Mixed</span><span><i className="correlation-positive"></i>Positive</span><small>{`r = Pearson correlation of changes between the dates each pair shares`}</small></div><div className="correlation-rows">{rcPairs.map((pair) => { const value = rcValue(pair); const tone = pair.status !== 'calculated' || !Number.isFinite(value) ? 'correlation-neutral' : correlationTone(value); return <div className="correlation-row" key={pair.key}><b>{pair.left}</b><div className="correlation-link"><i className={tone}></i><span></span><i className={tone}></i></div><b>{pair.right}</b><strong className={tone}>{Number.isFinite(value) ? `${value > 0 ? '+' : ''}${value.toFixed(2)}` : '—'}</strong><small title={pair.windowLabels?.[correlationWindow] ?? undefined}>{pair.status === 'calculated' ? `${pair.observations} obs${pair.daily === false ? ` · ${pair.cadenceDays}d bars` : ''}` : 'Unavailable'}</small><em className={pair.leadLag?.leader ? 'lead-flag' : 'lead-flag lead-flat'} title={pair.leadLag ? `Peak correlation ${pair.leadLag.corrAtBest.toFixed(2)} at a lag of ${pair.leadLag.bestLagBars} observations versus ${Number.isFinite(pair.leadLag.synchronousCorr) ? pair.leadLag.synchronousCorr.toFixed(2) : '—'} synchronous` : 'Lead-lag needs at least 40 aligned observations'}>{pair.leadLag ? pair.leadLag.leader ? `${pair.leadLag.leader} leads ${pair.leadLag.leadDays}d` : 'Moves together' : 'Lead pending'}</em></div>; })}</div><p className="model-footnote"><code>regime-correlation-v1</code> aligns stored FRED and market histories on the dates each pair shares and correlates the changes between them over windows of 20, 60 and 252 observations. Those are sessions only where both legs publish daily: against a weekly series such as NFCI the same count of observations spans seven times as many days, so each row carries its own bar size and every window names its true span on hover. Pairs without both inputs stay explicitly unavailable. {regimeCorrelations?.leadLagMethodology}</p></article>
       <article className={`correlation-insight-panel panel ${regimeCorrelations?.status === 'calculated' ? '' : 'preview-section'}`}>{regimeCorrelations?.status === 'calculated' && strongestPair ? <>

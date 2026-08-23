@@ -400,3 +400,46 @@ test('the CPI year-over-year leg refuses a gap standing in for a year', () => {
   assert.equal(model.realized.status, 'unavailable');
   assert.match(model.realized.reason, /a year before the latest/);
 });
+
+test('regime transitions run as hindsight without vintages and say so', () => {
+  const count = 1400;
+  const model = calculateRegimeTransitions([
+    series('financialConditions', (index) => (index < 700 ? -0.6 : 0.9), { count }),
+    series('highYieldSpread', (index) => (index < 700 ? 3.1 : 7.5), { count }),
+    series('vix', (index) => (index < 700 ? 13 : 32), { count }),
+  ], []);
+  assert.equal(model.vintage, 'current');
+  assert.deepEqual(model.pointInTimeKeys, []);
+  assert.match(model.methodology, /hindsight study rather than a backtest/);
+  assert.match(model.methodology, /FRED API key/);
+});
+
+test('point-in-time vintages turn the study into a backtest and never use a later revision', () => {
+  const count = 1400;
+  const plain = [
+    series('financialConditions', (index) => (index < 700 ? -0.6 : 0.9), { count }),
+    series('highYieldSpread', (index) => (index < 700 ? 3.1 : 7.5), { count }),
+    series('vix', (index) => (index < 700 ? 13 : 32), { count }),
+  ];
+  // The NFCI observation for each date was first published a week later and
+  // then revised sharply a year after that. A backtest must use the first
+  // print at the time and never the revision.
+  const vintages = {
+    financialConditions: plain[0].history.flatMap((point) => {
+      const first = { date: point.date, value: point.value, realtimeStart: new Date(new Date(point.date).getTime() + (7 * DAY)).toISOString().slice(0, 10) };
+      const revised = { date: point.date, value: point.value + 4, realtimeStart: new Date(new Date(point.date).getTime() + (365 * DAY)).toISOString().slice(0, 10) };
+      return [first, revised];
+    }),
+  };
+  const backtest = calculateRegimeTransitions(plain, [], { vintages });
+  assert.equal(backtest.vintage, 'point-in-time');
+  assert.deepEqual(backtest.pointInTimeKeys, ['financialConditions']);
+  assert.match(backtest.methodology, /genuine backtest rather than hindsight/);
+
+  // The +4 revision would drive every score to the floor. If it were leaking in
+  // at scoring time, the whole history would read Contraction.
+  const hindsight = calculateRegimeTransitions(plain, []);
+  assert.equal(backtest.samples > 20, true);
+  assert.equal(backtest.current.regime, hindsight.current.regime, 'the latest score is unaffected by an old revision');
+  assert.equal(backtest.transitions.length >= 1, true);
+});

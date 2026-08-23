@@ -8,6 +8,7 @@ import { calculateBitcoinRangeModels } from './bitcoinOhlc.js';
 import { buildCoingeckoRequest, buildHeatmapRow, buildSocrataRequest, buildLiquidityNarrative, buildLiquidityTransmission, buildWorkspaceNarrative, calculateBitcoinCyclePhase, calculateChangeCorrelations, calculateCryptoRotation, calculateDollarScenarios, calculateDollarTransmissionRead, calculateLeadLag, calculateLiquidityRunway, calculateOpenInterestQuadrant, calculatePositioningModel, calculateCrossMarketRelationship, calculateGlobalLiquidityModel, calculateHeatmapRisk, calculateMacroRegimeModel, calculateMetalsCostStructure, calculateRsi, calculateScreenerScores, calculateTechnicalSnapshot, calculateTrendQuality, classifyHeadlineSentiment, isPublished, calculateUsdStrengthModel, calculateUsLiquidityModel } from './analytics.js';
 import { getStoredFredSeries, getStoredMarketHistory, getStoredMarketSnapshot, getRecentModelOutputs, isDatabaseConfigured, reserveProviderCredits } from './database.js';
 import { getAllEquityHistorySymbols, getCoreEquityHistorySymbols } from './equityCatalog.js';
+import { calculateModelConsensus, calculateModelCorrelationMatrix, evaluateMacroAlerts } from './macroConsensus.js';
 import { calculateDataSurprise, calculateLiquidityPayoff, calculateNominalDecomposition, calculateRateDivergence, calculateReserveScarcity, calculateTermPremium } from './macroRates.js';
 import { calculateGrowthNowcast, calculateInflationNowcast, calculateLiquidityCalendar, calculateRatePath, calculateRegimeTransitions, calculateYieldCurveModel, seriesPoints } from './macroModels.js';
 import { describeSeriesFreshness, isCryptoHistoryStale, isCotReportStale, isDailyCloseStale, isFredSeriesStale, isPbocObservationStale, monthsBetween } from './freshness.js';
@@ -1969,6 +1970,52 @@ export async function getFxWorkspace() {
   });
 }
 
+/**
+ * Point-in-time observations: what a series looked like on a past date, before
+ * later revisions rewrote it.
+ *
+ * Every historical study in this workspace currently reads the current vintage
+ * of its inputs, which means a revised observation is used at a date when its
+ * revision did not exist. That makes those studies hindsight rather than
+ * backtests, and it is stated as such wherever they publish. ALFRED can answer
+ * the point-in-time question properly, but only through the keyed API — the
+ * public CSV endpoint serves the latest vintage only — so without a key this
+ * returns nothing and the studies keep their honest hindsight label.
+ */
+export async function getFredVintageSeries(series, { observationStart = null, vintageDates = [] } = {}) {
+  if (!config.fredApiKey) {
+    return { id: series.id, key: series.key, status: 'unavailable', reason: 'Point-in-time vintages need a FRED API key; the public CSV endpoint serves only the latest revision.', history: [] };
+  }
+  if (!vintageDates.length) {
+    return { id: series.id, key: series.key, status: 'unavailable', reason: 'No vintage dates were requested.', history: [] };
+  }
+  const url = new URL('https://api.stlouisfed.org/fred/series/observations');
+  url.searchParams.set('series_id', series.id);
+  url.searchParams.set('api_key', config.fredApiKey);
+  url.searchParams.set('file_type', 'json');
+  // ALFRED caps a request at 2,000 vintage dates; asking for more silently
+  // truncates, so the cap is applied here where it can be reported.
+  const requested = vintageDates.slice(-2000);
+  url.searchParams.set('vintage_dates', requested.join(','));
+  if (observationStart) url.searchParams.set('observation_start', observationStart);
+  const payload = await fetchJson(url);
+  const observations = (payload.observations ?? []).filter((item) => item.value !== '.');
+  return {
+    id: series.id,
+    key: series.key,
+    status: observations.length ? 'calculated' : 'unavailable',
+    reason: observations.length ? null : `ALFRED returned no observations for ${series.id} across the requested vintages.`,
+    vintagesRequested: requested.length,
+    truncated: vintageDates.length > requested.length,
+    history: observations.map((item) => ({
+      date: item.date,
+      value: Number(item.value),
+      realtimeStart: item.realtime_start ?? null,
+      realtimeEnd: item.realtime_end ?? null,
+    })),
+  };
+}
+
 async function getFredSeries(series) {
   const url = new URL('https://api.stlouisfed.org/fred/series/observations');
   url.searchParams.set('series_id', series.id);
@@ -2286,6 +2333,35 @@ export async function getLiquiditySnapshot(options = {}) {
     const reserveScarcity = calculateReserveScarcity(modelSeries);
     const liquidityPayoff = calculateLiquidityPayoff(model?.history ?? [], benchmarkHistory);
 
+    const macroModels = {
+      macroRegime,
+      liquidity: publishable(model),
+      globalLiquidity: publishable(globalLiquidity),
+      usdStrength: publishable(usdStrength),
+      growthNowcast,
+      dataSurprise,
+      yieldCurve,
+      termPremium,
+      reserveScarcity,
+      inflation,
+      regimeHistory,
+      liquidityCalendar,
+    };
+    const consensus = calculateModelConsensus(macroModels);
+    const macroAlerts = evaluateMacroAlerts({ ...macroModels, consensus });
+    // The matrix reads stored output history, so it only has anything to say
+    // once PostgreSQL is configured and ingestion has run more than once.
+    let modelCorrelation = calculateModelCorrelationMatrix({});
+    if (isDatabaseConfigured()) {
+      try {
+        const tracked = ['us-liquidity', 'global-liquidity', 'usd-strength', 'macro-regime', 'growth-nowcast', 'yield-curve', 'data-surprise', 'reserve-scarcity'];
+        const stored = await Promise.all(tracked.map((modelId) => getRecentModelOutputs(modelId, 120).catch(() => [])));
+        modelCorrelation = calculateModelCorrelationMatrix(Object.fromEntries(tracked.map((modelId, index) => [modelId, stored[index]])));
+      } catch (error) {
+        modelCorrelation = { version: 'macro-model-correlation-v1', status: 'unavailable', reason: `Stored model outputs could not be read: ${error.message}`, pairs: [], models: [] };
+      }
+    }
+
     // The dollar smile's weak-growth arm used a single equity return spread as
     // its only input. It now takes the nowcast when one publishes, expressed on
     // the same axis the arm already expected, and falls back to the spread.
@@ -2359,6 +2435,9 @@ export async function getLiquiditySnapshot(options = {}) {
       dataSurprise,
       reserveScarcity,
       liquidityPayoff,
+      consensus,
+      macroAlerts,
+      modelCorrelation,
       dollarScenarios,
       stablecoins,
       narrative,

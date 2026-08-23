@@ -526,11 +526,39 @@ function bandFor(score) {
  * were visible at the time — a revised series makes this a hindsight study, not
  * a backtest, and it is labelled as one.
  */
-export function calculateRegimeTransitions(seriesList, benchmarkPoints, { stepDays = 7, minimumHistoryDays = 730, forwardWindows = [21, 63] } = {}) {
+export function calculateRegimeTransitions(seriesList, benchmarkPoints, { stepDays = 7, minimumHistoryDays = 730, forwardWindows = [21, 63], vintages = null } = {}) {
   const version = 'macro-regime-history-v1';
   const financialConditions = seriesPoints(seriesList, 'financialConditions');
   const credit = seriesPoints(seriesList, 'highYieldSpread');
   const volatility = seriesPoints(seriesList, 'vix');
+
+  // With point-in-time observations this becomes a genuine backtest: each score
+  // is computed only from values that had actually been published by that date.
+  // Without them it reads the current vintage of every series, which uses
+  // revisions that did not exist at the time — a hindsight study, and labelled
+  // as one either way.
+  const pointInTimeByKey = vintages && typeof vintages === 'object'
+    ? Object.fromEntries(Object.entries(vintages)
+      .filter(([, rows]) => Array.isArray(rows) && rows.length)
+      .map(([key, rows]) => [key, [...rows]
+        .filter((row) => row?.date && Number.isFinite(Number(row.value)))
+        .map((row) => ({ date: String(row.date).slice(0, 10), value: Number(row.value), knownFrom: String(row.realtimeStart ?? row.date).slice(0, 10) }))
+        .sort((left, right) => left.date.localeCompare(right.date) || left.knownFrom.localeCompare(right.knownFrom))]))
+    : {};
+  const pointInTime = Object.keys(pointInTimeByKey).length > 0;
+  // The observation known on `asOf`: published by then, and dated on or before
+  // it. Two conditions, because a revision published later must not be used and
+  // an observation dated later did not exist yet.
+  const knownOn = (key, fallback, asOf) => {
+    const rows = pointInTimeByKey[key];
+    if (!rows) return latestAtOrBefore(fallback, asOf);
+    let found = null;
+    for (const row of rows) {
+      if (row.date > asOf || row.knownFrom > asOf) continue;
+      if (!found || row.date > found.date || (row.date === found.date && row.knownFrom > found.knownFrom)) found = row;
+    }
+    return found;
+  };
   const legs = [financialConditions, credit, volatility].filter((points) => points.length);
   if (legs.length < 2) {
     return unavailable(version, 'Needs at least two of financial conditions, high-yield spreads and volatility to recompute a historical score.', { transitions: [] });
@@ -542,17 +570,19 @@ export function calculateRegimeTransitions(seriesList, benchmarkPoints, { stepDa
     return unavailable(version, `Needs ${Math.round(minimumHistoryDays / 365)} years of overlapping history; ${Math.round((new Date(end) - new Date(start)) / DAY_MS)} days available.`, { transitions: [] });
   }
 
-  const changeOver = (points, date, days) => {
-    const current = latestAtOrBefore(points, date);
-    const prior = current ? pointDaysBefore(points, current.date, days) : null;
-    return current && prior ? current.value - prior.value : null;
+  const changeOver = (key, points, date, days) => {
+    const current = knownOn(key, points, date);
+    if (!current) return null;
+    const priorDate = new Date(new Date(current.date).getTime() - (days * DAY_MS)).toISOString().slice(0, 10);
+    const prior = pointInTimeByKey[key] ? knownOn(key, points, priorDate) : pointDaysBefore(points, current.date, days);
+    return prior ? current.value - prior.value : null;
   };
   const scoreAt = (date) => {
-    const nfci = latestAtOrBefore(financialConditions, date)?.value ?? null;
-    const spread = latestAtOrBefore(credit, date)?.value ?? null;
-    const vix = latestAtOrBefore(volatility, date)?.value ?? null;
-    const nfciChange = changeOver(financialConditions, date, 91);
-    const creditChange = changeOver(credit, date, 91);
+    const nfci = knownOn('financialConditions', financialConditions, date)?.value ?? null;
+    const spread = knownOn('highYieldSpread', credit, date)?.value ?? null;
+    const vix = knownOn('vix', volatility, date)?.value ?? null;
+    const nfciChange = changeOver('financialConditions', financialConditions, date, 91);
+    const creditChange = changeOver('highYieldSpread', credit, date, 91);
     // The same driver definitions and weights the live regime uses, restricted
     // to the three that can be recomputed from raw series alone.
     const drivers = [
@@ -628,13 +658,15 @@ export function calculateRegimeTransitions(seriesList, benchmarkPoints, { stepDa
     asOf: current.date,
     reason: benchmark.length ? null : 'Forward returns need a benchmark history; the transition dates publish without them.',
     stepDays,
+    vintage: pointInTime ? 'point-in-time' : 'current',
+    pointInTimeKeys: Object.keys(pointInTimeByKey),
     samples: samples.length,
     coveredFrom: samples[0].date,
     transitions,
     current: { regime: current.regime, score: current.score, runDays: currentRun, typicalDwellDays: typicalDwell },
     dwellDays: Object.fromEntries(Object.entries(dwell).map(([regime, lengths]) => [regime, { episodes: lengths.length, medianDays: Math.round(mean(lengths)) }])),
     read: `${transitions.length} regime ${transitions.length === 1 ? 'change' : 'changes'} across ${samples.length} recomputed readings since ${samples[0].date}. The tape has been in ${current.regime} for ${currentRun} days${typicalDwell ? `, against a ${typicalDwell}-day average for that regime in this history` : ''}.`,
-    methodology: `The score is recomputed every ${stepDays} days from financial conditions, high-yield spreads and volatility using the same weights and clamps the live regime applies to them, then bucketed into the same bands. This is a hindsight study rather than a backtest: the series carry their current vintage, so a revised observation is used at a date when its revision did not exist. Forward returns are the benchmark's move over the following sessions from the transition date, and are omitted where the history does not extend far enough.`,
+    methodology: `The score is recomputed every ${stepDays} days from financial conditions, high-yield spreads and volatility using the same weights and clamps the live regime applies to them, then bucketed into the same bands. ${pointInTime ? `Point-in-time observations are used for ${Object.keys(pointInTimeByKey).join(', ')}: each score sees only values that had actually been published by that date, which makes those legs a genuine backtest rather than hindsight.` : 'This is a hindsight study rather than a backtest: the series carry their current vintage, so a revised observation is used at a date when its revision did not exist. A FRED API key would unlock the point-in-time vintages that fix this.'} Forward returns are the benchmark's move over the following sessions from the transition date, and are omitted where the history does not extend far enough.`,
   };
 }
 

@@ -168,6 +168,40 @@ export async function ingestLiquiditySnapshot() {
       await persistModelOutput('macro-regime', snapshot.macroRegime, lineageFor(macroKeys), runId);
     }
 
+    // Every macro model that publishes a score is stored, not just the three
+    // that predate the rest. Without this the narrative and the model
+    // correlation matrix have nothing to compare run to run, which is the only
+    // reason either exists.
+    const MACRO_MODEL_PERSISTENCE = [
+      { modelId: 'macro-regime-history', model: snapshot.regimeHistory, keys: ['financialConditions', 'highYieldSpread', 'vix'] },
+      { modelId: 'yield-curve', model: snapshot.yieldCurve, keys: ['us10yYield', 'us2yYield', 'us3mYield'] },
+      { modelId: 'inflation-nowcast', model: snapshot.inflation, keys: ['breakeven5y', 'breakeven10y', 'forwardInflation5y5y', 'cpi'] },
+      { modelId: 'rate-path', model: snapshot.ratePath, keys: ['us2yYield', 'us3mYield', 'us10yYield'] },
+      { modelId: 'liquidity-calendar', model: snapshot.liquidityCalendar, keys: ['treasuryGeneralAccount', 'reverseRepo', 'fedBalanceSheet'] },
+      { modelId: 'growth-nowcast', model: snapshot.growthNowcast, keys: ['us10yYield', 'breakeven10y'] },
+      { modelId: 'nominal-decomposition', model: snapshot.nominalDecomposition, keys: ['us10yYield', 'realYield10y', 'breakeven10y'] },
+      { modelId: 'term-premium', model: snapshot.termPremium, keys: ['termPremium10y', 'us10yYield'] },
+      { modelId: 'rate-divergence', model: snapshot.rateDivergence, keys: ['us10yYield', 'germany10y', 'japan10y', 'uk10y'] },
+      { modelId: 'data-surprise', model: snapshot.dataSurprise, keys: ['payrolls', 'initialClaims', 'industrialProduction', 'retailSales'] },
+      { modelId: 'reserve-scarcity', model: snapshot.reserveScarcity, keys: ['sofr', 'iorb'] },
+      { modelId: 'liquidity-payoff', model: snapshot.liquidityPayoff, keys: liquidityKeys },
+      { modelId: 'macro-consensus', model: snapshot.consensus, keys: macroKeys },
+    ];
+    const persistedMacroModels = [];
+    for (const entry of MACRO_MODEL_PERSISTENCE) {
+      if (!entry.model || entry.model.status === 'unavailable') continue;
+      await persistModelOutput(entry.modelId, entry.model, lineageFor(entry.keys), runId);
+      persistedMacroModels.push(entry.modelId);
+    }
+
+    let macroAlertsRaised = 0;
+    if (snapshot.macroAlerts?.entries?.length) {
+      macroAlertsRaised = await insertModelAlerts('macro-alerts-v1', snapshot.macroAlerts.entries.map((entry) => ({
+        key: entry.key,
+        text: `[${entry.severity}] ${entry.text}`,
+      })), runId);
+    }
+
     let regimeCorrelationVersion = null;
     const persistenceErrors = [];
     try {
@@ -186,7 +220,7 @@ export async function ingestLiquiditySnapshot() {
 
     return {
       status: snapshot.errors.length || !snapshot.model ? 'partial' : 'completed',
-      details: { seriesReceived: snapshot.series.length, modelVersion: snapshot.model?.version ?? null, usdStrengthVersion: snapshot.usdStrength?.version ?? null, macroRegimeVersion: snapshot.macroRegime?.version ?? null, regimeCorrelationVersion, providerErrors: [...snapshot.errors, ...persistenceErrors] },
+      details: { seriesReceived: snapshot.series.length, modelVersion: snapshot.model?.version ?? null, usdStrengthVersion: snapshot.usdStrength?.version ?? null, macroRegimeVersion: snapshot.macroRegime?.version ?? null, regimeCorrelationVersion, persistedMacroModels, macroAlertsRaised, providerErrors: [...snapshot.errors, ...persistenceErrors] },
     };
   });
 }

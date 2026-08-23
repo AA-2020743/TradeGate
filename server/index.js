@@ -261,6 +261,7 @@ const MODEL_FEED_LABELS = {
   'liquidity-states': 'Liquidity states',
   'dollar-transmission': 'Dollar transmission',
   'screener-v1': 'Screener',
+  'macro-alerts-v1': 'Macro alert',
 };
 
 function respondAtom(response, feed, entries) {

@@ -1796,3 +1796,40 @@ test('the narrative refuses to compare across a model version change', () => {
   assert.deepEqual(result.entries, []);
   assert.match(result.note, /model version changed/);
 });
+
+test('the global pool publishes its effective resolution, not just its print cadence', () => {
+  const day = (offset) => new Date(Date.UTC(2024, 0, 3) + (offset * 86_400_000)).toISOString().slice(0, 10);
+  const weekly = (key, start, step, multiplier = 1) => ({
+    key,
+    multiplier,
+    history: Array.from({ length: 120 }, (_, index) => ({ date: day(index * 7), value: start + (index * step) })),
+  });
+  const monthlyLeg = (key, start, step) => ({
+    key,
+    multiplier: 1,
+    history: Array.from({ length: 28 }, (_, index) => ({ date: day(index * 30), value: start + (index * step) })),
+  });
+  const daily = (key, start, step) => ({
+    key,
+    multiplier: 1,
+    history: Array.from({ length: 840 }, (_, index) => ({ date: day(index), value: start + (index * step) })),
+  });
+
+  const model = calculateGlobalLiquidityModel([
+    weekly('fedBalanceSheet', 7_000_000, 6_000),
+    weekly('treasuryGeneralAccount', 800_000, -900),
+    weekly('reverseRepo', 2_000, -6, 1000),
+    daily('usM2', 20_000, 4),
+    weekly('ecbBalanceSheet', 6_200_000, 4_000),
+    // The BoJ leg publishes monthly, which is the binding resolution.
+    monthlyLeg('bojBalanceSheet', 750_000, 3_000),
+    daily('eurUsd', 1.08, 0.0001),
+    daily('yenPerUsd', 148, 0.004),
+    daily('dxy', 110, -0.01),
+  ]);
+  assert.equal(model.status, 'calculated');
+  assert.equal(model.resolution.slowestLeg.key, 'boj');
+  assert.equal(model.resolution.effectiveCadenceDays >= 28, true, `effective cadence ${model.resolution.effectiveCadenceDays}`);
+  assert.equal(model.resolution.printCadenceDays < model.resolution.effectiveCadenceDays, true, 'the pool prints faster than its slowest leg moves');
+  assert.match(model.resolution.read, /carried forward rather than re-measured/);
+});

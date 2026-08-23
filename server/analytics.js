@@ -866,7 +866,8 @@ export function calculateGlobalLiquidityModel(seriesList) {
   ];
   if (missingLegs.length) return unavailableGlobal(`The US, ECB and BoJ legs are all required before a pool can be summed; missing ${missingLegs.join(', ')}.`, missingLegs);
 
-  const globalLiquidity = sumAlignedSeries([usLeg, ecbLeg, bojLeg, ...(pbocLeg.length ? [pbocLeg] : [])]);
+  const poolLegs = [usLeg, ecbLeg, bojLeg, ...(pbocLeg.length ? [pbocLeg] : [])];
+  const globalLiquidity = sumAlignedSeries(poolLegs);
   if (!globalLiquidity.length) {
     return unavailableGlobal(`No date has every central-bank leg within ${GLOBAL_LIQUIDITY_MAX_GAP_DAYS} days of it, so the pool cannot be summed without carrying a stale leg forward.`, ['A date shared by every central-bank leg']);
   }
@@ -911,6 +912,36 @@ export function calculateGlobalLiquidityModel(seriesList) {
   // been", which in any expansion is yes - a number that reads like a cycle
   // gauge and moves like a ratchet.
   const cyclePercentile = cycle.levelPercentile;
+  // The pool prints on the union of its legs' dates, but a leg that publishes
+  // monthly is carried forward between its own prints — so the total updates
+  // weekly while part of it is a month old. The effective resolution is the
+  // slowest leg, and stating the total's own cadence without that would imply
+  // every component moved.
+  const legCadence = (points) => {
+    if (points.length < 3) return null;
+    const gaps = points.slice(1).map((point, index) => (new Date(point.date) - new Date(points[index].date)) / DAY_MS);
+    const sorted = gaps.filter((gap) => gap > 0).sort((left, right) => left - right);
+    if (!sorted.length) return null;
+    const middle = Math.floor(sorted.length / 2);
+    return Math.round(sorted.length % 2 ? sorted[middle] : (sorted[middle - 1] + sorted[middle]) / 2);
+  };
+  const cadenceByLeg = [
+    { key: 'us', name: 'United States (net liquidity)', days: legCadence(usLeg) },
+    { key: 'ecb', name: 'European Central Bank', days: legCadence(ecbLeg) },
+    { key: 'boj', name: 'Bank of Japan', days: legCadence(bojLeg) },
+    ...(pbocLeg.length ? [{ key: 'pboc', name: "People's Bank of China", days: legCadence(pbocLeg) }] : []),
+  ];
+  const slowestLeg = cadenceByLeg.filter((leg) => Number.isFinite(leg.days)).sort((left, right) => right.days - left.days)[0] ?? null;
+  const resolution = {
+    printCadenceDays: legCadence(globalLiquidity),
+    effectiveCadenceDays: slowestLeg?.days ?? null,
+    slowestLeg: slowestLeg ? { key: slowestLeg.key, name: slowestLeg.name, cadenceDays: slowestLeg.days } : null,
+    legs: cadenceByLeg,
+    read: slowestLeg && Number.isFinite(legCadence(globalLiquidity))
+      ? `The pool prints every ${legCadence(globalLiquidity)} days, but ${slowestLeg.name} publishes every ${slowestLeg.days}, so the total's effective resolution is ${slowestLeg.days} days: between those prints part of the sum is carried forward rather than re-measured.`
+      : 'The effective resolution of the pool cannot be measured from the available legs.',
+  };
+
   const legSummary = [
     { key: 'us', name: 'United States (net liquidity)', points: usLeg },
     { key: 'ecb', name: 'European Central Bank', points: ecbLeg },
@@ -943,6 +974,7 @@ export function calculateGlobalLiquidityModel(seriesList) {
     globalLiquidityUsdMillions: latestTotal,
     cyclePercentile,
     cycle,
+    resolution,
     centralBanks: legSummary,
     composite,
     history: globalLiquidity,
