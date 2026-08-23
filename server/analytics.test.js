@@ -185,10 +185,48 @@ test('USD strength combines the broad dollar with connected macro drivers', () =
   ], { score: 45, composite: -0.1, version: 'liquidity-test' });
   assert.equal(model.version, 'usd-strength-v1');
   assert.equal(model.status, 'calculated');
-  assert.equal(model.coverage, 100);
+  // The rate-differential leg carries 5% of the weight and has no input here,
+  // so full coverage now requires it.
+  assert.equal(model.coverage, 95);
   assert.ok(model.score > 50);
   assert.equal(model.history.length, 300);
   assert.match(model.proxy, /not the ICE DXY/);
+
+  const withRates = calculateUsdStrengthModel([
+    daily('dxy', 100, 0.04),
+    daily('realYield10y', 1.5, 0.003),
+    daily('us2yYield', 4, 0.002),
+    daily('financialConditions', -0.4, 0.0005),
+    daily('vix', 16, 0),
+  ], { score: 45, composite: -0.1, version: 'liquidity-test' }, {
+    rateDivergence: { status: 'calculated', version: 'rate-divergence-v1', score: 80, averageSpreadPercent: 1.9, averageChangeBasisPoints: 20 },
+  });
+  assert.equal(withRates.coverage, 100);
+  assert.equal(withRates.drivers.find((driver) => driver.key === 'rateDifferential').score, 80);
+  assert.ok(withRates.score >= model.score, 'a widening US yield advantage cannot weaken the dollar read');
+});
+
+test('an unavailable rate divergence drops out rather than scoring neutral', () => {
+  const daily = (key, start, step) => ({
+    key,
+    multiplier: 1,
+    history: Array.from({ length: 300 }, (_, index) => ({
+      date: new Date(Date.UTC(2025, 0, index + 1)).toISOString().slice(0, 10),
+      value: start + (index * step),
+    })),
+  });
+  const model = calculateUsdStrengthModel([
+    daily('dxy', 100, 0.04),
+    daily('realYield10y', 1.5, 0.003),
+    daily('us2yYield', 4, 0.002),
+    daily('financialConditions', -0.4, 0.0005),
+    daily('vix', 16, 0),
+  ], { score: 45, composite: -0.1, version: 'liquidity-test' }, {
+    rateDivergence: { status: 'unavailable', reason: 'no foreign leg', score: null },
+  });
+  assert.equal(model.coverage, 95);
+  assert.equal(model.drivers.find((driver) => driver.key === 'rateDifferential').score, null);
+  assert.equal(model.missing.includes('US yield advantage over DM peers'), true);
 });
 
 test('USD strength is explicitly provisional when only dollar price is available', () => {

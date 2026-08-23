@@ -24,6 +24,17 @@ const FRED_MAX_OBSERVATION_AGE_DAYS = {
   // CPI is monthly and released with a two-to-three week lag, so a 60-day
   // ceiling is a genuine outage rather than a slow month.
   CPIAUCSL: 60,
+  THREEFYTP10: 14,
+  SOFR: 7,
+  IORB: 10,
+  // OECD long-rate series are monthly and land with a lag of weeks.
+  IRLTLT01DEM156N: 90,
+  IRLTLT01JPM156N: 90,
+  IRLTLT01GBM156N: 90,
+  PAYEMS: 60,
+  ICSA: 14,
+  INDPRO: 60,
+  RSAFS: 70,
 };
 
 export const PBOC_MAX_OBSERVATION_AGE_DAYS = 560;
@@ -79,6 +90,16 @@ const FRED_EXPECTED_WITHIN_DAYS = {
   T5YIE: 4,
   T10YIE: 4,
   CPIAUCSL: 45,
+  THREEFYTP10: 9,
+  SOFR: 4,
+  IORB: 7,
+  IRLTLT01DEM156N: 60,
+  IRLTLT01JPM156N: 60,
+  IRLTLT01GBM156N: 60,
+  PAYEMS: 45,
+  ICSA: 9,
+  INDPRO: 45,
+  RSAFS: 50,
 };
 
 /**

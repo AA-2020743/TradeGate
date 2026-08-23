@@ -1715,7 +1715,7 @@ function formatUsdBillions(valueInMillions) {
   return billions >= 1000 ? `$${(billions / 1000).toFixed(2)}T` : `$${billions.toFixed(1)}B`;
 }
 
-export function calculateUsdStrengthModel(seriesList, liquidityModel = null) {
+export function calculateUsdStrengthModel(seriesList, liquidityModel = null, { rateDivergence = null } = {}) {
   const series = Object.fromEntries(seriesList.map((item) => [item.key, item]));
   const dollar = pointsForSeries(series.dxy);
   const dollarTechnical = calculateTechnicalSnapshot(dollar.map((point) => ({ timestamp: `${point.date}T00:00:00.000Z`, value: point.value })));
@@ -1753,7 +1753,11 @@ export function calculateUsdStrengthModel(seriesList, liquidityModel = null) {
     { key: 'realYield', name: '10Y real-yield impulse', score: realYieldChange === null ? null : clamp(50 + (Math.tanh(realYieldChange / 0.5) * 50)), weight: 0.15, value: realYield.at(-1)?.value, change: realYieldChange, source: 'FRED DFII10' },
     { key: 'frontEnd', name: '2Y yield impulse', score: frontEndChange === null ? null : clamp(50 + (Math.tanh(frontEndChange / 0.75) * 50)), weight: 0.1, value: frontEndYield.at(-1)?.value, change: frontEndChange, source: 'FRED DGS2' },
     { key: 'stress', name: 'Dollar-smile stress support', score: stressScores.length ? mean(stressScores) : null, weight: 0.15, value: vixLatest, change: financialConditionsChange, source: 'FRED VIXCLS / NFCI' },
-    { key: 'liquidity', name: 'Inverse dollar-liquidity impulse', score: Number.isFinite(liquidityModel?.score) ? 100 - liquidityModel.score : null, weight: 0.15, value: liquidityModel?.score, change: liquidityModel?.composite, source: liquidityModel?.version },
+    { key: 'liquidity', name: 'Inverse dollar-liquidity impulse', score: Number.isFinite(liquidityModel?.score) ? 100 - liquidityModel.score : null, weight: 0.1, value: liquidityModel?.score, change: liquidityModel?.composite, source: liquidityModel?.version },
+    // The rate differential is the most-used driver in FX and the model has
+    // never carried one. It takes weight from the liquidity leg rather than
+    // being added on top, so the weights still sum to one.
+    { key: 'rateDifferential', name: 'US yield advantage over DM peers', score: rateDivergence?.status !== 'unavailable' && Number.isFinite(rateDivergence?.score) ? rateDivergence.score : null, weight: 0.05, value: rateDivergence?.averageSpreadPercent, change: rateDivergence?.averageChangeBasisPoints, source: rateDivergence?.version },
   ];
   const model = driverComposite(drivers, 0.45, 2);
   if (!model.publishable) {

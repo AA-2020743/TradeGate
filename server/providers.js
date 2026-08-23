@@ -8,6 +8,7 @@ import { calculateBitcoinRangeModels } from './bitcoinOhlc.js';
 import { buildCoingeckoRequest, buildHeatmapRow, buildSocrataRequest, buildLiquidityNarrative, buildLiquidityTransmission, buildWorkspaceNarrative, calculateBitcoinCyclePhase, calculateChangeCorrelations, calculateCryptoRotation, calculateDollarScenarios, calculateDollarTransmissionRead, calculateLeadLag, calculateLiquidityRunway, calculateOpenInterestQuadrant, calculatePositioningModel, calculateCrossMarketRelationship, calculateGlobalLiquidityModel, calculateHeatmapRisk, calculateMacroRegimeModel, calculateMetalsCostStructure, calculateRsi, calculateScreenerScores, calculateTechnicalSnapshot, calculateTrendQuality, classifyHeadlineSentiment, isPublished, calculateUsdStrengthModel, calculateUsLiquidityModel } from './analytics.js';
 import { getStoredFredSeries, getStoredMarketHistory, getStoredMarketSnapshot, getRecentModelOutputs, isDatabaseConfigured, reserveProviderCredits } from './database.js';
 import { getAllEquityHistorySymbols, getCoreEquityHistorySymbols } from './equityCatalog.js';
+import { calculateDataSurprise, calculateLiquidityPayoff, calculateNominalDecomposition, calculateRateDivergence, calculateReserveScarcity, calculateTermPremium } from './macroRates.js';
 import { calculateGrowthNowcast, calculateInflationNowcast, calculateLiquidityCalendar, calculateRatePath, calculateRegimeTransitions, calculateYieldCurveModel, seriesPoints } from './macroModels.js';
 import { describeSeriesFreshness, isCryptoHistoryStale, isCotReportStale, isDailyCloseStale, isFredSeriesStale, isPbocObservationStale, monthsBetween } from './freshness.js';
 
@@ -42,6 +43,25 @@ const FRED_SERIES = [
   { id: 'T5YIE', key: 'breakeven5y', name: '5-Year breakeven inflation', unit: 'Percent', multiplier: 1 },
   { id: 'T10YIE', key: 'breakeven10y', name: '10-Year breakeven inflation', unit: 'Percent', multiplier: 1 },
   { id: 'CPIAUCSL', key: 'cpi', name: 'CPI, all urban consumers', unit: 'Index', multiplier: 1 },
+  { id: 'THREEFYTP10', key: 'termPremium10y', name: '10-Year term premium (Kim-Wright)', unit: 'Percent', multiplier: 1 },
+  { id: 'SOFR', key: 'sofr', name: 'Secured overnight financing rate', unit: 'Percent', multiplier: 1 },
+  { id: 'IORB', key: 'iorb', name: 'Interest on reserve balances', unit: 'Percent', multiplier: 1 },
+  { id: 'IRLTLT01DEM156N', key: 'germany10y', name: 'Germany long-term government yield', unit: 'Percent', multiplier: 1 },
+  { id: 'IRLTLT01JPM156N', key: 'japan10y', name: 'Japan long-term government yield', unit: 'Percent', multiplier: 1 },
+  { id: 'IRLTLT01GBM156N', key: 'uk10y', name: 'UK long-term government yield', unit: 'Percent', multiplier: 1 },
+  { id: 'PAYEMS', key: 'payrolls', name: 'Total nonfarm payrolls', unit: 'Thousands', multiplier: 1 },
+  { id: 'ICSA', key: 'initialClaims', name: 'Initial jobless claims', unit: 'Claims', multiplier: 1 },
+  { id: 'INDPRO', key: 'industrialProduction', name: 'Industrial production', unit: 'Index', multiplier: 1 },
+  { id: 'RSAFS', key: 'retailSales', name: 'Advance retail sales', unit: 'USD millions', multiplier: 1 },
+];
+
+// Series where a higher reading is worse are inverted before scoring, so the
+// composite always reads "higher is stronger activity".
+const SURPRISE_INDICATORS = [
+  { key: 'payrolls', name: 'Nonfarm payrolls' },
+  { key: 'initialClaims', name: 'Initial jobless claims', inverse: true },
+  { key: 'industrialProduction', name: 'Industrial production' },
+  { key: 'retailSales', name: 'Retail sales' },
 ];
 
 const PBOC_SERIES_CODE = 'M.CN.B.XDC.CNY.N';
@@ -2231,7 +2251,7 @@ export async function getLiquiditySnapshot(options = {}) {
     const globalLiquidity = calculateGlobalLiquidityModel(modelSeries);
     const liquidityRunway = calculateLiquidityRunway(modelSeries);
     const publishable = (candidate) => (isPublished(candidate) ? candidate : null);
-    const usdStrength = calculateUsdStrengthModel(modelSeries, publishable(model));
+    const usdStrength = calculateUsdStrengthModel(modelSeries, publishable(model), { rateDivergence: calculateRateDivergence(modelSeries) });
     const macroRegime = calculateMacroRegimeModel(modelSeries, publishable(model), publishable(usdStrength), publishable(globalLiquidity));
     const yieldCurve = calculateYieldCurveModel(modelSeries);
     const inflation = calculateInflationNowcast(modelSeries);
@@ -2259,6 +2279,12 @@ export async function getLiquiditySnapshot(options = {}) {
       breakeven: breakevenMomentum,
     });
     const regimeHistory = calculateRegimeTransitions(modelSeries, benchmarkHistory);
+    const nominalDecomposition = calculateNominalDecomposition(modelSeries);
+    const termPremium = calculateTermPremium(modelSeries);
+    const rateDivergence = calculateRateDivergence(modelSeries);
+    const dataSurprise = calculateDataSurprise(modelSeries, { indicators: SURPRISE_INDICATORS });
+    const reserveScarcity = calculateReserveScarcity(modelSeries);
+    const liquidityPayoff = calculateLiquidityPayoff(model?.history ?? [], benchmarkHistory);
 
     // The dollar smile's weak-growth arm used a single equity return spread as
     // its only input. It now takes the nowcast when one publishes, expressed on
@@ -2327,6 +2353,12 @@ export async function getLiquiditySnapshot(options = {}) {
       liquidityCalendar,
       growthNowcast,
       regimeHistory,
+      nominalDecomposition,
+      termPremium,
+      rateDivergence,
+      dataSurprise,
+      reserveScarcity,
+      liquidityPayoff,
       dollarScenarios,
       stablecoins,
       narrative,

@@ -1069,6 +1069,101 @@ function GrowthNowcastPanel({ nowcast }) {
   </article>;
 }
 
+/** What is inside a nominal yield move: real yields or inflation compensation. */
+function NominalDecompositionPanel({ decomposition }) {
+  const status = decomposition?.status ?? 'unavailable';
+  const published = status !== 'unavailable';
+  return <article className={`panel ${published ? '' : 'preview-section'}`}>
+    <div className="panel-title"><div><p className="section-kicker">WHAT MOVED THE 10-YEAR · {status.toUpperCase()}</p><h3>{published ? `${(decomposition.driver ?? 'Both legs').replace(/^./, (letter) => letter.toUpperCase())} drove it` : 'Awaiting the three yield legs'}</h3></div>{published ? <span className="data-pill">{decomposition.nominalPercent}% nominal</span> : null}</div>
+    {published ? <>
+      <div className="stat-row"><span><strong>Composition today</strong><small>{`Real ${decomposition.realPercent}% plus breakeven ${decomposition.breakevenPercent}%`}</small></span><b>{decomposition.nominalPercent}%</b></div>
+      {(decomposition.windows ?? []).map((entry) => <div className="stat-row" key={entry.days}>
+        <span><strong>{`Over ${entry.spanDays ?? entry.days} days`}</strong><small>{entry.status === 'calculated' ? `real ${entry.realBasisPoints > 0 ? '+' : ''}${entry.realBasisPoints}bp · breakeven ${entry.breakevenBasisPoints > 0 ? '+' : ''}${entry.breakevenBasisPoints}bp${Math.abs(entry.residualBasisPoints) >= 3 ? ` · ${entry.residualBasisPoints}bp residual` : ''}` : entry.reason}</small></span>
+        <b className={Number.isFinite(entry.nominalBasisPoints) ? (entry.nominalBasisPoints >= 0 ? 'negative' : 'positive') : ''}>{Number.isFinite(entry.nominalBasisPoints) ? `${entry.nominalBasisPoints > 0 ? '+' : ''}${entry.nominalBasisPoints}bp` : '—'}</b>
+      </div>)}
+    </> : <div className="equity-empty">{decomposition?.reason ?? 'The nominal, real and breakeven 10-year series are all required.'}</div>}
+    <p className="model-footnote">{published ? decomposition.read : ''} {decomposition?.methodology ?? ''}</p>
+  </article>;
+}
+
+/** Expected short rates against the compensation demanded for holding duration. */
+function TermPremiumPanel({ premium }) {
+  const status = premium?.status ?? 'unavailable';
+  const published = status !== 'unavailable';
+  return <article className={`panel ${published ? '' : 'preview-section'}`}>
+    <div className="panel-title"><div><p className="section-kicker">TERM PREMIUM · {status.toUpperCase()}</p><h3>{published ? `${premium.premiumPercent}%${premium.negative ? ', still negative' : ''}` : 'Awaiting the term-premium series'}</h3></div>{published ? <span className="data-pill">{ordinal(premium.percentile)} percentile</span> : null}</div>
+    {published ? <>
+      {Number.isFinite(premium.expectationsPercent) ? <div className="stat-row"><span><strong>Expected short rates</strong><small>The nominal 10-year less the premium</small></span><b>{premium.expectationsPercent}%</b></div> : null}
+      {(premium.windows ?? []).map((entry) => <div className="stat-row" key={entry.days}>
+        <span><strong>{`Over ${entry.spanDays ?? entry.days} days`}</strong><small>{entry.status === 'calculated' ? `${entry.driver.replace(/^./, (letter) => letter.toUpperCase())} drove it · expectations ${entry.expectationsBasisPoints > 0 ? '+' : ''}${entry.expectationsBasisPoints}bp` : entry.reason}</small></span>
+        <b>{Number.isFinite(entry.premiumBasisPoints) ? `${entry.premiumBasisPoints > 0 ? '+' : ''}${entry.premiumBasisPoints}bp` : '—'}</b>
+      </div>)}
+    </> : <div className="equity-empty">{premium?.reason ?? 'FRED THREEFYTP10 is required.'}</div>}
+    <p className="model-footnote">{published ? premium.read : ''} {premium?.methodology ?? ''}</p>
+  </article>;
+}
+
+/** The US yield advantage over developed peers — the main FX driver. */
+function RateDivergencePanel({ divergence }) {
+  const status = divergence?.status ?? 'unavailable';
+  const published = status !== 'unavailable';
+  return <article className={`panel ${published ? '' : 'preview-section'}`}>
+    <div className="panel-title"><div><p className="section-kicker">RATE DIVERGENCE · {status.toUpperCase()}</p><h3>{published ? divergence.state : 'Awaiting foreign long rates'}</h3></div>{published ? <span className="data-pill">US {divergence.usPercent}%</span> : null}</div>
+    {published ? (divergence.markets ?? []).map((market) => <div className="stat-row" key={market.key}>
+      <span><strong>{market.name}</strong><small>{market.status === 'unavailable' ? market.reason : `${market.foreignPercent}% · ${ordinal(market.percentile)} percentile of ${market.rankedAgainst} readings${Number.isFinite(market.changeBasisPoints) ? ` · ${market.changeBasisPoints > 0 ? '+' : ''}${market.changeBasisPoints}bp over ${market.spanDays}d` : ''} · ${market.cadenceDays}d bars`}</small></span>
+      <b className={Number.isFinite(market.spreadPercent) ? (market.spreadPercent >= 0 ? 'positive' : 'negative') : ''}>{Number.isFinite(market.spreadPercent) ? `${market.spreadPercent > 0 ? '+' : ''}${market.spreadPercent}` : '—'}</b>
+    </div>) : <div className="equity-empty">{divergence?.reason ?? 'Foreign long-rate series are required.'}</div>}
+    <p className="model-footnote">{published ? divergence.read : ''} {divergence?.methodology ?? ''}</p>
+  </article>;
+}
+
+/** Whether official data has been running above or below its own trend. */
+function DataSurprisePanel({ surprise }) {
+  const status = surprise?.status ?? 'unavailable';
+  const published = status !== 'unavailable';
+  return <article className={`panel ${published ? '' : 'preview-section'}`}>
+    <div className="panel-title"><div><p className="section-kicker">DATA SURPRISE · {status.toUpperCase()}</p><h3>{published ? surprise.state : 'Awaiting activity series'}</h3></div>{published ? <span className="data-pill">{surprise.score}/100 · {surprise.coverage}% coverage</span> : null}</div>
+    {(surprise?.indicators ?? []).map((indicator) => <div className="stat-row" key={indicator.key}>
+      <span><strong>{indicator.name}{indicator.inverse ? ' (inverted)' : ''}</strong><small>{indicator.status === 'calculated' ? `${indicator.asOf} · ${Number.isFinite(indicator.percentile) ? `${ordinal(indicator.percentile)} percentile of ${indicator.observations} scored releases` : `${indicator.observations} scored releases, too uniform to rank`} · six-release average ${indicator.averageRecent > 0 ? '+' : ''}${indicator.averageRecent}σ` : indicator.reason}</small></span>
+      <b className={Number.isFinite(indicator.zScore) ? (indicator.zScore >= 0 ? 'positive' : 'negative') : ''}>{Number.isFinite(indicator.zScore) ? `${indicator.zScore > 0 ? '+' : ''}${indicator.zScore}σ` : '—'}</b>
+    </div>)}
+    {published ? null : <div className="equity-empty">{surprise?.reason ?? 'At least two activity series are required.'}</div>}
+    <p className="model-footnote">{published ? surprise.read : ''} {surprise?.methodology ?? ''}</p>
+  </article>;
+}
+
+/** What the liquidity impulse has been worth, bucketed by tercile. */
+function LiquidityPayoffPanel({ payoff }) {
+  const status = payoff?.status ?? 'unavailable';
+  const published = status !== 'unavailable';
+  return <article className={`panel ${published ? '' : 'preview-section'}`}>
+    <div className="panel-title"><div><p className="section-kicker">LIQUIDITY PAYOFF · {status.toUpperCase()}</p><h3>{published ? `${payoff.edgePercent > 0 ? '+' : ''}${payoff.edgePercent}-point spread` : 'Awaiting liquidity and asset histories'}</h3></div>{published ? <span className="data-pill">{payoff.samples} overlapping samples</span> : null}</div>
+    {published ? <>
+      <div className="stat-head"><span>{`${payoff.changeDays}-day impulse`}</span><span>{`Next ${payoff.forwardDays} days`}</span></div>
+      {(payoff.buckets ?? []).map((bucket) => <div className="stat-row" key={bucket.key}>
+        <span><strong>{bucket.name}</strong><small>{`${bucket.impulseFrom}% to ${bucket.impulseTo}% · ${bucket.observations} observations · ${bucket.positiveSharePercent}% positive`}</small></span>
+        <b className={bucket.averageForwardPercent >= 0 ? 'positive' : 'negative'}>{bucket.averageForwardPercent > 0 ? '+' : ''}{bucket.averageForwardPercent}%</b>
+      </div>)}
+    </> : <div className="equity-empty">{payoff?.reason ?? 'A liquidity history and a long asset history are both required.'}</div>}
+    <p className="model-footnote">{published ? payoff.read : ''} {payoff?.methodology ?? ''}</p>
+  </article>;
+}
+
+/** The market's own read on when reserves stop being abundant. */
+function ReserveScarcityPanel({ scarcity }) {
+  const status = scarcity?.status ?? 'unavailable';
+  const published = status !== 'unavailable';
+  return <article className={`panel ${published ? '' : 'preview-section'}`}>
+    <div className="panel-title"><div><p className="section-kicker">RESERVE SCARCITY · {status.toUpperCase()}</p><h3>{published ? scarcity.state : 'Awaiting SOFR and IORB'}</h3></div>{published ? <span className={`data-pill ${scarcity.spreadBasisPoints >= scarcity.thresholdBasisPoints ? 'pill-warning' : ''}`}>{scarcity.spreadBasisPoints > 0 ? '+' : ''}{scarcity.spreadBasisPoints}bp</span> : null}</div>
+    {published ? <>
+      <div className="stat-row"><span><strong>SOFR over the reserve rate</strong><small>{`${ordinal(scarcity.percentile)} percentile of ${scarcity.rankedAgainst} sessions`}</small></span><b className={scarcity.spreadBasisPoints >= scarcity.thresholdBasisPoints ? 'negative' : 'positive'}>{scarcity.spreadBasisPoints > 0 ? '+' : ''}{scarcity.spreadBasisPoints}bp</b></div>
+      <div className="stat-row"><span><strong>{`Sessions at or above ${scarcity.thresholdBasisPoints}bp`}</strong><small>Out of the last 21</small></span><b>{scarcity.daysAboveThreshold}</b></div>
+      {Number.isFinite(scarcity.changeBasisPoints) ? <div className="stat-row"><span><strong>Change over a quarter</strong><small>Direction of the funding pressure</small></span><b className={scarcity.changeBasisPoints >= 0 ? 'negative' : 'positive'}>{scarcity.changeBasisPoints > 0 ? '+' : ''}{scarcity.changeBasisPoints}bp</b></div> : null}
+    </> : <div className="equity-empty">{scarcity?.reason ?? 'Both SOFR and IORB are required.'}</div>}
+    <p className="model-footnote">{published ? scarcity.read : ''} {scarcity?.methodology ?? ''}</p>
+  </article>;
+}
+
 function MacroDashboard({ data }) {
   const [activeModel, setActiveModel] = React.useState('Liquidity');
   const [correlationWindow, setCorrelationWindow] = React.useState('60D');
@@ -1166,6 +1261,8 @@ function MacroDashboard({ data }) {
       <article className={`regional-panel panel ${liquidityRunway?.status === 'calculated' ? '' : 'preview-section'}`}><div className="panel-title"><div><p className="section-kicker">TIGHTENING RUNWAY · {liquidityRunway?.status?.toUpperCase() ?? 'UNAVAILABLE'}</p><h3>{liquidityRunway?.state ?? 'Awaiting Fed and reverse-repo histories'}</h3></div><span className={`data-pill ${Number.isFinite(liquidityRunway?.runwayMonths) && liquidityRunway.runwayMonths <= 6 ? 'pill-warning' : ''}`}>{Number.isFinite(liquidityRunway?.runwayMonths) ? `${liquidityRunway.runwayMonths} months left` : 'No drawdown'}</span></div><p className="regime-proximity">{liquidityRunway?.read ?? liquidityRunway?.reason}</p>{liquidityRunway?.status === 'calculated' ? <div className="signal-summary"><SignalCell label="Reverse repo" value={formatLiquidityValue(liquidityRunway.reverseRepoLevel)} /><SignalCell label="Drain / month" value={liquidityRunway.drainPerMonth > 0 ? formatLiquidityValue(liquidityRunway.drainPerMonth) : null} /><SignalCell label="Offset ratio" value={Number.isFinite(liquidityRunway.offsetRatio) ? `${liquidityRunway.offsetRatio}×` : null} /></div> : null}<p className="model-footnote">{liquidityRunway?.status === 'calculated' ? `${liquidityRunway.methodology} The Treasury general account is ${liquidityRunway.treasuryDirection ?? 'unavailable'} over the same window.` : liquidityRunway?.methodology ?? 'The runway publishes once the Fed balance sheet and reverse-repo histories both respond.'}</p></article>
 
       <LiquidityCalendarPanel calendar={data.liquidity?.liquidityCalendar} />
+      <ReserveScarcityPanel scarcity={data.liquidity?.reserveScarcity} />
+      <LiquidityPayoffPanel payoff={data.liquidity?.liquidityPayoff} />
 
       <article className="regional-panel panel"><div className="panel-title"><div><p className="section-kicker">GLOBAL EXTENSION</p><h3>World model calculated</h3></div><span className="data-pill">{globalLiquidity ? `${globalLiquidity.version}` : 'Not calculated'}</span></div>{globalLiquidity ? <div className="calculation-empty regional-empty">The Fed, ECB, BoJ, and PBoC legs are aggregated in USD. PBoC assets arrive via BIS with a publication lag; the Bank of England remains excluded because its series ended in 2014.</div> : <div className="calculation-empty regional-empty">ECB and BoJ histories must be ingested and normalized before a global score can be published.</div>}<button className="source-link" onClick={() => setActiveModel('Global')}>Open global model →</button></article>
     </section> : activeModel === 'Global' ? <section className="liquidity-detail-grid">
@@ -1178,8 +1275,12 @@ function MacroDashboard({ data }) {
     </section> : activeModel === 'Rates' ? <section className="risk-detail-grid">
       <YieldCurvePanel curve={data.liquidity?.yieldCurve} />
       <RatePathPanel ratePath={data.liquidity?.ratePath} />
+      <NominalDecompositionPanel decomposition={data.liquidity?.nominalDecomposition} />
+      <TermPremiumPanel premium={data.liquidity?.termPremium} />
       <InflationPanel inflation={data.liquidity?.inflation} />
+      <RateDivergencePanel divergence={data.liquidity?.rateDivergence} />
       <GrowthNowcastPanel nowcast={data.liquidity?.growthNowcast} />
+      <DataSurprisePanel surprise={data.liquidity?.dataSurprise} />
     </section> : activeModel === 'Correlations' ? <section className="correlation-detail-grid">
       <article className={`correlation-map-panel panel ${regimeCorrelations?.status === 'calculated' ? '' : 'preview-section'}`}><div className="panel-title"><div><p className="section-kicker">ROLLING CORRELATION · {correlationWindow === '1Y' ? '252' : correlationWindow.replace('D', '')} OBSERVATIONS</p><h3>Cross-market relationship map</h3></div><span className="data-pill">{regimeCorrelations?.status === 'calculated' ? `${regimeCorrelations.calculatedCount} of ${rcPairs.length} calculated` : 'Awaiting inputs'}</span></div><div className="correlation-legend"><span><i className="correlation-negative"></i>Inverse</span><span><i className="correlation-neutral"></i>Mixed</span><span><i className="correlation-positive"></i>Positive</span><small>{`r = Pearson correlation of changes between the dates each pair shares`}</small></div><div className="correlation-rows">{rcPairs.map((pair) => { const value = rcValue(pair); const tone = pair.status !== 'calculated' || !Number.isFinite(value) ? 'correlation-neutral' : correlationTone(value); return <div className="correlation-row" key={pair.key}><b>{pair.left}</b><div className="correlation-link"><i className={tone}></i><span></span><i className={tone}></i></div><b>{pair.right}</b><strong className={tone}>{Number.isFinite(value) ? `${value > 0 ? '+' : ''}${value.toFixed(2)}` : '—'}</strong><small title={pair.windowLabels?.[correlationWindow] ?? undefined}>{pair.status === 'calculated' ? `${pair.observations} obs${pair.daily === false ? ` · ${pair.cadenceDays}d bars` : ''}` : 'Unavailable'}</small><em className={pair.leadLag?.leader ? 'lead-flag' : 'lead-flag lead-flat'} title={pair.leadLag ? `Peak correlation ${pair.leadLag.corrAtBest.toFixed(2)} at a lag of ${pair.leadLag.bestLagBars} observations versus ${Number.isFinite(pair.leadLag.synchronousCorr) ? pair.leadLag.synchronousCorr.toFixed(2) : '—'} synchronous` : 'Lead-lag needs at least 40 aligned observations'}>{pair.leadLag ? pair.leadLag.leader ? `${pair.leadLag.leader} leads ${pair.leadLag.leadDays}d` : 'Moves together' : 'Lead pending'}</em></div>; })}</div><p className="model-footnote"><code>regime-correlation-v1</code> aligns stored FRED and market histories on the dates each pair shares and correlates the changes between them over windows of 20, 60 and 252 observations. Those are sessions only where both legs publish daily: against a weekly series such as NFCI the same count of observations spans seven times as many days, so each row carries its own bar size and every window names its true span on hover. Pairs without both inputs stay explicitly unavailable. {regimeCorrelations?.leadLagMethodology}</p></article>
       <article className={`correlation-insight-panel panel ${regimeCorrelations?.status === 'calculated' ? '' : 'preview-section'}`}>{regimeCorrelations?.status === 'calculated' && strongestPair ? <>
