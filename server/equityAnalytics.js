@@ -557,6 +557,9 @@ export function calculateMacroSensitivities(points, macroSeries) {
   };
 }
 
+// Below this a spread is noise rather than leadership.
+const BASKET_SPREAD_MINIMUM = 1;
+
 export function calculateBasketRotation(pairs, historiesBySymbol) {
   const normalizedBySymbol = new Map([...historiesBySymbol.entries()].map(([symbol, points]) => {
     const normalized = normalizeHistory(points ?? []);
@@ -604,8 +607,29 @@ export function calculateBasketRotation(pairs, historiesBySymbol) {
     if (!Number.isFinite(spread20) || !Number.isFinite(spread60)) {
       return { key: pair.key, left: pair.leftName, right: pair.rightName, status: 'unavailable', missing: ['Synchronized price history for every basket member'] };
     }
-    const leader = spread60 >= 0 ? pair.leftLeader : pair.rightLeader;
-    const regime = Math.abs(spread60) < 1 && Math.abs(spread20) < 1 ? 'Balanced' : `${leader} leading`;
+    // Both horizons are measured, so both should be reported. Naming the
+    // leader from the 60-session spread alone hid a live handoff: a basket
+    // ahead by two points over 60 sessions but behind by two over 20 read as
+    // plainly "leading" while the recent tape said the opposite.
+    const decisive = (value) => Math.abs(value) >= BASKET_SPREAD_MINIMUM;
+    const sideFor = (value) => (value >= 0 ? pair.leftLeader : pair.rightLeader);
+    const established = sideFor(spread60);
+    const recent = sideFor(spread20);
+    const rotating = decisive(spread20) && decisive(spread60) && established !== recent;
+
+    let regime;
+    let leader;
+    if (!decisive(spread20) && !decisive(spread60)) {
+      regime = 'Balanced';
+      leader = null;
+    } else if (rotating) {
+      regime = `${established} leading, ${recent} taking over`;
+      leader = established;
+    } else {
+      leader = decisive(spread60) ? established : recent;
+      regime = `${leader} leading`;
+    }
+
     return {
       key: pair.key,
       left: pair.leftName,
@@ -616,7 +640,15 @@ export function calculateBasketRotation(pairs, historiesBySymbol) {
       spread20,
       spread60,
       leader,
+      established: decisive(spread60) ? established : null,
+      emerging: rotating ? recent : null,
+      rotating,
       regime,
+      read: regime === 'Balanced'
+        ? `Neither basket leads by more than ${BASKET_SPREAD_MINIMUM} point over either window.`
+        : rotating
+          ? `${established} leads by ${Math.abs(spread60).toFixed(1)} points over 60 sessions, but ${recent} is ahead by ${Math.abs(spread20).toFixed(1)} over the last 20 — the leadership is changing hands.`
+          : `${leader} leads by ${Math.abs(decisive(spread60) ? spread60 : spread20).toFixed(1)} points, with both windows pointing the same way.`,
     };
   });
 
@@ -626,7 +658,7 @@ export function calculateBasketRotation(pairs, historiesBySymbol) {
     status: calculatedCount ? 'calculated' : 'unavailable',
     asOf: calculated.map((pair) => pair.asOf).filter(Boolean).sort().at(-1) ?? null,
     pairs: calculated,
-    methodology: 'Equal-weight basket returns over 20 and 60 synchronized sessions; the spread is left-basket minus right-basket return.',
+    methodology: `Equal-weight basket returns over 20 and 60 synchronized sessions; the spread is left-basket minus right-basket return. A spread inside ${BASKET_SPREAD_MINIMUM} point either way is treated as noise. Leadership is named from the 60-session spread, but when the 20-session spread is decisively the other way the pair is reported as changing hands rather than as the older window alone would have it.`,
   };
 }
 

@@ -542,3 +542,55 @@ test('two of three legs is enough, and both risk models agree on that threshold'
   assert.ok(Number.isFinite(technicalLeg(calculateTopRisk({ technical: twoLegs, breadth: riskBreadth, sentiment: riskSentiment }))));
   assert.ok(Number.isFinite(technicalLeg(calculateBottomSignal({ technical: twoLegs, breadth: riskBreadth, sentiment: riskSentiment }))));
 });
+
+// Two baskets over 120 sessions, driven by per-session compounding rates.
+const basketPair = { key: 'style', leftSymbols: ['L'], rightSymbols: ['R'], leftName: 'Growth', rightName: 'Value', leftLeader: 'Growth', rightLeader: 'Value' };
+const basketDates = Array.from({ length: 120 }, (_, index) => new Date(Date.UTC(2026, 0, index + 1)).toISOString().slice(0, 10));
+const basketSeries = (valueAt) => basketDates.map((date, index) => ({ date, value: valueAt(index) }));
+const rotationFor = (leftAt, rightAt) => calculateBasketRotation([basketPair], new Map([
+  ['L', basketSeries(leftAt)], ['R', basketSeries(rightAt)],
+])).pairs[0];
+
+test('a basket ahead over 60 sessions but behind over 20 is reported as changing hands', () => {
+  // Growth compounds all year; Value is flat then rises over the last 20.
+  const pair = rotationFor((index) => 100 * (1.0009 ** index), (index) => 100 * (index > 99 ? 1.0017 ** (index - 99) : 1));
+  assert.ok(pair.spread60 > 1, `spread60 ${pair.spread60}`);
+  assert.ok(pair.spread20 < -1, `spread20 ${pair.spread20}`);
+  assert.equal(pair.rotating, true);
+  assert.equal(pair.established, 'Growth');
+  assert.equal(pair.emerging, 'Value');
+  assert.equal(pair.regime, 'Growth leading, Value taking over');
+  assert.match(pair.read, /changing hands/);
+});
+
+test('both windows agreeing names a single leader with no handoff', () => {
+  const pair = rotationFor((index) => 100 * (1.0012 ** index), () => 100);
+  assert.equal(pair.rotating, false);
+  assert.equal(pair.emerging, null);
+  assert.equal(pair.regime, 'Growth leading');
+  assert.equal(pair.leader, 'Growth');
+  assert.match(pair.read, /both windows pointing the same way/);
+});
+
+test('two baskets moving together are balanced rather than given a leader', () => {
+  const pair = rotationFor((index) => 100 * (1.0008 ** index), (index) => 100 * (1.0008 ** index));
+  assert.equal(pair.regime, 'Balanced');
+  assert.equal(pair.leader, null);
+  assert.equal(pair.established, null);
+  assert.match(pair.read, /Neither basket leads/);
+});
+
+test('a decisive recent move with a flat longer window names the recent leader', () => {
+  // Nothing separates them over 60 sessions; Value pulls ahead over the last 20.
+  const pair = rotationFor(() => 100, (index) => 100 * (index > 99 ? 1.0012 ** (index - 99) : 1));
+  assert.ok(Math.abs(pair.spread20) >= 1);
+  assert.equal(pair.rotating, false);
+  assert.equal(pair.leader, 'Value');
+  assert.equal(pair.regime, 'Value leading');
+});
+
+test('a basket missing a member publishes nothing rather than a partial spread', () => {
+  const out = calculateBasketRotation([basketPair], new Map([['L', basketSeries((index) => 100 + index)]]));
+  assert.equal(out.pairs[0].status, 'unavailable');
+  assert.equal(out.status, 'unavailable');
+});
