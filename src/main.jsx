@@ -3,6 +3,7 @@ import { createRoot } from 'react-dom/client';
 import './styles.css';
 import { formatPercent, formatTimestamp, formatUsd, useEquityResearch, useMarketHistory, usePlatformData, useTechnicalAnalytics } from './liveData.js';
 import { buildRoute, parseRoute } from './routing.js';
+import { addSymbolToList, normalizeWatchlists } from './watchlistRules.js';
 import { SCREENER_COLUMNS, ariaSortFor, nextSortState, sortRows } from './screenerSort.js';
 
 const navItems = [
@@ -1129,6 +1130,7 @@ function WatchlistsDashboard({ data }) {
   });
   const [activeList, setActiveList] = React.useState(() => Object.keys(DEFAULT_WATCHLISTS)[0]);
   const [draftSymbol, setDraftSymbol] = React.useState('');
+  const [addError, setAddError] = React.useState(null);
   const [syncState, setSyncState] = React.useState('idle');
   const serverSyncedRef = React.useRef(false);
   const syncTimerRef = React.useRef(null);
@@ -1139,7 +1141,7 @@ function WatchlistsDashboard({ data }) {
     if (syncTimerRef.current) clearTimeout(syncTimerRef.current);
     syncTimerRef.current = setTimeout(() => {
       setSyncState('syncing');
-      fetch('/api/watchlists', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(lists) })
+      fetch('/api/watchlists', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(normalizeWatchlists(lists)) })
         .then((response) => response.json())
         .then((payload) => setSyncState(payload?.saved ? 'synced' : 'local'))
         .catch(() => setSyncState('failed'));
@@ -1178,9 +1180,13 @@ function WatchlistsDashboard({ data }) {
   }, []);
 
   const addSymbol = () => {
-    const symbol = draftSymbol.trim().toUpperCase().slice(0, 8);
-    if (!symbol || symbols.includes(symbol)) return;
-    setLists((current) => ({ ...current, [activeList]: [...(current[activeList] ?? []), symbol] }));
+    const result = addSymbolToList(lists, activeList, draftSymbol);
+    if (!result.ok) {
+      setAddError(result.reason);
+      return;
+    }
+    setAddError(null);
+    setLists(result.lists);
     setDraftSymbol('');
   };
   const removeSymbol = (symbol) => {
@@ -1225,7 +1231,7 @@ function WatchlistsDashboard({ data }) {
     <section className="screener-controls-row">
       <div className="window-buttons">{Object.keys(lists).map((name) => <button className={activeList === name ? 'selected' : ''} key={name} onClick={() => setActiveList(name)}>{name}</button>)}</div>
       <div className="watchlist-actions">
-        <input className="screener-search" value={draftSymbol} onChange={(event) => setDraftSymbol(event.target.value)} onKeyDown={(event) => event.key === 'Enter' && addSymbol()} placeholder="Add symbol…" aria-label="Add symbol" />
+        <input className="screener-search" value={draftSymbol} onChange={(event) => { setDraftSymbol(event.target.value); setAddError(null); }} onKeyDown={(event) => event.key === 'Enter' && addSymbol()} placeholder="Add symbol…" aria-label="Add symbol" />{addError ? <small className="watchlist-add-error" role="status">{addError}</small> : null}
         <button className="watch-button" onClick={addSymbol}>+ Add</button>
         {symbols.length ? <button className="watch-button" onClick={exportListCsv}>Export CSV</button> : null}
         <button className="watch-button" onClick={createList}>New list</button>

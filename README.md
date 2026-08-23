@@ -283,6 +283,7 @@ A consolidated `/api/digest` endpoint returns one JSON snapshot of every headlin
 ## Reliability Rules
 
 - Missing provider data returns unavailable; it is never silently replaced with a sample value.
+- Watchlist validation is shared with the server rather than approximated. `src/watchlistRules.js` mirrors the `PUT /api/watchlists` rules exactly — uppercase, `[A-Z0-9.-]` only, ten characters, fifty symbols a list, twenty lists — so a symbol the browser accepts is stored byte-identically, and a list at the cap refuses the next symbol with a reason instead of letting the server reject the whole payload and silently strand every other list.
 - The coverage indicator distinguishes a provider that cannot serve from one merely running without an optional key. FRED reads its public CSV endpoint keylessly and is fully functional, so counting every keyless provider as unconfigured — which the old check did — left the platform permanently "partial" and the warning meaningless. `derivePlatformStatus` marks a provider degraded only when it has no keyless path and no key, or is configured but unreachable or unmigrated, and the indicator names what is missing rather than reporting a generic fault.
 - FRED works with or without an API key: the authenticated observations API is preferred, and without a key the public `fredgraph.csv` endpoint supplies full-history CSV per series. H.10 FX and broad-dollar series allow a 10-day observation age to absorb the Fed's Monday release cadence.
 - PostgreSQL provides last-known-good history when an upstream provider fails.
