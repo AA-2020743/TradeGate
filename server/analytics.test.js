@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { buildAtomFeed, buildCoingeckoRequest, buildSocrataRequest, buildHeatmapRow, buildLiquidityNarrative, buildLiquidityTransmission, buildWorkspaceNarrative, calculateBitcoinCyclePhase, calculateChangeCorrelations, calculateCryptoRotation, calculateDollarScenarios, calculateDollarTransmissionRead, calculateLeadLag, calculateLiquidityRunway, calculatePositioningModel, calculateCrossMarketRelationship, calculateGlobalLiquidityModel, calculateHeatmapRisk, calculateMacroRegimeModel, calculateMacroRegimeProximity, classifyMacroRegimeByScore, calculateMetalsCostStructure, calculateOpenInterestQuadrant, calculateRsi, calculateScreenerScores, calculateSeriesLeadLag, calculateTechnicalSnapshot, calculateTrendQuality, classifyHeadlineSentiment, calculateUsdStrengthModel, calculateUsLiquidityModel, calculateLiquidityCyclePosition, escapeXml, isPublished, pearsonCorrelation } from './analytics.js';
+import { buildAtomFeed, buildCoingeckoRequest, buildSocrataRequest, buildHeatmapRow, buildLiquidityNarrative, buildLiquidityTransmission, buildWorkspaceNarrative, calculateBitcoinCyclePhase, calculateChangeCorrelations, calculateCryptoRotation, calculateDollarScenarios, calculateDollarTransmissionRead, calculateLeadLag, calculateLiquidityRunway, calculatePositioningModel, calculateCrossMarketRelationship, calculateGlobalLiquidityModel, calculateHeatmapRisk, calculateMacroRegimeModel, calculateMacroRegimeProximity, classifyMacroRegimeByScore, calculateMetalsCostStructure, calculateOpenInterestQuadrant, calculateRsi, calculateScreenerScores, calculateSeriesLeadLag, calculateTechnicalSnapshot, calculateTrendQuality, classifyHeadlineSentiment, calculateUsdStrengthModel, calculateUsLiquidityModel, calculateLiquidityCyclePosition, escapeXml, isPublished, measureChangeOverDays, pearsonCorrelation } from './analytics.js';
 
 test('RSI reaches 100 for an uninterrupted advance', () => {
   const values = Array.from({ length: 30 }, (_, index) => 100 + index);
@@ -1341,15 +1341,38 @@ test('the runway is withheld without both required histories', () => {
   assert.equal(calculateLiquidityRunway().status, 'unavailable');
 });
 
+// A daily series, so a window of any length has a real comparison point.
+const dailyRunwaySeries = (key, from, to, days = 120) => ({
+  key,
+  multiplier: 1,
+  history: Array.from({ length: days }, (_, index) => ({
+    date: new Date(Date.UTC(2026, 3, 1) + (index * 86_400_000)).toISOString().slice(0, 10),
+    value: from + (((to - from) * index) / (days - 1)),
+  })),
+});
+
 test('a shorter window is honoured in both the pace and the methodology', () => {
+  const model = calculateLiquidityRunway([
+    dailyRunwaySeries('fedBalanceSheet', 7_300_000, 7_000_000),
+    dailyRunwaySeries('reverseRepo', 700_000, 400_000),
+  ], { windowDays: 30 });
+  assert.equal(model.windowDays, 30);
+  // A 300bn drawdown spread over 120 days is 75bn a month, so the 400bn left
+  // lasts a little over five months.
+  assert.ok(model.runwayMonths > 4 && model.runwayMonths < 7, `runway ${model.runwayMonths}`);
+  assert.match(model.methodology, /over 30 days/);
+});
+
+test('a window with no comparison point inside it refuses rather than rescaling', () => {
+  // Two observations 91 days apart cannot answer a 30-day question. Taking the
+  // older one anyway reported a 91-day drawdown as a 30-day pace, tripling the
+  // implied drain and cutting the runway to a third of the truth.
   const model = calculateLiquidityRunway([
     runwaySeries('fedBalanceSheet', 7_300_000, 7_000_000),
     runwaySeries('reverseRepo', 700_000, 400_000),
   ], { windowDays: 30 });
-  assert.equal(model.windowDays, 30);
-  // The same 300bn drawdown over one month is a far faster pace, so less runway.
-  assert.ok(model.runwayMonths < 1.5, `runway ${model.runwayMonths}`);
-  assert.match(model.methodology, /over 30 days/);
+  assert.equal(model.status, 'unavailable');
+  assert.equal(model.runwayMonths, null);
 });
 
 // Binance publishes contracts and their notional value; price is the quotient.
@@ -1582,4 +1605,156 @@ test('percentile prose does not print "2th"', () => {
   const result = calculateLiquidityCyclePosition(points);
   assert.equal(/\b\d*[123]th\b/.test(result.read), false, `bad ordinal in: ${result.read}`);
   assert.match(result.read, /percentile of \d+ readings/);
+});
+
+test('a change over a window refuses a comparison point far outside it', () => {
+  const day = (offset) => new Date(Date.UTC(2025, 0, 1) + (offset * 86_400_000)).toISOString().slice(0, 10);
+  // Daily for four months, then an eight-month publication gap, then a few
+  // fresh prints. Nothing inside 91 days of the latest print can answer a
+  // 91-day question.
+  const gapped = [
+    ...Array.from({ length: 120 }, (_, index) => ({ date: day(index), value: 100 + (index * 0.1) })),
+    ...Array.from({ length: 5 }, (_, index) => ({ date: day(370 + index), value: 180 + index })),
+  ];
+  assert.equal(measureChangeOverDays(gapped, 91), null);
+
+  // The same series without the gap answers normally.
+  const continuous = Array.from({ length: 200 }, (_, index) => ({ date: day(index), value: 100 + (index * 0.1) }));
+  const measured = measureChangeOverDays(continuous, 91);
+  assert.equal(measured.spanDays, 91);
+  assert.equal(measured.fromDate, day(108));
+  assert.equal(Math.abs(measured.absolute - 9.1) < 1e-9, true);
+});
+
+test('a monthly series is allowed to land off target, a gap is not', () => {
+  const monthly = Array.from({ length: 24 }, (_, index) => ({
+    date: new Date(Date.UTC(2024, index, 15)).toISOString().slice(0, 10),
+    value: 100 * (1.004 ** index),
+  }));
+  const measured = measureChangeOverDays(monthly, 91);
+  assert.ok(measured, 'a monthly series must still publish a quarterly change');
+  // Three monthly steps back from the 15th is 90-92 days depending on the month.
+  assert.equal(measured.spanDays >= 89 && measured.spanDays <= 93, true, `span was ${measured.spanDays}`);
+
+  const quarterly = Array.from({ length: 8 }, (_, index) => ({
+    date: new Date(Date.UTC(2024, index * 3, 15)).toISOString().slice(0, 10),
+    value: 100 + index,
+  }));
+  // A quarterly series answering a 28-day question would have to reach a full
+  // quarter back, which is not a 28-day change under a different name.
+  assert.equal(measureChangeOverDays(quarterly, 28), null);
+  // It answers a question at its own resolution normally.
+  assert.ok(measureChangeOverDays(quarterly, 182));
+});
+
+test('the liquidity model refuses a driver whose window cannot be measured', () => {
+  const day = (offset) => new Date(Date.UTC(2025, 0, 1) + (offset * 86_400_000)).toISOString().slice(0, 10);
+  const full = (key, valueAt, multiplier = 1) => ({
+    key,
+    multiplier,
+    history: Array.from({ length: 400 }, (_, index) => ({ date: day(index), value: valueAt(index) })),
+  });
+  const gappedM2 = {
+    key: 'usM2',
+    multiplier: 1,
+    history: [
+      ...Array.from({ length: 120 }, (_, index) => ({ date: day(index), value: 100 + (index * 0.1) })),
+      ...Array.from({ length: 5 }, (_, index) => ({ date: day(370 + index), value: 180 + index })),
+    ],
+  };
+  const model = calculateUsLiquidityModel([
+    full('fedBalanceSheet', (index) => 7_000_000 + (index * 100)),
+    full('treasuryGeneralAccount', () => 800_000),
+    full('reverseRepo', () => 2_000),
+    gappedM2,
+    full('dxy', () => 110),
+  ]);
+  // Before the bound, this published a 251-day M2 change as a 91-day one, which
+  // saturated the impulse and read as Expansion off a data outage.
+  assert.equal(model.status, 'unavailable');
+  assert.deepEqual(model.missing, ['US M2 growth']);
+});
+
+test('a flat balance sheet is not reported as an expanding one', () => {
+  const flat = (key, value) => ({
+    key,
+    multiplier: 1,
+    history: Array.from({ length: 120 }, (_, index) => ({
+      date: new Date(Date.UTC(2026, 3, 1) + (index * 86_400_000)).toISOString().slice(0, 10),
+      value,
+    })),
+  });
+  const model = calculateLiquidityRunway([flat('fedBalanceSheet', 7_000_000), flat('reverseRepo', 400_000)]);
+  assert.equal(model.state, 'Balance sheet flat');
+  assert.match(model.read, /has not moved/);
+  assert.equal(model.runwayMonths, null, 'a flat facility has no exhaustion date');
+});
+
+test('liquidity transmission drops observations past the end of the asset history', () => {
+  const weekly = Array.from({ length: 120 }, (_, index) => ({
+    date: new Date(Date.UTC(2024, 0, 3) + (index * 7 * 86_400_000)).toISOString().slice(0, 10),
+    value: 6_000_000 + (index * 8_000),
+  }));
+  // The asset feed stops halfway through. Carrying its last close forward would
+  // add sixty flat bars and report far more observations than exist.
+  const asset = Array.from({ length: 60 * 7 }, (_, index) => ({
+    timestamp: new Date(Date.UTC(2024, 0, 3) + (index * 86_400_000)).toISOString(),
+    value: 100 + (index * 0.05),
+  }));
+  const model = buildLiquidityTransmission(weekly, asset, 'Test asset');
+  if (model.status === 'calculated') {
+    assert.ok(model.observations <= 60, `observations ${model.observations} exceeds the asset history`);
+  } else {
+    assert.match(model.reason, /aligned|overlapping/);
+  }
+
+  // With a complete asset history the same pair publishes normally.
+  const full = Array.from({ length: 120 * 7 }, (_, index) => ({
+    timestamp: new Date(Date.UTC(2024, 0, 3) + (index * 86_400_000)).toISOString(),
+    value: 100 + (index * 0.05),
+  }));
+  const complete = buildLiquidityTransmission(weekly, full, 'Test asset');
+  assert.equal(complete.status, 'calculated');
+  assert.equal(complete.observations > 60, true);
+});
+
+test('correlation windows are labelled by the cadence the pair actually shares', () => {
+  const day = (offset) => new Date(Date.UTC(2024, 0, 1) + (offset * 86_400_000)).toISOString().slice(0, 10);
+  const daily = Array.from({ length: 400 }, (_, index) => ({ date: day(index), value: 100 + Math.sin(index / 5) }));
+  const dailyPair = calculateChangeCorrelations(daily, daily.map((point) => ({ ...point, value: point.value * 1.5 })));
+  assert.equal(dailyPair.daily, true);
+  assert.equal(dailyPair.windowLabels['20D'], '20 sessions');
+
+  // A weekly series shares only its own dates, so twenty observations span
+  // twenty weeks — the "20D" key alone reads as twenty sessions.
+  const weekly = Array.from({ length: 120 }, (_, index) => ({ date: day(index * 7), value: 100 + Math.cos(index / 4) }));
+  const weeklyPair = calculateChangeCorrelations(weekly, daily);
+  assert.equal(weeklyPair.daily, false);
+  assert.equal(weeklyPair.cadenceDays, 7);
+  assert.match(weeklyPair.windowLabels['20D'], /about 20 weeks/);
+  assert.match(weeklyPair.windowLabels['60D'], /about 60 weeks/);
+});
+
+test('the narrative refuses to report movement between two runs of the same vintage', () => {
+  const output = (score, asOf) => ({ effective_at: asOf, output: { version: 'us-liquidity-v1', asOf, score, regime: 'Expansion' } });
+  // Ingestion runs faster than FRED publishes, so consecutive runs routinely
+  // read the same observations. Any score difference there is an artefact.
+  const sameVintage = buildLiquidityNarrative([output(72, '2026-05-20'), output(69, '2026-05-20')], []);
+  assert.equal(sameVintage.status, 'stable');
+  assert.deepEqual(sameVintage.entries, []);
+  assert.match(sameVintage.note, /same data vintage/);
+
+  const moved = buildLiquidityNarrative([output(72, '2026-05-27'), output(69, '2026-05-20')], []);
+  assert.equal(moved.status, 'updated');
+  assert.match(moved.entries[0].text, /up 3 points to 72\/100 since the 2026-05-20 vintage/);
+});
+
+test('the narrative refuses to compare across a model version change', () => {
+  const result = buildLiquidityNarrative([
+    { effective_at: '2026-05-27', output: { version: 'us-liquidity-v2', asOf: '2026-05-27', score: 80, regime: 'Expansion' } },
+    { effective_at: '2026-05-20', output: { version: 'us-liquidity-v1', asOf: '2026-05-20', score: 55, regime: 'Neutral' } },
+  ], []);
+  assert.equal(result.status, 'stable');
+  assert.deepEqual(result.entries, []);
+  assert.match(result.note, /model version changed/);
 });

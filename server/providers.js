@@ -1694,6 +1694,12 @@ export async function getRegimeCorrelations() {
         note: pair.note,
         status: result ? 'calculated' : 'unavailable',
         correlations: result?.correlations ?? { '20D': null, '60D': null, '1Y': null },
+        // A weekly series such as NFCI shares only its own dates with a daily
+        // one, so its "20D" window is twenty weeks. The label travels with the
+        // pair rather than being assumed from the key.
+        cadenceDays: result?.cadenceDays ?? null,
+        daily: result?.daily ?? null,
+        windowLabels: result?.windowLabels ?? null,
         observations: result?.observations ?? 0,
         asOf: result?.asOf ?? null,
         leadLag: leadLag ? {
@@ -2230,7 +2236,7 @@ export async function getLiquiditySnapshot(options = {}) {
     const yieldCurve = calculateYieldCurveModel(modelSeries);
     const inflation = calculateInflationNowcast(modelSeries);
     const ratePath = calculateRatePath(modelSeries);
-    const liquidityCalendar = calculateLiquidityCalendar(modelSeries);
+    const liquidityCalendar = calculateLiquidityCalendar(modelSeries, { runway: liquidityRunway });
 
     const [growthProxies, benchmarkHistory] = await Promise.all([
       getGrowthProxyHistories(),

@@ -10,6 +10,7 @@
  */
 
 const DAY_MS = 86_400_000;
+const DAYS_PER_MONTH = 30.44;
 
 function clamp(value, minimum = 0, maximum = 100) {
   return Math.min(maximum, Math.max(minimum, value));
@@ -52,6 +53,33 @@ function latestAtOrBefore(points, date) {
     if (points[index].date <= date) return points[index];
   }
   return null;
+}
+
+function medianSpacingDays(points) {
+  if (points.length < 3) return null;
+  const gaps = points.slice(1).map((point, index) => (new Date(point.date) - new Date(points[index].date)) / DAY_MS);
+  const sorted = gaps.filter((gap) => gap > 0).sort((left, right) => left - right);
+  if (!sorted.length) return null;
+  const middle = Math.floor(sorted.length / 2);
+  return sorted.length % 2 ? sorted[middle] : (sorted[middle - 1] + sorted[middle]) / 2;
+}
+
+/**
+ * The observation `days` before `from`, refusing one too far back to be that.
+ * An unbounded lookup answers a 91-day question with a 251-day gap when a
+ * series stops publishing, and answers a 28-day question with a full quarter
+ * when the series only prints quarterly.
+ */
+export function pointDaysBefore(points, from, days) {
+  if (points.length < 2) return null;
+  const target = new Date(new Date(from).getTime() - (days * DAY_MS)).toISOString().slice(0, 10);
+  const previous = latestAtOrBefore(points, target);
+  if (!previous) return null;
+  const spanDays = (new Date(from) - new Date(previous.date)) / DAY_MS;
+  const cadence = medianSpacingDays(points) ?? 1;
+  if (cadence > days) return null;
+  if (spanDays > days + Math.max(7, days * 0.15, cadence)) return null;
+  return { ...previous, spanDays: Math.round(spanDays) };
 }
 
 /** Two series differenced on the dates they share, newest last. */
@@ -238,11 +266,11 @@ export function calculateInflationNowcast(seriesList, { rankWindow = 2520 } = {}
   const realized = (() => {
     if (cpi.length < 13) return { status: 'unavailable', reason: `Needs 13 monthly CPI observations for a year-over-year rate; ${cpi.length} available.` };
     const latest = cpi.at(-1);
-    const yearAgo = latestAtOrBefore(cpi, new Date(new Date(latest.date).getTime() - (365 * DAY_MS)).toISOString().slice(0, 10));
+    const yearAgo = pointDaysBefore(cpi, latest.date, 365);
     if (!yearAgo || yearAgo.value <= 0) return { status: 'unavailable', reason: 'No CPI observation a year before the latest one.' };
     const yearOverYear = ((latest.value / yearAgo.value) - 1) * 100;
     const threeMonth = (() => {
-      const prior = latestAtOrBefore(cpi, new Date(new Date(latest.date).getTime() - (92 * DAY_MS)).toISOString().slice(0, 10));
+      const prior = pointDaysBefore(cpi, latest.date, 92);
       return prior && prior.value > 0 ? (((latest.value / prior.value) ** 4) - 1) * 100 : null;
     })();
     // CPI is released with a lag of weeks; the model says how stale its own
@@ -359,7 +387,7 @@ const QUARTER_END_MONTHS = [2, 5, 8, 11];
  * same calendar window in prior years — and is published as a seasonal
  * expectation, never as an announced schedule.
  */
-export function calculateLiquidityCalendar(seriesList, { horizonDays = 90, now = new Date() } = {}) {
+export function calculateLiquidityCalendar(seriesList, { horizonDays = 90, now = new Date(), runway = null } = {}) {
   const version = 'liquidity-calendar-v1';
   const treasury = seriesPoints(seriesList, 'treasuryGeneralAccount');
   const reverseRepo = seriesPoints(seriesList, 'reverseRepo');
@@ -396,22 +424,31 @@ export function calculateLiquidityCalendar(seriesList, { horizonDays = 90, now =
     ? Math.max(seasonalSamples.filter((sample) => sample.change > 0).length, seasonalSamples.filter((sample) => sample.change < 0).length) / seasonalSamples.length
     : null;
 
-  const reverseRepoLevel = reverseRepo.at(-1)?.value ?? null;
-  const reverseRepoDrain = (() => {
-    if (reverseRepo.length < 70) return null;
-    const latest = reverseRepo.at(-1);
-    const prior = latestAtOrBefore(reverseRepo, new Date(new Date(latest.date).getTime() - (91 * DAY_MS)).toISOString().slice(0, 10));
-    return prior ? (latest.value - prior.value) / 3 : null;
-  })();
-  const monthsOfCushion = Number.isFinite(reverseRepoLevel) && Number.isFinite(reverseRepoDrain) && reverseRepoDrain < 0
-    ? reverseRepoLevel / Math.abs(reverseRepoDrain)
-    : null;
+  // The runway model already measures the level, the drain and the months of
+  // cushion. Recomputing them here produced a second set of numbers for the
+  // same quantities that disagreed by whatever the two windows differed by, so
+  // the calendar defers to it and only computes them when it is absent.
+  const reverseRepoLevel = Number.isFinite(runway?.reverseRepoLevel) ? runway.reverseRepoLevel : reverseRepo.at(-1)?.value ?? null;
+  const reverseRepoDrain = Number.isFinite(runway?.drainPerMonth) && runway.drainPerMonth > 0
+    ? -runway.drainPerMonth
+    : (() => {
+      if (reverseRepo.length < 70) return null;
+      const latest = reverseRepo.at(-1);
+      const prior = pointDaysBefore(reverseRepo, latest.date, 91);
+      return prior ? (latest.value - prior.value) / (prior.spanDays / DAYS_PER_MONTH) : null;
+    })();
+  const monthsOfCushion = Number.isFinite(runway?.runwayMonths)
+    ? runway.runwayMonths
+    : Number.isFinite(reverseRepoLevel) && Number.isFinite(reverseRepoDrain) && reverseRepoDrain < 0
+      ? reverseRepoLevel / Math.abs(reverseRepoDrain)
+      : null;
+  const cushionSource = Number.isFinite(runway?.runwayMonths) ? runway.version ?? 'liquidity-runway-v1' : 'this model';
 
   const fedRunRate = (() => {
     if (fed.length < 14) return null;
     const latest = fed.at(-1);
-    const prior = latestAtOrBefore(fed, new Date(new Date(latest.date).getTime() - (91 * DAY_MS)).toISOString().slice(0, 10));
-    return prior ? (latest.value - prior.value) / 3 : null;
+    const prior = pointDaysBefore(fed, latest.date, 91);
+    return prior ? (latest.value - prior.value) / (prior.spanDays / DAYS_PER_MONTH) : null;
   })();
 
   const events = [
@@ -441,7 +478,7 @@ export function calculateLiquidityCalendar(seriesList, { horizonDays = 90, now =
       date: new Date(today.getTime() + (monthsOfCushion * 30.44 * DAY_MS)).toISOString().slice(0, 10),
       daysAway: Math.round(monthsOfCushion * 30.44),
       kind: 'projection',
-      note: 'Projected from the current level and the trailing 91-day drain rate. Straight-line: the drain has not been constant and the projection moves with it.',
+      note: `Projected from the current level and the trailing drain rate measured by ${cushionSource}. Straight-line: the drain has not been constant and the projection moves with it.`,
     }]),
   ].sort((left, right) => left.daysAway - right.daysAway);
 
@@ -458,6 +495,7 @@ export function calculateLiquidityCalendar(seriesList, { horizonDays = 90, now =
     reverseRepoDrainPerMonth: reverseRepoDrain === null ? null : Math.round(reverseRepoDrain),
     fedRunRatePerMonth: fedRunRate === null ? null : Math.round(fedRunRate),
     monthsOfCushion: monthsOfCushion === null ? null : round(monthsOfCushion, 1),
+    cushionSource,
     read: nearest
       ? `Next up: ${nearest.name}${nearest.date ? ` on ${nearest.date}` : ''}, ${nearest.daysAway} days away.${seasonalChange === null ? '' : ` The TGA's own seasonality points to a ${seasonalChange >= 0 ? 'rebuild' : 'drawdown'} of ${Math.abs(Math.round(seasonalChange / 1000))}bn over the next ${horizonDays} days, which would ${seasonalChange >= 0 ? 'drain' : 'add'} reserves.`}`
       : 'No forward liquidity event could be placed from the available history.',
@@ -506,7 +544,7 @@ export function calculateRegimeTransitions(seriesList, benchmarkPoints, { stepDa
 
   const changeOver = (points, date, days) => {
     const current = latestAtOrBefore(points, date);
-    const prior = latestAtOrBefore(points, new Date(new Date(date).getTime() - (days * DAY_MS)).toISOString().slice(0, 10));
+    const prior = current ? pointDaysBefore(points, current.date, days) : null;
     return current && prior ? current.value - prior.value : null;
   };
   const scoreAt = (date) => {

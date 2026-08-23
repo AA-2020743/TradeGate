@@ -7,6 +7,7 @@ import {
   calculateRatePath,
   calculateRegimeTransitions,
   calculateYieldCurveModel,
+  pointDaysBefore,
   seriesPoints,
 } from './macroModels.js';
 
@@ -362,4 +363,40 @@ test('a normally lagged CPI observation reports its release lag', () => {
   const model = calculateInflationNowcast([series('breakeven10y', () => 2.3), lagged]);
   assert.equal(model.realized.futureDated, false);
   assert.equal(model.realized.lagDays > 0, true);
+});
+
+test('the calendar defers to the runway model rather than publishing a second cushion', () => {
+  const now = new Date(Date.UTC(2024, 5, 1));
+  const tga = { key: 'treasuryGeneralAccount', multiplier: 1, history: Array.from({ length: 1500 }, (_, index) => ({ date: new Date(Date.UTC(2020, 0, 1) + (index * DAY)).toISOString().slice(0, 10), value: 700_000 + (Math.sin(index / 60) * 100_000) })) };
+  const rrp = { key: 'reverseRepo', multiplier: 1000, history: Array.from({ length: 400 }, (_, index) => ({ date: new Date(Date.UTC(2023, 0, 1) + (index * DAY)).toISOString().slice(0, 10), value: 1500 - (index * 3) })) };
+
+  const alone = calculateLiquidityCalendar([tga, rrp], { now });
+  const deferred = calculateLiquidityCalendar([tga, rrp], {
+    now,
+    runway: { version: 'liquidity-runway-v1', reverseRepoLevel: 300_000, drainPerMonth: 50_000, runwayMonths: 6 },
+  });
+  assert.equal(deferred.monthsOfCushion, 6, 'the runway model is the single source for the cushion');
+  assert.equal(deferred.cushionSource, 'liquidity-runway-v1');
+  assert.equal(alone.cushionSource, 'this model');
+  assert.equal(alone.monthsOfCushion !== 6, true, 'the two paths genuinely differ, which is why one must win');
+  assert.match(deferred.events.find((event) => event.key === 'rrpExhaustion').note, /liquidity-runway-v1/);
+});
+
+test('a windowed change refuses a series coarser than the window it is asked for', () => {
+  const quarterly = Array.from({ length: 12 }, (_, index) => ({
+    date: new Date(Date.UTC(2022, index * 3, 15)).toISOString().slice(0, 10),
+    value: 100 + index,
+  }));
+  assert.equal(pointDaysBefore(quarterly, '2024-09-15', 28), null);
+  assert.ok(pointDaysBefore(quarterly, '2024-09-15', 182));
+});
+
+test('the CPI year-over-year leg refuses a gap standing in for a year', () => {
+  const gapped = [
+    ...Array.from({ length: 24 }, (_, index) => ({ date: new Date(Date.UTC(2020, index, 15)).toISOString().slice(0, 10), value: 260 + index })),
+    { date: '2026-01-15', value: 320 },
+  ];
+  const model = calculateInflationNowcast([series('breakeven10y', () => 2.3), { key: 'cpi', multiplier: 1, history: gapped }]);
+  assert.equal(model.realized.status, 'unavailable');
+  assert.match(model.realized.reason, /a year before the latest/);
 });

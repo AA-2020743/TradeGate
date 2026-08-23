@@ -96,9 +96,16 @@ export function buildLiquidityTransmission(liquidityPoints, assetPoints, assetNa
     if (Number.isFinite(value)) assetByDate.set(String(point.timestamp).slice(0, 10), value);
   }
   const assetDates = [...assetByDate.keys()].sort();
+  // Bounded, because carrying the last asset close forward past the end of its
+  // own history manufactures flat bars: the correlation then sees a stretch of
+  // "the asset did not move" that is really "the feed stopped", which pulls the
+  // measured link toward zero and inflates the observation count behind it.
+  const ASSET_MAX_GAP_DAYS = 10;
   const assetClosest = (date) => {
     for (let index = assetDates.length - 1; index >= 0; index -= 1) {
-      if (assetDates[index] <= date) return assetByDate.get(assetDates[index]);
+      if (assetDates[index] > date) continue;
+      const gapDays = (new Date(date) - new Date(assetDates[index])) / DAY_MS;
+      return gapDays <= ASSET_MAX_GAP_DAYS ? assetByDate.get(assetDates[index]) : null;
     }
     return null;
   };
@@ -398,15 +405,62 @@ function latestAtOrBefore(points, date) {
   return null;
 }
 
-function changeOverDays(points, days) {
+/** Median gap between observations, which is what "this series' cadence" means. */
+function medianSpacingDays(points) {
+  if (points.length < 3) return null;
+  const gaps = points.slice(1).map((point, index) => (new Date(point.date) - new Date(points[index].date)) / DAY_MS);
+  const sorted = gaps.filter((gap) => gap > 0).sort((left, right) => left - right);
+  if (!sorted.length) return null;
+  const middle = Math.floor(sorted.length / 2);
+  return sorted.length % 2 ? sorted[middle] : (sorted[middle - 1] + sorted[middle]) / 2;
+}
+
+/**
+ * Locates the comparison point for a change over `days`, and refuses one that is
+ * too far back to be that change.
+ *
+ * This used to take the most recent observation at or before the target date
+ * with no bound on how far before. A series with a publication gap then reported
+ * a 251-day change as a 91-day one, which saturated the impulse and pushed the
+ * liquidity model into Expansion on what was really a data outage. The tolerance
+ * scales with the series' own cadence, so a monthly series may still land a few
+ * weeks off target while a genuine gap is rejected.
+ */
+function comparisonPoint(points, days) {
   if (points.length < 2) return null;
   const latest = points.at(-1);
-  const targetDate = new Date(latest.date);
-  targetDate.setUTCDate(targetDate.getUTCDate() - days);
-  const previous = latestAtOrBefore(points, targetDate.toISOString().slice(0, 10));
-  if (!previous || previous.value === 0) return null;
-  return ((latest.value / previous.value) - 1) * 100;
+  const targetTime = new Date(latest.date).getTime() - (days * DAY_MS);
+  const previous = latestAtOrBefore(points, new Date(targetTime).toISOString().slice(0, 10));
+  if (!previous) return null;
+  const spanDays = (new Date(latest.date) - new Date(previous.date)) / DAY_MS;
+  const cadence = medianSpacingDays(points) ?? 1;
+  // A series cannot answer a question finer than its own resolution: a
+  // quarterly series has no 28-day change, and reaching a full quarter back to
+  // produce one is not that change under a different name.
+  if (cadence > days) return null;
+  const tolerance = Math.max(7, days * 0.15, cadence);
+  if (spanDays > days + tolerance) return null;
+  return { latest, previous, spanDays: Math.round(spanDays) };
 }
+
+/** The measured change together with the span it was actually measured over. */
+export function measureChangeOverDays(points, days) {
+  const found = comparisonPoint(points, days);
+  if (!found) return null;
+  const { latest, previous, spanDays } = found;
+  return {
+    spanDays,
+    fromDate: previous.date,
+    toDate: latest.date,
+    absolute: latest.value - previous.value,
+    percent: previous.value === 0 ? null : ((latest.value / previous.value) - 1) * 100,
+  };
+}
+
+function changeOverDays(points, days) {
+  return measureChangeOverDays(points, days)?.percent ?? null;
+}
+
 
 function boundedImpulse(change, scale, inverse = false) {
   if (!Number.isFinite(change)) return null;
@@ -415,12 +469,8 @@ function boundedImpulse(change, scale, inverse = false) {
 }
 
 function absoluteChangeOverDays(points, days) {
-  if (points.length < 2) return null;
-  const latest = points.at(-1);
-  const targetDate = new Date(latest.date);
-  targetDate.setUTCDate(targetDate.getUTCDate() - days);
-  const previous = latestAtOrBefore(points, targetDate.toISOString().slice(0, 10));
-  return previous ? latest.value - previous.value : null;
+  const measured = measureChangeOverDays(points, days);
+  return measured ? measured.absolute : null;
 }
 
 function driverComposite(drivers, minimumCoverage, minimumDrivers = 1) {
@@ -513,14 +563,10 @@ export function calculateUsLiquidityModel(seriesList) {
   const shortNetImpulse = boundedImpulse(changeOverDays(netLiquidity, 28), 1.5);
   const longNetImpulse = boundedImpulse(changeOverDays(netLiquidity, 91), 3);
   const momentum = describeImpulseMomentum(shortNetImpulse, longNetImpulse);
-  const deltaOverDays = (points, days) => {
-    if (points.length < 2) return null;
-    const latest = points.at(-1);
-    const targetDate = new Date(latest.date);
-    targetDate.setUTCDate(targetDate.getUTCDate() - days);
-    const previous = latestAtOrBefore(points, targetDate.toISOString().slice(0, 10));
-    return previous ? latest.value - previous.value : null;
-  };
+  // Same bound as every other windowed change: a leg that cannot reach back
+  // inside the window drops out of the decomposition instead of contributing a
+  // longer change under the window's name.
+  const deltaOverDays = (points, days) => absoluteChangeOverDays(points, days);
   const decomposition = [28, 91].map((windowDays) => {
     const fedDelta = deltaOverDays(fed, windowDays);
     const tgaDelta = deltaOverDays(treasury, windowDays);
@@ -670,7 +716,11 @@ export function calculateLiquidityRunway(seriesList, { windowDays = 91 } = {}) {
   const offsetRatio = tighteningPerMonth > 0 && draining ? Math.round((drainPerMonth / tighteningPerMonth) * 100) / 100 : null;
 
   let state;
-  if (fedDelta >= 0) state = draining ? 'Balance sheet expanding with reverse repo still draining' : 'Balance sheet expanding';
+  // A flat balance sheet is not an expanding one; calling it expanding put a
+  // no-change window under a label that implies reserves are being added.
+  const expanding = fedDelta > 0;
+  if (expanding) state = draining ? 'Balance sheet expanding with reverse repo still draining' : 'Balance sheet expanding';
+  else if (fedDelta === 0) state = draining ? 'Balance sheet flat with reverse repo draining' : 'Balance sheet flat';
   else if (!draining) state = 'Tightening lands on reserves';
   else if (offsetRatio !== null && offsetRatio >= 0.5) state = 'Reverse repo is absorbing the tightening';
   else state = 'Reverse repo only partly absorbing the tightening';
@@ -678,6 +728,8 @@ export function calculateLiquidityRunway(seriesList, { windowDays = 91 } = {}) {
   const reads = {
     'Balance sheet expanding': 'The balance sheet is growing over this window, so nothing is being absorbed on its behalf.',
     'Balance sheet expanding with reverse repo still draining': 'The balance sheet is growing and the reverse-repo facility is still draining into it, which adds to reserves from both directions.',
+    'Balance sheet flat': 'The balance sheet has not moved over this window, so nothing is being absorbed and nothing is being added.',
+    'Balance sheet flat with reverse repo draining': 'The balance sheet has not moved, but the reverse-repo facility is still draining into reserves.',
     'Tightening lands on reserves': 'The balance sheet is shrinking and the reverse-repo facility is not draining to cushion it, so the tightening reaches reserves directly.',
     'Reverse repo is absorbing the tightening': 'The balance sheet is shrinking but the reverse-repo drawdown is covering most of it, which is why net liquidity looks calmer than the balance sheet alone.',
     'Reverse repo only partly absorbing the tightening': 'The balance sheet is shrinking faster than the reverse-repo facility is draining, so part of the tightening is already reaching reserves.',
@@ -1217,11 +1269,27 @@ export function calculateChangeCorrelations(leftPoints, rightPoints) {
       ? pearsonCorrelation(leftChanges.slice(-window), rightChanges.slice(-window))
       : null;
   }
+  const leadLag = calculateSeriesLeadLag(leftChanges, rightChanges, dates);
+  // The window keys count observations, not days, and the observations are the
+  // dates the two series share. Against a weekly series that is 20 weeks, not
+  // 20 sessions — a factor of seven hidden behind a label that says "20D". The
+  // measured cadence and a truthful label for each window travel with the
+  // numbers so no call site has to infer it.
+  const cadenceDays = leadLag?.barDays ?? null;
+  const describeWindow = (bars) => {
+    if (!Number.isFinite(cadenceDays)) return `${bars} shared observations`;
+    if (cadenceDays <= 2) return `${bars} sessions`;
+    if (cadenceDays <= 10) return `${bars} observations, about ${Math.round((bars * cadenceDays) / 7)} weeks`;
+    return `${bars} observations, about ${Math.round((bars * cadenceDays) / 30.44)} months`;
+  };
   return {
     correlations,
+    cadenceDays,
+    daily: Number.isFinite(cadenceDays) ? cadenceDays <= 2 : null,
+    windowLabels: { '20D': describeWindow(20), '60D': describeWindow(60), '1Y': describeWindow(252) },
     observations: leftChanges.length,
     asOf: dates.at(-1),
-    leadLag: calculateSeriesLeadLag(leftChanges, rightChanges, dates),
+    leadLag,
   };
 }
 
@@ -1494,22 +1562,48 @@ export function calculateBitcoinCyclePhase({ trend, valuation, drawdown, leverag
   };
 }
 
+/**
+ * Two stored outputs are only comparable when they were computed from different
+ * data. Ingestion runs on a schedule that is faster than the series it reads, so
+ * consecutive runs routinely share a vintage — and any score difference between
+ * two runs over the same observations is a rounding or code artefact, not news.
+ * A version change makes them incomparable for the same reason.
+ */
+function comparableOutputs(outputs) {
+  const latest = outputs[0] ?? null;
+  const previous = outputs[1] ?? null;
+  if (!latest?.output || !previous?.output) return { latest: null, previous: null, reason: null };
+  const latestVintage = latest.output.asOf ?? latest.effective_at ?? null;
+  const previousVintage = previous.output.asOf ?? previous.effective_at ?? null;
+  if (latestVintage && previousVintage && String(latestVintage) === String(previousVintage)) {
+    return { latest: null, previous: null, reason: 'same-vintage' };
+  }
+  if (latest.output.version && previous.output.version && latest.output.version !== previous.output.version) {
+    return { latest: null, previous: null, reason: 'version-changed' };
+  }
+  return { latest: latest.output, previous: previous.output, vintage: previousVintage, reason: null };
+}
+
 export function buildLiquidityNarrative(usOutputs = [], globalOutputs = []) {
   const entries = [];
-  const usLatest = usOutputs[0]?.output ?? null;
-  const usPrevious = usOutputs[1]?.output ?? null;
-  const globalLatest = globalOutputs[0]?.output ?? null;
-  const globalPrevious = globalOutputs[1]?.output ?? null;
+  const us = comparableOutputs(usOutputs);
+  const global = comparableOutputs(globalOutputs);
+  const usLatest = us.latest;
+  const usPrevious = us.previous;
+  const globalLatest = global.latest;
+  const globalPrevious = global.previous;
   const hasRunPairs = Boolean((usLatest && usPrevious) || (globalLatest && globalPrevious));
+  const sinceUs = us.vintage ? ` since the ${us.vintage} vintage` : ' since the previous run';
+  const sinceGlobal = global.vintage ? ` since the ${global.vintage} vintage` : ' since the previous run';
 
   if (usLatest && usPrevious && Number.isFinite(usLatest.score) && Number.isFinite(usPrevious.score)) {
     const delta = usLatest.score - usPrevious.score;
-    if (Math.abs(delta) >= 1) entries.push({ key: 'usScore', text: `US liquidity score moved ${delta > 0 ? 'up' : 'down'} ${Math.abs(delta)} points to ${usLatest.score}/100 since the previous run.` });
+    if (Math.abs(delta) >= 1) entries.push({ key: 'usScore', text: `US liquidity score moved ${delta > 0 ? 'up' : 'down'} ${Math.abs(delta)} points to ${usLatest.score}/100${sinceUs}.` });
     if (usLatest.regime !== usPrevious.regime) entries.push({ key: 'usRegime', text: `US regime shifted from ${usPrevious.regime} to ${usLatest.regime}.` });
   }
   if (globalLatest && globalPrevious && Number.isFinite(globalLatest.score) && Number.isFinite(globalPrevious.score)) {
     const delta = globalLatest.score - globalPrevious.score;
-    if (Math.abs(delta) >= 1) entries.push({ key: 'globalScore', text: `Global liquidity score moved ${delta > 0 ? 'up' : 'down'} ${Math.abs(delta)} points to ${globalLatest.score}/100 since the previous run.` });
+    if (Math.abs(delta) >= 1) entries.push({ key: 'globalScore', text: `Global liquidity score moved ${delta > 0 ? 'up' : 'down'} ${Math.abs(delta)} points to ${globalLatest.score}/100${sinceGlobal}.` });
     if (globalLatest.regime !== globalPrevious.regime) entries.push({ key: 'globalRegime', text: `Global regime shifted from ${globalPrevious.regime} to ${globalLatest.regime}.` });
     if (Number.isFinite(globalLatest.globalLiquidityUsdMillions) && Number.isFinite(globalPrevious.globalLiquidityUsdMillions) && globalPrevious.globalLiquidityUsdMillions > 0) {
       const changePercent = ((globalLatest.globalLiquidityUsdMillions / globalPrevious.globalLiquidityUsdMillions) - 1) * 100;
@@ -1518,6 +1612,16 @@ export function buildLiquidityNarrative(usOutputs = [], globalOutputs = []) {
   }
 
   if (entries.length) return { status: 'updated', entries };
+  const blocked = us.reason ?? global.reason ?? null;
+  if (blocked) {
+    return {
+      status: 'stable',
+      entries: [],
+      note: blocked === 'same-vintage'
+        ? 'The last two runs read the same data vintage, so there is nothing to compare between them.'
+        : 'The model version changed between the last two runs, so their scores are not comparable.',
+    };
+  }
   return { status: hasRunPairs ? 'stable' : 'insufficient-history', entries: [] };
 }
 
