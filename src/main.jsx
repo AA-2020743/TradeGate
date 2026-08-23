@@ -1313,6 +1313,55 @@ function ForexDashboard({ data }) {
   </div>;
 }
 
+function technicalCell(label, value, note) {
+  return <div className="btc-cycle-cell" key={label}><small>{label}</small><b>{value}</b><span>{note}</span></div>;
+}
+
+/**
+ * The close-only technical block. Models the close series genuinely cannot
+ * support - TD countdown, setup perfection, the TDST line - are listed as
+ * withheld with the feed they need, never rendered as a number.
+ */
+function BitcoinTechnicalsSection({ technicals }) {
+  const status = technicals?.status ?? 'unavailable';
+  const published = status !== 'unavailable';
+  const modules = technicals?.modules ?? {};
+  const stack = modules.movingAverages ?? {};
+  const stochastic = modules.stochasticRsi ?? {};
+  const squeeze = modules.squeeze ?? {};
+  const range = modules.range ?? {};
+  const setup = modules.tdSetup ?? {};
+  const slope = modules.momentumSlope ?? {};
+  const riskAdjusted = modules.volatilityAdjustedMomentum ?? {};
+  const divergences = modules.divergences?.divergences ?? [];
+  const withheld = [setup.countdown, setup.perfected, setup.tdst].filter((entry) => entry?.status === 'unavailable');
+
+  return <>
+    <section className="macro-section-heading"><div><p className="section-kicker">PRICE TECHNICALS · {status.toUpperCase()}</p><h2>{published ? `${technicals.stance} tape` : 'Awaiting bitcoin price history'}</h2></div>{published ? <span className="data-pill">{technicals.score}/100 · {technicals.coverage}% of legs</span> : null}</section>
+    <section className={`screener-panel panel ${published ? '' : 'preview-section'}`}>
+      <div className="btc-cycle-grid">
+        {technicalCell('Stochastic RSI', stochastic.status === 'calculated' ? `${stochastic.k}` : '—', stochastic.status === 'calculated' ? `%D ${stochastic.d} · ${stochastic.zone}${stochastic.cross ? ` · ${stochastic.cross} cross` : ''}` : stochastic.reason ?? 'Unavailable')}
+        {technicalCell('RSI & slope', slope.status === 'calculated' ? `${slope.rsi}` : '—', slope.status === 'calculated' ? `${slope.slopePerWindow > 0 ? '+' : ''}${slope.slopePerWindow} pts/14 bars · ${slope.direction}` : slope.reason ?? 'Unavailable')}
+        {technicalCell('Moving-average stack', Number.isFinite(stack.aboveCount) ? `${stack.aboveCount}/${stack.totalPublished}` : '—', Number.isFinite(stack.aboveCount)
+          ? `${stack.stackAlignment ? `${stack.stackAlignment} alignment` : 'alignment needs all four daily EMAs'} · ${stack.totalPublished} of ${stack.totalDefined} averages published${stack.missingAverages?.length ? ` · missing ${stack.missingAverages.join(', ')}` : ''}`
+          : stack.reason ?? 'Unavailable')}
+        {technicalCell('50/200 cross', stack.crossState ? `${stack.crossState === 'golden' ? 'Golden' : 'Death'}` : '—', stack.cross ? `since ${stack.cross.date} · ${stack.cross.barsSince} bars` : stack.crossState ? `50D has been ${stack.crossState === 'golden' ? 'above' : 'below'} the 200D for the whole available history` : 'Needs 200 daily closes')}
+        {technicalCell('Stretch from 200D', Number.isFinite(stack.zScore) ? `${stack.zScore > 0 ? '+' : ''}${stack.zScore}σ` : '—', stack.zScoreStatus === 'provisional' ? `provisional · ${stack.zScoreObservations} observations` : Number.isFinite(stack.zScore) ? `Z-score of log(price / 200D) over ${stack.zScoreObservations} bars` : 'Needs 200 daily closes')}
+        {technicalCell('Bollinger bandwidth', Number.isFinite(squeeze.percentile) ? `${squeeze.percentile}th` : '—', Number.isFinite(squeeze.percentile) ? `${squeeze.state} · ${squeeze.bandwidthPercent}% wide over ${squeeze.rankedAgainst} bars` : squeeze.reason ?? 'Unavailable')}
+        {technicalCell('Range percentile', Number.isFinite(range.percentile) ? `${range.percentile}th` : '—', Number.isFinite(range.positionInRange) ? `${range.rangePercent}% span · price ${range.positionInRange}% up it` : range.reason ?? 'Unavailable')}
+        {technicalCell('TD setup', setup.direction ? `${setup.direction === 'buy' ? 'Buy' : 'Sell'} ${setup.count}` : setup.status === 'calculated' ? 'None' : '—', setup.status === 'calculated' ? (setup.complete ? `count complete · raw run ${setup.rawCount}` : 'counting toward 9') : setup.reason ?? 'Unavailable')}
+        {technicalCell('Vol-adjusted momentum', Number.isFinite(riskAdjusted.ratio) ? `${riskAdjusted.ratio}` : '—', riskAdjusted.status === 'calculated' ? `${riskAdjusted.returnPercent > 0 ? '+' : ''}${riskAdjusted.returnPercent}% over ${riskAdjusted.window} bars at ${riskAdjusted.annualizedVolatilityPercent}% vol` : riskAdjusted.reason ?? 'Unavailable')}
+      </div>
+      {(technicals?.legs ?? []).map((leg) => <div className="scenario-row" key={leg.key}><span>{leg.name}</span><i><b style={{ width: `${leg.score}%` }}></b></i><strong>{leg.score}</strong></div>)}
+      <p className="cycle-phase-read">{divergences.length
+        ? divergences.map((entry) => `${entry.name}: ${entry.from.date} to ${entry.to.date}, confirmed ${entry.barsSinceConfirmed} bars ago.`).join(' ')
+        : modules.divergences?.read ?? 'RSI divergences publish once enough history is available to confirm two pivots.'}</p>
+      {withheld.length ? <p className="model-footnote">Withheld rather than approximated: {withheld.map((entry) => entry.reason).join(' ')}</p> : null}
+      <p className="model-footnote">{technicals?.methodology ?? technicals?.reason ?? 'Bitcoin price technicals publish once Yahoo BTC-USD history responds.'}</p>
+    </section>
+  </>;
+}
+
 function CryptoDashboard({ data }) {
   const [correlationWindow, setCorrelationWindow] = React.useState('60D');
   const dxyBtcModel = data.dxyBtc?.model;
@@ -1347,6 +1396,7 @@ function CryptoDashboard({ data }) {
       {(cyclePhase?.phases ?? []).map((phase) => <div className={`scenario-row ${cyclePhase?.leading?.key === phase.key ? 'scenario-leading' : ''}`} key={phase.key} title={phase.legs.map((leg) => `${leg.name}: ${leg.score ?? 'unavailable'}`).join('\n')}><span>{phase.name}<small>{phase.outcome}{phase.missing.length ? ` · missing ${phase.missing.length} of ${phase.legs.length} legs` : ''}</small></span><i><b style={{ width: `${phase.score ?? 0}%` }}></b></i><strong>{Number.isFinite(phase.score) ? phase.score : '—'}</strong></div>)}
       <p className="model-footnote">{cyclePhase?.methodology ?? 'Trend, valuation, drawdown and derivatives legs are required before a cycle phase can be placed.'}</p>
     </section>
+    <BitcoinTechnicalsSection technicals={btc?.technicals} />
     <section className="macro-section-heading"><div><p className="section-kicker">DOLLAR TRANSMISSION · {transmission?.status?.toUpperCase() ?? 'UNAVAILABLE'}</p><h2>{transmission?.linkSign === 0 ? 'The dollar link is too weak to move bitcoin' : `${tailwindLabel} for bitcoin`}</h2></div><span className="data-pill">Favorability read</span></section>
     <section className="crypto-grid">
       <article className={`crypto-tailwind-panel panel ${hasDollarInputs ? '' : 'preview-section'}`}><div className="panel-title"><div><p className="section-kicker">IS THE DOLLAR A TAILWIND?</p><h3>{tailwindLabel}</h3></div><span className="data-pill">{Number.isFinite(tailwindScore) ? `${tailwindScore > 0 ? '+' : ''}${tailwindScore} signal` : 'Unavailable'}</span></div>

@@ -2,6 +2,7 @@ import { config } from './config.js';
 import { withCache } from './cache.js';
 import { settle, unwrap } from './settled.js';
 import { calculateBreadthDivergence } from './equityAnalytics.js';
+import { calculateBitcoinTechnicals, calculateMovingAverageStack } from './bitcoinTechnicals.js';
 import { buildCoingeckoRequest, buildHeatmapRow, buildSocrataRequest, buildLiquidityNarrative, buildLiquidityTransmission, buildWorkspaceNarrative, calculateBitcoinCyclePhase, calculateChangeCorrelations, calculateCryptoRotation, calculateDollarScenarios, calculateDollarTransmissionRead, calculateLeadLag, calculateLiquidityRunway, calculateOpenInterestQuadrant, calculatePositioningModel, calculateCrossMarketRelationship, calculateGlobalLiquidityModel, calculateHeatmapRisk, calculateMacroRegimeModel, calculateMetalsCostStructure, calculateRsi, calculateScreenerScores, calculateTechnicalSnapshot, calculateTrendQuality, classifyHeadlineSentiment, calculateUsdStrengthModel, calculateUsLiquidityModel } from './analytics.js';
 import { getStoredFredSeries, getStoredMarketHistory, getStoredMarketSnapshot, getRecentModelOutputs, isDatabaseConfigured, reserveProviderCredits } from './database.js';
 import { getAllEquityHistorySymbols, getCoreEquityHistorySymbols } from './equityCatalog.js';
@@ -1207,7 +1208,11 @@ export async function getBitcoinCycleWorkspace() {
     const closes = priceHistory.map((point) => point.value);
     const spot = closes.at(-1) ?? null;
     const sma200d = smaOf(closes, 200);
-    const sma200w = smaOf(closes, 1400);
+    // The 200-week average is a mean of weekly closes, not of 1,400 daily ones.
+    // The stack model resamples properly, so the cycle phase reads the same
+    // number a weekly chart shows rather than a day-count approximation.
+    const stack = calculateMovingAverageStack(priceHistory);
+    const sma200w = stack.averages?.find((entry) => entry.key === 'sma200w')?.value ?? null;
 
     const trend = spot !== null && sma200d !== null ? {
       status: 'calculated',
@@ -1316,6 +1321,8 @@ export async function getBitcoinCycleWorkspace() {
       state: supplyNow >= supply30dAgo ? 'Dry powder building' : 'Supply contracting',
     } : { status: 'unavailable', reason: 'DefiLlama stablecoin history is required.' };
 
+    const technicals = calculateBitcoinTechnicals(priceHistory);
+
     const legs = [trend, valuation, shortTermHolder, leverage, positioning, etfFlows, stablecoins, drawdown, realizedVolatility];
     const calculatedCount = legs.filter((leg) => leg.status === 'calculated').length;
     const phase = calculateBitcoinCyclePhase({ trend, valuation, drawdown, leverage, stablecoins, shortTermHolder, realizedVolatility });
@@ -1326,6 +1333,7 @@ export async function getBitcoinCycleWorkspace() {
       calculatedCount,
       totalLegs: legs.length,
       phase,
+      technicals,
       trend,
       valuation,
       shortTermHolder,
@@ -1335,7 +1343,7 @@ export async function getBitcoinCycleWorkspace() {
       stablecoins,
       drawdown,
       realizedVolatility,
-      methodology: 'Trend uses Yahoo BTC-USD daily closes (200-day and 200-week simple averages). Valuation and short-term-holder cost basis come from bitcoin-data.com on-chain series. Funding aggregates Binance and Bybit perpetual rates with a Binance-history percentile; the OI/price quadrant uses 7-day changes in Binance futures open interest versus price. Stablecoin supply is DefiLlama aggregate circulating value. Drawdown is measured from the ten-year high; realized volatility is the 30-day annualized standard deviation of log returns percentile-ranked over the same window. Spot ETF flows remain unavailable without a licensed source.',
+      methodology: 'Trend uses Yahoo BTC-USD daily closes for the 200-day average and weekly closes for the 200-week average. The technicals block adds stochastic RSI, the four RSI divergence types on confirmed pivots, the full moving-average stack with the 50/200 cross and a Z-score of the stretch from the 200-day average, Bollinger compression, range percentile, the TD setup count, momentum slope and volatility-adjusted momentum - all from the same close series, with TD countdown, perfection and TDST withheld because they need daily highs and lows. Valuation and short-term-holder cost basis come from bitcoin-data.com on-chain series. Funding aggregates Binance and Bybit perpetual rates with a Binance-history percentile; the OI/price quadrant uses 7-day changes in Binance futures open interest versus price. Stablecoin supply is DefiLlama aggregate circulating value. Drawdown is measured from the ten-year high; realized volatility is the 30-day annualized standard deviation of log returns percentile-ranked over the same window. Spot ETF flows remain unavailable without a licensed source.',
     };
   });
 }
