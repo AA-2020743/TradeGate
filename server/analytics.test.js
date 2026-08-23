@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { buildAtomFeed, buildCoingeckoRequest, buildSocrataRequest, buildHeatmapRow, buildLiquidityNarrative, buildLiquidityTransmission, buildWorkspaceNarrative, calculateBitcoinCyclePhase, calculateChangeCorrelations, calculateCryptoRotation, calculateDollarScenarios, calculateDollarTransmissionRead, calculateLeadLag, calculatePositioningModel, calculateCrossMarketRelationship, calculateGlobalLiquidityModel, calculateHeatmapRisk, calculateMacroRegimeModel, calculateMacroRegimeProximity, classifyMacroRegimeByScore, calculateMetalsCostStructure, calculateRsi, calculateScreenerScores, calculateSeriesLeadLag, calculateTechnicalSnapshot, calculateTrendQuality, classifyHeadlineSentiment, calculateUsdStrengthModel, calculateUsLiquidityModel, escapeXml, pearsonCorrelation } from './analytics.js';
+import { buildAtomFeed, buildCoingeckoRequest, buildSocrataRequest, buildHeatmapRow, buildLiquidityNarrative, buildLiquidityTransmission, buildWorkspaceNarrative, calculateBitcoinCyclePhase, calculateChangeCorrelations, calculateCryptoRotation, calculateDollarScenarios, calculateDollarTransmissionRead, calculateLeadLag, calculateLiquidityRunway, calculatePositioningModel, calculateCrossMarketRelationship, calculateGlobalLiquidityModel, calculateHeatmapRisk, calculateMacroRegimeModel, calculateMacroRegimeProximity, classifyMacroRegimeByScore, calculateMetalsCostStructure, calculateRsi, calculateScreenerScores, calculateSeriesLeadLag, calculateTechnicalSnapshot, calculateTrendQuality, classifyHeadlineSentiment, calculateUsdStrengthModel, calculateUsLiquidityModel, escapeXml, pearsonCorrelation } from './analytics.js';
 
 test('RSI reaches 100 for an uninterrupted advance', () => {
   const values = Array.from({ length: 30 }, (_, index) => 100 + index);
@@ -1240,4 +1240,104 @@ test('the host is accepted with or without a scheme or trailing slash', () => {
   for (const host of ['publicreporting.cftc.gov', 'https://publicreporting.cftc.gov', 'https://publicreporting.cftc.gov/']) {
     assert.equal(buildSocrataRequest(host, '6dca-aqww').url, expected);
   }
+});
+
+// Two points 91 days apart is all the delta helper needs.
+const runwaySeries = (key, then, now) => ({
+  key,
+  multiplier: 1,
+  history: [
+    { date: new Date(Date.UTC(2026, 4, 1)).toISOString().slice(0, 10), value: then },
+    { date: new Date(Date.UTC(2026, 6, 31)).toISOString().slice(0, 10), value: now },
+  ],
+});
+
+test('a draining facility absorbing QT publishes its runway in months', () => {
+  // Balance sheet down 300bn, RRP down 300bn over the window, 400bn left.
+  const model = calculateLiquidityRunway([
+    runwaySeries('fedBalanceSheet', 7_300_000, 7_000_000),
+    runwaySeries('reverseRepo', 700_000, 400_000),
+    runwaySeries('treasuryGeneralAccount', 700_000, 750_000),
+  ]);
+  assert.equal(model.status, 'calculated');
+  assert.equal(model.state, 'Reverse repo is absorbing the tightening');
+  assert.equal(model.offsetRatio, 1);
+  // 300bn over ~3 months is ~100bn a month; 400bn left is about 4 months.
+  assert.ok(model.runwayMonths > 3.8 && model.runwayMonths < 4.2, `runway ${model.runwayMonths}`);
+  assert.match(model.read, /about 4 months left/);
+  assert.equal(model.treasuryDirection, 'rebuilding');
+});
+
+test('QT with no drawdown to cushion it says the tightening reaches reserves', () => {
+  const model = calculateLiquidityRunway([
+    runwaySeries('fedBalanceSheet', 7_300_000, 7_000_000),
+    runwaySeries('reverseRepo', 20_000, 20_000),
+    runwaySeries('treasuryGeneralAccount', 700_000, 700_000),
+  ]);
+  assert.equal(model.state, 'Tightening lands on reserves');
+  assert.equal(model.runwayMonths, null);
+  assert.equal(model.offsetRatio, null);
+  assert.match(model.read, /reaches reserves directly/);
+  assert.equal(model.treasuryDirection, 'flat');
+});
+
+test('a drawdown covering only part of the contraction is called out as partial', () => {
+  const model = calculateLiquidityRunway([
+    runwaySeries('fedBalanceSheet', 7_400_000, 7_000_000),
+    runwaySeries('reverseRepo', 500_000, 420_000),
+    runwaySeries('treasuryGeneralAccount', 700_000, 690_000),
+  ]);
+  assert.equal(model.state, 'Reverse repo only partly absorbing the tightening');
+  assert.equal(model.offsetRatio, 0.2);
+  assert.ok(model.runwayMonths > 0);
+  assert.equal(model.treasuryDirection, 'drawing down');
+});
+
+test('an expanding balance sheet needs nothing absorbed on its behalf', () => {
+  const growing = calculateLiquidityRunway([
+    runwaySeries('fedBalanceSheet', 7_000_000, 7_200_000),
+    runwaySeries('reverseRepo', 400_000, 400_000),
+    runwaySeries('treasuryGeneralAccount', 700_000, 700_000),
+  ]);
+  assert.equal(growing.state, 'Balance sheet expanding');
+  assert.equal(growing.runwayMonths, null);
+
+  const both = calculateLiquidityRunway([
+    runwaySeries('fedBalanceSheet', 7_000_000, 7_200_000),
+    runwaySeries('reverseRepo', 400_000, 300_000),
+    runwaySeries('treasuryGeneralAccount', 700_000, 700_000),
+  ]);
+  assert.equal(both.state, 'Balance sheet expanding with reverse repo still draining');
+  assert.ok(both.runwayMonths > 0);
+});
+
+test('an empty facility publishes no runway even while the balance sheet shrinks', () => {
+  const model = calculateLiquidityRunway([
+    runwaySeries('fedBalanceSheet', 7_300_000, 7_000_000),
+    runwaySeries('reverseRepo', 90_000, 0),
+    runwaySeries('treasuryGeneralAccount', 700_000, 700_000),
+  ]);
+  // It drained to nothing, so there is no cushion left to measure.
+  assert.equal(model.reverseRepoLevel, 0);
+  assert.equal(model.runwayMonths, null);
+});
+
+test('the runway is withheld without both required histories', () => {
+  const noRrp = calculateLiquidityRunway([runwaySeries('fedBalanceSheet', 7_300_000, 7_000_000)]);
+  assert.equal(noRrp.status, 'unavailable');
+  assert.equal(noRrp.state, null);
+  assert.match(noRrp.reason, /reverse-repo histories/);
+  assert.equal(calculateLiquidityRunway([]).status, 'unavailable');
+  assert.equal(calculateLiquidityRunway().status, 'unavailable');
+});
+
+test('a shorter window is honoured in both the pace and the methodology', () => {
+  const model = calculateLiquidityRunway([
+    runwaySeries('fedBalanceSheet', 7_300_000, 7_000_000),
+    runwaySeries('reverseRepo', 700_000, 400_000),
+  ], { windowDays: 30 });
+  assert.equal(model.windowDays, 30);
+  // The same 300bn drawdown over one month is a far faster pace, so less runway.
+  assert.ok(model.runwayMonths < 1.5, `runway ${model.runwayMonths}`);
+  assert.match(model.methodology, /over 30 days/);
 });

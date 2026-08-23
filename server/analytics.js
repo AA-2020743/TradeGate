@@ -575,6 +575,76 @@ function sumAlignedSeries(legs) {
   return output;
 }
 
+const DAYS_PER_MONTH = 30.44;
+
+/**
+ * How much longer the reverse-repo facility can keep absorbing quantitative
+ * tightening. The decomposition already shows which leg moved net liquidity;
+ * what it cannot say is that one of those legs has a hard floor. A shrinking
+ * balance sheet offset by an RRP drawdown looks neutral right up until the
+ * facility empties, at which point the same QT lands on reserves undiluted —
+ * so the level and the drain rate together are the constraint worth publishing.
+ */
+export function calculateLiquidityRunway(seriesList, { windowDays = 91 } = {}) {
+  const series = Object.fromEntries((seriesList ?? []).map((item) => [item.key, item]));
+  const fed = pointsForSeries(series.fedBalanceSheet);
+  const reverseRepo = pointsForSeries(series.reverseRepo);
+  const treasury = pointsForSeries(series.treasuryGeneralAccount);
+  const fedDelta = absoluteChangeOverDays(fed, windowDays);
+  const reverseRepoDelta = absoluteChangeOverDays(reverseRepo, windowDays);
+  const treasuryDelta = absoluteChangeOverDays(treasury, windowDays);
+  const reverseRepoLevel = reverseRepo.at(-1)?.value ?? null;
+
+  if (!Number.isFinite(fedDelta) || !Number.isFinite(reverseRepoDelta) || !Number.isFinite(reverseRepoLevel)) {
+    return {
+      version: 'liquidity-runway-v1',
+      status: 'unavailable',
+      reason: 'Fed balance-sheet and reverse-repo histories covering the window are both required.',
+      state: null,
+      runwayMonths: null,
+    };
+  }
+
+  const months = windowDays / DAYS_PER_MONTH;
+  const drainPerMonth = reverseRepoDelta < 0 ? Math.abs(reverseRepoDelta) / months : 0;
+  const tighteningPerMonth = fedDelta < 0 ? Math.abs(fedDelta) / months : 0;
+  const draining = drainPerMonth > 0;
+  // Only meaningful while the facility is actually draining; a flat or rising
+  // balance has no exhaustion date.
+  const runwayMonths = draining && reverseRepoLevel > 0 ? Math.round((reverseRepoLevel / drainPerMonth) * 10) / 10 : null;
+  const offsetRatio = tighteningPerMonth > 0 && draining ? Math.round((drainPerMonth / tighteningPerMonth) * 100) / 100 : null;
+
+  let state;
+  if (fedDelta >= 0) state = draining ? 'Balance sheet expanding with reverse repo still draining' : 'Balance sheet expanding';
+  else if (!draining) state = 'Tightening lands on reserves';
+  else if (offsetRatio !== null && offsetRatio >= 0.5) state = 'Reverse repo is absorbing the tightening';
+  else state = 'Reverse repo only partly absorbing the tightening';
+
+  const reads = {
+    'Balance sheet expanding': 'The balance sheet is growing over this window, so nothing is being absorbed on its behalf.',
+    'Balance sheet expanding with reverse repo still draining': 'The balance sheet is growing and the reverse-repo facility is still draining into it, which adds to reserves from both directions.',
+    'Tightening lands on reserves': 'The balance sheet is shrinking and the reverse-repo facility is not draining to cushion it, so the tightening reaches reserves directly.',
+    'Reverse repo is absorbing the tightening': 'The balance sheet is shrinking but the reverse-repo drawdown is covering most of it, which is why net liquidity looks calmer than the balance sheet alone.',
+    'Reverse repo only partly absorbing the tightening': 'The balance sheet is shrinking faster than the reverse-repo facility is draining, so part of the tightening is already reaching reserves.',
+  };
+
+  return {
+    version: 'liquidity-runway-v1',
+    status: 'calculated',
+    state,
+    windowDays,
+    reverseRepoLevel: Math.round(reverseRepoLevel),
+    drainPerMonth: Math.round(drainPerMonth),
+    tighteningPerMonth: Math.round(tighteningPerMonth),
+    offsetRatio,
+    runwayMonths,
+    treasuryDirection: !Number.isFinite(treasuryDelta) ? null : treasuryDelta > 0 ? 'rebuilding' : treasuryDelta < 0 ? 'drawing down' : 'flat',
+    read: `${reads[state]}${runwayMonths !== null ? ` At the current drawdown pace the facility has about ${runwayMonths} ${runwayMonths === 1 ? 'month' : 'months'} left before it can no longer cushion anything.` : ''}`,
+    methodology: `Deltas are measured over ${windowDays} days and converted to a monthly pace. Runway divides the current reverse-repo balance by that monthly drawdown, and is published only while the facility is actually draining, since a flat or rising balance has no exhaustion date. The offset ratio is the reverse-repo drawdown over the balance-sheet contraction, so a ratio at or above 0.5 means most of the tightening is being absorbed rather than reaching reserves.`,
+  };
+}
+
+
 export function calculateGlobalLiquidityModel(seriesList) {
   const series = Object.fromEntries(seriesList.map((item) => [item.key, item]));
   const fed = pointsForSeries(series.fedBalanceSheet);

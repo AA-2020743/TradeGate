@@ -184,6 +184,12 @@ The US liquidity model uses:
 
 The output is Expansion above `+0.15`, Contraction below `-0.15`, and Neutral between those thresholds.
 
+### `liquidity-runway-v1`
+
+The net-liquidity decomposition shows which leg moved the total; what it cannot say is that one of those legs has a hard floor. A shrinking Fed balance sheet offset by a reverse-repo drawdown looks neutral right up until the facility empties, at which point the same tightening lands on reserves undiluted. This model publishes that constraint: the current reverse-repo balance, the drawdown converted to a monthly pace, the offset ratio against the balance-sheet contraction, and — only while the facility is actually draining, since a flat or rising balance has no exhaustion date — how many months of cushion remain at the current pace.
+
+States are: the balance sheet expanding (nothing needs absorbing), a reverse-repo drawdown covering at least half the contraction, one covering less than half, and a contraction with no drawdown at all, where the tightening reaches reserves directly. The Treasury general account's direction over the same window is carried alongside, since a rebuild is the other drain.
+
 ### `global-liquidity-v1`
 
 The global liquidity model aggregates central-bank balance sheets converted to US dollars:
