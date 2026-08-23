@@ -513,3 +513,68 @@ describe('provider errors mark the run partial without losing what was written',
   assert.deepEqual(result.details.providerErrors, ['FRED series are stale and excluded from models: NFCI']);
   assert.equal((await pool.query('SELECT COUNT(*)::int AS count FROM model_outputs')).rows[0].count > 0, true);
 });
+
+
+describe('retention keeps the most recent vintages and drops the rest', async () => {
+  await reset();
+  const dates = Array.from({ length: 30 }, (_, index) => new Date(Date.UTC(2026, 0, 1 + index)).toISOString().slice(0, 10));
+  for (const asOf of dates) {
+    await database.persistModelOutput('retained', { version: 'v1', status: 'calculated', asOf, score: 50 });
+  }
+  assert.equal((await database.getRecentModelOutputs('retained', 100)).length, 30);
+
+  const removed = await database.pruneModelOutputs('retained', 10);
+  assert.equal(removed, 20);
+  const kept = await database.getRecentModelOutputs('retained', 100);
+  assert.equal(kept.length, 10);
+  // The newest survive, which is what every reader looks at.
+  assert.equal(kept[0].output.asOf, dates.at(-1));
+});
+
+describe('retention counts vintages, not rows', async () => {
+  await reset();
+  // Ten runs against one vintage plus four more vintages. Trimming by row count
+  // would leave a window of one day; trimming by vintage keeps four.
+  for (let run = 0; run < 10; run += 1) {
+    await database.persistModelOutput('repeated', { version: 'v1', status: 'calculated', asOf: '2026-01-01', score: run });
+  }
+  for (const asOf of ['2026-01-02', '2026-01-03', '2026-01-04', '2026-01-05']) {
+    await database.persistModelOutput('repeated', { version: 'v1', status: 'calculated', asOf, score: 60 });
+  }
+  await database.pruneModelOutputs('repeated', 4);
+  const kept = await database.getRecentModelOutputs('repeated', 100);
+  const vintages = new Set(kept.map((row) => row.output.asOf));
+  assert.equal(vintages.size, 4, `kept ${vintages.size} vintages`);
+  assert.equal(vintages.has('2026-01-01'), false, 'the oldest vintage is the one that goes');
+});
+
+describe('retention leaves a model inside its window untouched', async () => {
+  await reset();
+  await database.persistModelOutput('small', { version: 'v1', status: 'calculated', asOf: '2026-01-01', score: 50 });
+  assert.equal(await database.pruneModelOutputs('small', 240), 0);
+  assert.equal((await database.getRecentModelOutputs('small', 10)).length, 1);
+  assert.equal(await database.pruneModelOutputs('never-stored', 240), 0);
+});
+
+describe('a retention sweep covers every model that has stored output', async () => {
+  await reset();
+  await database.persistModelOutput('a', { version: 'v1', status: 'calculated', asOf: '2026-01-01', score: 1 });
+  await database.persistModelOutput('b', { version: 'v1', status: 'calculated', asOf: '2026-01-01', score: 2 });
+  assert.deepEqual((await database.listStoredModelIds()).sort(), ['a', 'b']);
+});
+
+describe('a run that cannot deliver an alert holds it for the next one', async () => {
+  await reset();
+  const { persistLiquiditySnapshot } = await import('./ingestion.js');
+  const { evaluateMacroAlerts } = await import('./macroConsensus.js');
+  const scarce = { reserveScarcity: { status: 'calculated', state: 'Reserves scarce', spreadBasisPoints: 14, daysAboveThreshold: 9, thresholdBasisPoints: 5 } };
+  const alerts = { ...evaluateMacroAlerts(scarce), previousPending: [] };
+
+  const first = await persistLiquiditySnapshot(macroSnapshot({ macroAlerts: alerts }), { runId: await database.startIngestionRun('fred-liquidity') });
+  // No webhook is configured here, so delivery is disabled and nothing is owed.
+  assert.equal(first.details.alertDelivery.status, 'disabled');
+  assert.equal(first.details.alertsOwed, 0);
+
+  const stored = (await database.getRecentModelOutputs('macro-alerts', 1))[0].output;
+  assert.equal(Array.isArray(stored.pendingDelivery), true, 'the owed queue must survive the round trip');
+});

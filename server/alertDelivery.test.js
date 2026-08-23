@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { deliverAlerts, selectDeliverableAlerts } from './alertDelivery.js';
+import { deliverAlerts, pendingAfterDelivery, selectDeliverableAlerts, withPending } from './alertDelivery.js';
 
 const alerts = {
   entries: [
@@ -156,4 +156,60 @@ test('one attempt is honoured when retries are switched off', async () => {
     fetchImplementation: async () => { calls += 1; throw new Error('down'); },
   });
   assert.equal(calls, 1);
+});
+
+test('a failed delivery is held for the next run rather than lost', async () => {
+  const failed = await deliverAlerts(alerts, {
+    url: 'https://example.com/hook',
+    wait: async () => {},
+    fetchImplementation: async () => { throw new Error('down'); },
+  });
+  const pending = pendingAfterDelivery(alerts, failed, { runAt: '2026-01-01T00:00:00.000Z' });
+  assert.equal(pending.length, 2, 'both transitions are still owed');
+  assert.equal(pending[0].firstAttemptedAt, '2026-01-01T00:00:00.000Z');
+});
+
+test('a delivered run owes nothing', async () => {
+  const delivered = await deliverAlerts(alerts, {
+    url: 'https://example.com/hook',
+    fetchImplementation: async () => ({ ok: true, status: 200 }),
+  });
+  assert.deepEqual(pendingAfterDelivery(alerts, delivered), []);
+  assert.deepEqual(pendingAfterDelivery(alerts, { status: 'disabled' }), []);
+});
+
+test('a 4xx is not queued forever, because a retry cannot fix it', async () => {
+  const rejected = await deliverAlerts(alerts, {
+    url: 'https://example.com/hook',
+    wait: async () => {},
+    fetchImplementation: async () => ({ ok: false, status: 400 }),
+  });
+  const previousPending = [{ key: 'older', transition: 'raised', severity: 'high', text: 'x' }];
+  assert.deepEqual(pendingAfterDelivery(alerts, rejected, { previousPending }), previousPending);
+});
+
+test('what is owed is prepended to the next run and marked as a replay', () => {
+  const owed = [{ key: 'older-alert', transition: 'raised', severity: 'high', text: 'was owed', firstAttemptedAt: '2026-01-01T00:00:00.000Z' }];
+  const next = withPending({ raised: [{ key: 'new-alert', severity: 'high', text: 'is new' }], resolved: [] }, owed);
+  assert.deepEqual(next.raised.map((entry) => entry.key), ['older-alert', 'new-alert']);
+  assert.equal(next.replayed, 1);
+});
+
+test('an owed transition that fired again this run is not sent twice', () => {
+  const owed = [{ key: 'same-alert', transition: 'raised', severity: 'high', text: 'was owed' }];
+  const next = withPending({ raised: [{ key: 'same-alert', severity: 'high', text: 'fired again' }], resolved: [] }, owed);
+  assert.equal(next.raised.length, 1);
+  assert.equal(next.raised[0].text, 'fired again', 'the current text wins over the stale one');
+});
+
+test('the pending queue has a ceiling and keeps the newest', () => {
+  const many = Array.from({ length: 80 }, (_, index) => ({ key: `k${index}`, transition: 'raised', severity: 'high', text: `t${index}` }));
+  const pending = pendingAfterDelivery(
+    { raised: many, resolved: [] },
+    { status: 'failed', retryable: true },
+    { maxPending: 50 },
+  );
+  assert.equal(pending.length, 50);
+  // An alert from three weeks ago is history, not news.
+  assert.equal(pending.at(-1).key, 'k79');
 });

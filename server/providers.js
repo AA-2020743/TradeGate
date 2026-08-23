@@ -2449,7 +2449,12 @@ export async function getLiquiditySnapshot(options = {}) {
     if (isDatabaseConfigured()) {
       previousAlerts = await getRecentModelOutputs('macro-alerts', 1).then((rows) => rows[0]?.output ?? null).catch(() => null);
     }
-    const macroAlerts = evaluateMacroAlerts({ ...macroModels, consensus }, { previous: previousAlerts });
+    const macroAlerts = {
+      ...evaluateMacroAlerts({ ...macroModels, consensus }, { previous: previousAlerts }),
+      // Carried through so the ingestion run knows what a previous run could
+      // not deliver; it is not part of the evaluation itself.
+      previousPending: previousAlerts?.pendingDelivery ?? [],
+    };
     // Which driver of the regime composite is a near-duplicate of another. The
     // regime carries both liquidity impulses and the global pool contains the
     // US one by construction, so this is the pair most likely to double-count.

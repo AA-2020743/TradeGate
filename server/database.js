@@ -134,6 +134,42 @@ export async function persistModelOutput(modelId, model, inputLineage = [], inge
   );
 }
 
+/**
+ * Trims a model's stored outputs to its most recent `keep` vintages.
+ *
+ * Nothing has ever deleted these. Every run writes one row per model and the
+ * backfill writes a hundred or more per model on its first pass, while the
+ * deepest reader — the overlap matrix — looks back a hundred and twenty. The
+ * trim is by vintage rather than by row so repeated runs over one vintage
+ * cannot consume the window that the history is supposed to cover.
+ */
+export async function pruneModelOutputs(modelId, keep = 240) {
+  if (!pool) return 0;
+  const result = await pool.query(
+    `DELETE FROM model_outputs
+     WHERE model_id = $1
+       AND effective_at IS NOT NULL
+       AND effective_at < (
+         SELECT MIN(effective_at) FROM (
+           SELECT DISTINCT effective_at
+           FROM model_outputs
+           WHERE model_id = $1 AND effective_at IS NOT NULL
+           ORDER BY effective_at DESC
+           LIMIT $2
+         ) AS kept
+       )`,
+    [modelId, keep],
+  );
+  return result.rowCount ?? 0;
+}
+
+/** Every model id that currently has stored output, for a retention sweep. */
+export async function listStoredModelIds() {
+  if (!pool) return [];
+  const result = await pool.query('SELECT DISTINCT model_id FROM model_outputs ORDER BY model_id');
+  return result.rows.map((row) => row.model_id);
+}
+
 export async function getRecentModelOutputs(modelId, limit = 2) {
   if (!pool) return [];
   const result = await pool.query(

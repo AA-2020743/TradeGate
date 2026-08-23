@@ -36,10 +36,48 @@ app.use((_request, response, next) => {
   response.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
   next();
 });
-app.use('/api', (_request, response, next) => {
-  // Market data must never come back from a heuristic browser cache. no-cache
-  // still permits a conditional revalidation rather than forbidding storage.
-  response.setHeader('Cache-Control', 'no-cache');
+/**
+ * Cache policy per route, matched to how often the thing behind it can change.
+ *
+ * Every response used to say `no-cache`, which asks a client to revalidate on
+ * every request. The payloads behind most of these are already cached
+ * server-side for fifteen minutes or six hours, so a client polling every five
+ * minutes was re-downloading a body the server had not recomputed. A window
+ * shorter than the server's own cache keeps a stale answer from outliving it.
+ *
+ * Anything owned by a caller is `no-store`: those are not the same for everyone
+ * and must never sit in a shared cache.
+ */
+const CACHE_SECONDS = [
+  [/^\/api\/watchlists/, null],
+  [/^\/api\/health/, 30],
+  [/^\/api\/ingestion\/status/, 60],
+  [/^\/api\/markets\/(snapshot|history)/, 60],
+  [/^\/api\/analytics\/intraday/, 60],
+  [/^\/api\/(alerts|news)/, 120],
+  [/^\/api\/(macro|analytics|equities|digest)/, 300],
+];
+
+export function cacheSecondsFor(pathname) {
+  for (const [pattern, seconds] of CACHE_SECONDS) {
+    if (pattern.test(pathname)) return seconds;
+  }
+  return 0;
+}
+
+app.use('/api', (request, response, next) => {
+  const seconds = cacheSecondsFor(request.baseUrl + request.path);
+  if (seconds === null) {
+    // Caller-owned data: never stored anywhere, by anyone.
+    response.setHeader('Cache-Control', 'no-store');
+  } else if (seconds > 0) {
+    // These payloads are identical for every caller, so a shared cache may hold
+    // them; stale-while-revalidate lets a client show the last answer while it
+    // fetches the next rather than blocking on a slow upstream.
+    response.setHeader('Cache-Control', `public, max-age=${seconds}, stale-while-revalidate=${seconds}`);
+  } else {
+    response.setHeader('Cache-Control', 'no-cache');
+  }
   next();
 });
 app.use('/api', rateLimiter.middleware);
@@ -62,10 +100,9 @@ app.get('/api/markets/history/:symbol', async (request, response, next) => {
   try {
     response.json(await getMarketHistory(request.params.symbol, request.query.range));
   } catch (error) {
-    if (error.message.startsWith('Unsupported history symbol')) {
-      response.status(400).json({ error: error.message });
-      return;
-    }
+    // The shared classifier answers "Unsupported ..." with a 404. Keeping a
+    // route-local 400 here gave the same condition two different statuses
+    // depending on which endpoint the caller happened to hit.
     next(error);
   }
 });
@@ -497,10 +534,7 @@ app.get('/api/equities/dashboard/:symbol', async (request, response, next) => {
   try {
     response.json(await getEquityDashboard(request.params.symbol));
   } catch (error) {
-    if (error.message.startsWith('Unsupported equity index proxy')) {
-      response.status(400).json({ error: error.message });
-      return;
-    }
+    // Same as the history route: the shared classifier owns this condition now.
     next(error);
   }
 });
@@ -538,14 +572,45 @@ if (existsSync(distDirectory)) {
   app.get('/{*path}', (_request, response) => response.sendFile(distIndexFile, { headers: { 'Cache-Control': 'no-cache' } }));
 }
 
-app.use((error, _request, response, _next) => {
+/**
+ * Classifies a failure before answering.
+ *
+ * Every error used to be answered 502 "unable to fetch data from an upstream
+ * provider". A body over the size limit, a symbol this deployment does not
+ * track, and a TypeError in a route handler are none of them an upstream
+ * problem, and telling a caller otherwise sends them to look in the wrong
+ * place — including whoever is debugging the server.
+ */
+function classifyRequestError(error) {
   if (error?.type === 'entity.parse.failed' || error instanceof SyntaxError) {
-    response.status(400).json({ error: 'Request body is not valid JSON.' });
-    return;
+    return { status: 400, body: { error: 'Request body is not valid JSON.', kind: 'bad-request' } };
   }
-  console.error(error);
-  response.status(502).json({ error: 'Unable to fetch data from an upstream provider.' });
+  // Express and body-parser set these on their own errors: 413 for a body over
+  // the limit, 400 for a malformed one.
+  const declared = Number(error?.status ?? error?.statusCode);
+  if (Number.isFinite(declared) && declared >= 400 && declared < 500) {
+    return { status: declared, body: { error: error.message ?? 'The request could not be accepted.', kind: 'bad-request' } };
+  }
+  // A request for something this deployment does not track is the caller asking
+  // for the wrong thing, not a provider being down.
+  if (/^Unsupported /.test(error?.message ?? '')) {
+    return { status: 404, body: { error: error.message, kind: 'not-supported' } };
+  }
+  // A programming fault must not be dressed as a provider outage.
+  if (error instanceof TypeError || error instanceof ReferenceError || error instanceof RangeError) {
+    return { status: 500, body: { error: 'The server failed to build this response.', kind: 'server-error' } };
+  }
+  return { status: 502, body: { error: 'Unable to fetch data from an upstream provider.', kind: 'upstream' } };
+}
+
+app.use((error, _request, response, _next) => {
+  const { status, body } = classifyRequestError(error);
+  // A 4xx is the caller's business and does not belong in the server log.
+  if (status >= 500) console.error(error);
+  response.status(status).json(body);
 });
+
+export { classifyRequestError };
 
 export { app };
 

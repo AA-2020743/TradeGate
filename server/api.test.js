@@ -32,9 +32,12 @@ test('health reports the provider surface without leaking credentials', async ()
   assert.equal(JSON.stringify(payload).includes('apiKey'), false);
 });
 
-test('every API response carries the hardening headers and is never cached', async () => {
+test('every API response carries the hardening headers and a deliberate cache window', async () => {
   const response = await get('/api/health');
-  assert.equal(response.headers.get('cache-control'), 'no-cache');
+  // Every route used to answer no-cache, which asks a client to revalidate on
+  // each request against a payload the server had not recomputed. The window
+  // is now shorter than the server's own cache for that route.
+  assert.match(response.headers.get('cache-control') ?? '', /public, max-age=30/);
   assert.equal(response.headers.get('x-content-type-options'), 'nosniff');
   assert.equal(response.headers.get('x-frame-options'), 'DENY');
   assert.equal(response.headers.get('referrer-policy'), 'strict-origin-when-cross-origin');
@@ -55,16 +58,23 @@ test('an unknown API path answers JSON 404 rather than the SPA document', async 
   assert.deepEqual(await response.json(), { error: 'API endpoint not found.' });
 });
 
-test('an unsupported history symbol is a client error, not a provider failure', async () => {
+test('an unsupported history symbol is a 404, not a provider failure', async () => {
   const response = await get('/api/markets/history/NOTATICKER');
-  assert.equal(response.status, 400);
-  assert.match((await response.json()).error, /Unsupported history symbol/);
+  // A symbol this deployment does not track is a resource that does not exist.
+  // It answered 400 here and 400 on the equity route through a different
+  // branch; both go through one classifier now and both answer 404.
+  assert.equal(response.status, 404);
+  const body = await response.json();
+  assert.match(body.error, /Unsupported history symbol/);
+  assert.equal(body.kind, 'not-supported');
 });
 
 test('a malformed JSON body is rejected as a client error', async () => {
   const response = await putJson('/api/watchlists', '{"broken":');
   assert.equal(response.status, 400);
-  assert.deepEqual(await response.json(), { error: 'Request body is not valid JSON.' });
+  // `kind` travels with every error now so a caller can tell a bad request
+  // from an upstream outage without parsing prose.
+  assert.deepEqual(await response.json(), { error: 'Request body is not valid JSON.', kind: 'bad-request' });
 });
 
 test('watchlist writes reject shapes that are not a map of lists', async () => {

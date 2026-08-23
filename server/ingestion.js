@@ -1,5 +1,5 @@
 import { config } from './config.js';
-import { deliverAlerts } from './alertDelivery.js';
+import { deliverAlerts, pendingAfterDelivery, withPending } from './alertDelivery.js';
 import { observationTimestamp, runIngestionJob } from './ingestionRun.js';
 import { buildWorkspaceNarrative, calculateTechnicalSnapshot, isPublished } from './analytics.js';
 import {
@@ -9,8 +9,10 @@ import {
   insertModelAlerts,
   isDatabaseConfigured,
   getRecentModelOutputs,
+  listStoredModelIds,
   persistModelOutput,
   persistSeries,
+  pruneModelOutputs,
   startIngestionRun,
 } from './database.js';
 import { getBitcoinCycleWorkspace, calculateDollarTransmission, getDxyBitcoinRelationship, getEquityRiskAppetite, getFxWorkspace, getIngestionHistorySymbols, getLiquiditySnapshot, getMarketHeatmap, getMarketHistory, getMarketSnapshot, getMetalsWorkspace, getRegimeCorrelations, getSentimentSnapshot, REGIME_CORRELATION_PAIRS } from './providers.js';
@@ -223,15 +225,30 @@ export async function persistLiquiditySnapshot(snapshot, { runId = null, reportW
     if (alertRows.length) {
       macroAlertsRaised = await insertModelAlerts('macro-alerts-v1', alertRows, runId);
     }
-    // Delivery is opt-in and never allowed to fail the run.
-    const alertDelivery = await deliverAlerts(snapshot.macroAlerts, {
+    // Delivery is opt-in and never allowed to fail the run. Anything a previous
+    // run could not deliver is prepended, so a webhook that was down does not
+    // lose transitions permanently: they are raised once by construction, and
+    // the next run would otherwise have nothing to send.
+    const previousPending = snapshot.macroAlerts?.previousPending ?? [];
+    const withOwed = withPending(snapshot.macroAlerts, previousPending);
+    const alertDelivery = await deliverAlerts(withOwed, {
       url: config.alertWebhookUrl,
+      severities: config.alertWebhookSeverities,
+    });
+    const pendingDelivery = pendingAfterDelivery(withOwed, alertDelivery, {
+      previousPending,
       severities: config.alertWebhookSeverities,
     });
 
     if (snapshot.macroAlerts) {
-      // Stored so the next run knows what was live at this one.
-      await persistModelOutput('macro-alerts', { ...snapshot.macroAlerts, asOf: new Date().toISOString() }, lineageFor(macroKeys), runId);
+      // Stored so the next run knows what was live at this one, and what it
+      // still owes a receiver.
+      await persistModelOutput('macro-alerts', {
+        ...snapshot.macroAlerts,
+        pendingDelivery,
+        replayed: withOwed.replayed ?? 0,
+        asOf: new Date().toISOString(),
+      }, lineageFor(macroKeys), runId);
     }
 
     // Backfilled readings are stored once, keyed by their own vintage, so a
@@ -244,6 +261,20 @@ export async function persistLiquiditySnapshot(snapshot, { runId = null, reportW
         await persistModelOutput(`${entry.modelId}-backfill`, row.output, [{ provider: entry.source, asOf: row.asOf }], runId);
         backfilledRows += 1;
       }
+    }
+
+    // Retention sweep. Without it the table grows by one row per model per run
+    // forever, on top of the hundred-plus rows the backfill writes once.
+    let prunedOutputs = 0;
+    try {
+      for (const storedModelId of await listStoredModelIds()) {
+        prunedOutputs += await pruneModelOutputs(storedModelId);
+      }
+    } catch (error) {
+      // A retention failure is housekeeping, not a reason to fail a run that
+      // has already written everything it came to write.
+      prunedOutputs = -1;
+      console.error('Model-output retention sweep failed:', error.message);
     }
 
     let regimeCorrelationVersion = null;
@@ -264,7 +295,7 @@ export async function persistLiquiditySnapshot(snapshot, { runId = null, reportW
 
     return {
       status: snapshot.errors.length || !snapshot.model ? 'partial' : 'completed',
-      details: { seriesReceived: snapshot.series.length, modelVersion: snapshot.model?.version ?? null, usdStrengthVersion: snapshot.usdStrength?.version ?? null, macroRegimeVersion: snapshot.macroRegime?.version ?? null, regimeCorrelationVersion, persistedMacroModels, macroAlertsRaised, backfilledRows, alertDelivery, providerErrors: [...snapshot.errors, ...persistenceErrors] },
+      details: { seriesReceived: snapshot.series.length, modelVersion: snapshot.model?.version ?? null, usdStrengthVersion: snapshot.usdStrength?.version ?? null, macroRegimeVersion: snapshot.macroRegime?.version ?? null, regimeCorrelationVersion, persistedMacroModels, macroAlertsRaised, backfilledRows, prunedOutputs, alertDelivery, alertsOwed: pendingDelivery.length, providerErrors: [...snapshot.errors, ...persistenceErrors] },
     };
   }
 }

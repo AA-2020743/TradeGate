@@ -94,3 +94,43 @@ export async function deliverAlerts(alerts, {
   }
   return { status: 'failed', reason: lastReason, delivered: 0, attempted: entries.length, attempts: Math.max(1, attempts), retryable: true };
 }
+
+/**
+ * Transitions that were selected for delivery but never got there.
+ *
+ * A webhook down for an entire run used to lose those transitions permanently:
+ * they are raised once by construction, so the next run has nothing to send.
+ * Holding the undelivered ones and prepending them to the next attempt closes
+ * that, and each carries the run it was first raised in so a receiver can see
+ * it is catching up rather than being told something happened just now.
+ */
+export function pendingAfterDelivery(alerts, result, { previousPending = [], severities = DEFAULT_SEVERITIES, maxPending = 50, runAt = new Date().toISOString() } = {}) {
+  const attempted = selectDeliverableAlerts(alerts, { severities });
+  if (result?.status === 'delivered' || result?.status === 'disabled') return [];
+  // A 4xx will not succeed on a retry either, so holding it forever would grow
+  // a queue that can never drain.
+  if (result?.retryable === false) return previousPending;
+  const carried = [
+    ...previousPending,
+    ...attempted.map((entry) => ({ ...entry, firstAttemptedAt: entry.firstAttemptedAt ?? runAt })),
+  ];
+  // Newest kept when the queue is over its ceiling: an alert from three weeks
+  // ago is history, not news, and delivering it would be worse than dropping it.
+  const deduped = [...new Map(carried.map((entry) => [`${entry.key}:${entry.transition}`, entry])).values()];
+  return deduped.slice(-maxPending);
+}
+
+/** Prepends anything still owed before sending this run's own transitions. */
+export function withPending(alerts, pending = []) {
+  if (!pending.length) return alerts;
+  const keys = new Set((alerts?.raised ?? []).map((entry) => `${entry.key}:raised`));
+  const resolvedKeys = new Set((alerts?.resolved ?? []).map((entry) => `${entry.key}:cleared`));
+  const owedRaised = pending.filter((entry) => entry.transition === 'raised' && !keys.has(`${entry.key}:raised`));
+  const owedResolved = pending.filter((entry) => entry.transition === 'cleared' && !resolvedKeys.has(`${entry.key}:cleared`));
+  return {
+    ...alerts,
+    raised: [...owedRaised, ...(alerts?.raised ?? [])],
+    resolved: [...owedResolved, ...(alerts?.resolved ?? [])],
+    replayed: owedRaised.length + owedResolved.length,
+  };
+}
