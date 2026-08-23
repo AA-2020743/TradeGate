@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { buildAtomFeed, buildCoingeckoRequest, buildSocrataRequest, buildHeatmapRow, buildLiquidityNarrative, buildLiquidityTransmission, buildWorkspaceNarrative, calculateBitcoinCyclePhase, calculateChangeCorrelations, calculateCryptoRotation, calculateDollarScenarios, calculateDollarTransmissionRead, calculateLeadLag, calculateLiquidityRunway, calculatePositioningModel, calculateCrossMarketRelationship, calculateGlobalLiquidityModel, calculateHeatmapRisk, calculateMacroRegimeModel, calculateMacroRegimeProximity, classifyMacroRegimeByScore, calculateMetalsCostStructure, calculateOpenInterestQuadrant, calculateRsi, calculateScreenerScores, calculateSeriesLeadLag, calculateTechnicalSnapshot, calculateTrendQuality, classifyHeadlineSentiment, calculateUsdStrengthModel, calculateUsLiquidityModel, escapeXml, pearsonCorrelation } from './analytics.js';
+import { buildAtomFeed, buildCoingeckoRequest, buildSocrataRequest, buildHeatmapRow, buildLiquidityNarrative, buildLiquidityTransmission, buildWorkspaceNarrative, calculateBitcoinCyclePhase, calculateChangeCorrelations, calculateCryptoRotation, calculateDollarScenarios, calculateDollarTransmissionRead, calculateLeadLag, calculateLiquidityRunway, calculatePositioningModel, calculateCrossMarketRelationship, calculateGlobalLiquidityModel, calculateHeatmapRisk, calculateMacroRegimeModel, calculateMacroRegimeProximity, classifyMacroRegimeByScore, calculateMetalsCostStructure, calculateOpenInterestQuadrant, calculateRsi, calculateScreenerScores, calculateSeriesLeadLag, calculateTechnicalSnapshot, calculateTrendQuality, classifyHeadlineSentiment, calculateUsdStrengthModel, calculateUsLiquidityModel, calculateLiquidityCyclePosition, escapeXml, isPublished, pearsonCorrelation } from './analytics.js';
 
 test('RSI reaches 100 for an uninterrupted advance', () => {
   const values = Array.from({ length: 30 }, (_, index) => 100 + index);
@@ -87,10 +87,16 @@ test('US liquidity model refuses to publish with a missing mandatory driver', ()
     date: new Date(Date.UTC(2025, 0, 1 + (index * 7))).toISOString().slice(0, 10),
     value: 100 + index,
   }));
-  assert.equal(calculateUsLiquidityModel([
+  const model = calculateUsLiquidityModel([
     { key: 'usM2', multiplier: 1, history },
     { key: 'dxy', multiplier: 1, history },
-  ]), null);
+  ]);
+  assert.equal(model.status, 'unavailable');
+  assert.equal(model.score, null);
+  // The reason has to name the driver: an unexplained blank panel is the thing
+  // a reader cannot act on.
+  assert.match(model.reason, /Fed net liquidity/);
+  assert.deepEqual(model.missing, ['Fed net liquidity']);
 });
 
 test('Global liquidity model aggregates USD-converted central-bank legs', () => {
@@ -146,7 +152,7 @@ test('Global liquidity model refuses to publish without FX conversion rates', ()
       value: start + (index * step),
     })),
   });
-  assert.equal(calculateGlobalLiquidityModel([
+  const model = calculateGlobalLiquidityModel([
     weekly('fedBalanceSheet', 7_000_000, 20_000),
     weekly('treasuryGeneralAccount', 800_000, -5_000),
     { ...weekly('reverseRepo', 2_000, -15), multiplier: 1000 },
@@ -154,7 +160,11 @@ test('Global liquidity model refuses to publish without FX conversion rates', ()
     weekly('ecbBalanceSheet', 6_200_000, 15_000),
     weekly('bojBalanceSheet', 750_000, 2_000),
     weekly('dxy', 110, -0.15),
-  ]), null);
+  ]);
+  assert.equal(model.status, 'unavailable');
+  assert.equal(model.score, null);
+  assert.match(model.reason, /ECB balance sheet converted at EURUSD/);
+  assert.equal(model.missing.length, 2, 'both the ECB and BoJ legs are missing their conversion rate');
 });
 
 test('USD strength combines the broad dollar with connected macro drivers', () => {
@@ -1409,4 +1419,167 @@ test('zero or negative contract counts are dropped rather than dividing', () => 
   const model = calculateOpenInterestQuadrant(withZero);
   assert.equal(model.status, 'calculated');
   assert.ok(Number.isFinite(model.impliedPrice));
+});
+
+function macroSeries(key, { start, step = 0, count = 60, everyDays = 7, multiplier = 1, endOffsetDays = 0 } = {}) {
+  const base = Date.UTC(2025, 0, 1);
+  return {
+    key,
+    multiplier,
+    history: Array.from({ length: count }, (_, index) => ({
+      date: new Date(base + ((index * everyDays - endOffsetDays) * 86_400_000)).toISOString().slice(0, 10),
+      value: start + (index * step),
+    })),
+  };
+}
+
+test('net liquidity refuses to carry a stale leg forward', () => {
+  const fed = macroSeries('fedBalanceSheet', { start: 7_000_000, step: 20_000, count: 60 });
+  // The TGA stops updating four months before the Fed does. Carrying its last
+  // value forward would keep printing net liquidity as though it were current.
+  const treasury = macroSeries('treasuryGeneralAccount', { start: 800_000, step: -5_000, count: 42 });
+  const reverseRepo = { ...macroSeries('reverseRepo', { start: 2_000, step: -15, count: 60 }), multiplier: 1000 };
+  const model = calculateUsLiquidityModel([
+    fed,
+    treasury,
+    reverseRepo,
+    { ...macroSeries('usM2', { start: 20_000, step: 30, count: 60 }), multiplier: 1000 },
+    macroSeries('dxy', { start: 110, step: -0.15, count: 60 }),
+  ]);
+  const lastAligned = model.history.at(-1).date;
+  const lastTreasury = treasury.history.at(-1).date;
+  const gapDays = (new Date(lastAligned) - new Date(lastTreasury)) / 86_400_000;
+  assert.equal(gapDays <= 10, true, `net liquidity ran to ${lastAligned} on a TGA that stopped at ${lastTreasury}`);
+});
+
+test('a fully covered set of legs still produces a point on every Fed date', () => {
+  const model = calculateUsLiquidityModel([
+    macroSeries('fedBalanceSheet', { start: 7_000_000, step: 20_000, count: 60 }),
+    macroSeries('treasuryGeneralAccount', { start: 800_000, step: -5_000, count: 60 }),
+    { ...macroSeries('reverseRepo', { start: 2_000, step: -15, count: 60 }), multiplier: 1000 },
+    { ...macroSeries('usM2', { start: 20_000, step: 30, count: 60 }), multiplier: 1000 },
+    macroSeries('dxy', { start: 110, step: -0.15, count: 60 }),
+  ]);
+  assert.equal(model.status, 'calculated');
+  assert.equal(model.history.length, 60);
+  assert.equal(Number.isFinite(model.netLiquidity), true);
+});
+
+test('an unavailable model is not mistaken for a published one', () => {
+  assert.equal(isPublished(null), false);
+  assert.equal(isPublished({ status: 'unavailable', reason: 'x' }), false);
+  assert.equal(isPublished({ status: 'calculated', score: 60 }), true);
+  assert.equal(isPublished({ status: 'provisional', score: 60 }), true);
+  assert.equal(isPublished({ score: 60 }), true);
+});
+
+test('liquidity momentum reports steady rather than flipping on float noise', () => {
+  // A perfectly linear pool: the 28-day and 91-day impulses are the same
+  // reading, and the label used to be decided by which was larger by 1e-16.
+  const flat = (key, options) => macroSeries(key, options);
+  const model = calculateUsLiquidityModel([
+    flat('fedBalanceSheet', { start: 7_000_000, step: 0, count: 60 }),
+    flat('treasuryGeneralAccount', { start: 800_000, step: 0, count: 60 }),
+    { ...flat('reverseRepo', { start: 2_000, step: 0, count: 60 }), multiplier: 1000 },
+    { ...flat('usM2', { start: 20_000, step: 0, count: 60 }), multiplier: 1000 },
+    flat('dxy', { start: 110, step: 0, count: 60 }),
+  ]);
+  assert.equal(model.momentum, 'Steady');
+});
+
+test('the liquidity cycle ranks growth, not the raw level of a trending pool', () => {
+  const day = (index) => new Date(Date.UTC(2019, 0, 1) + (index * 7 * 86_400_000)).toISOString().slice(0, 10);
+  // A pool that grows every single week: its level is at an all-time high on
+  // every observation, so a whole-history level percentile is always 100 and
+  // carries no information at all.
+  const steady = Array.from({ length: 320 }, (_, index) => ({ date: day(index), value: 1_000_000 + (index * 5_000) }));
+  // The same shape of level - still making new highs - but the pace collapses.
+  const decelerating = Array.from({ length: 320 }, (_, index) => ({
+    date: day(index),
+    value: 1_000_000 + (index < 200 ? index * 8_000 : (200 * 8_000) + ((index - 200) * 700)),
+  }));
+
+  const first = calculateLiquidityCyclePosition(steady);
+  const second = calculateLiquidityCyclePosition(decelerating);
+  assert.equal(first.levelPercentile, 100);
+  assert.equal(second.levelPercentile, 100, 'the level percentile cannot tell these two pools apart');
+  assert.equal(second.growthPercent < first.growthPercent, true, `${second.growthPercent} should be below ${first.growthPercent}`);
+  assert.equal(first.status, 'calculated');
+  assert.match(first.methodology, /ranked against a trailing/);
+});
+
+test('the growth percentile places a pool inside its own growth history', () => {
+  const day = (index) => new Date(Date.UTC(2018, 0, 1) + (index * 7 * 86_400_000)).toISOString().slice(0, 10);
+  // Growth that accelerates and then rolls over, so the percentile has a real
+  // distribution to rank against rather than a monotone one.
+  let level = 1_000_000;
+  const points = Array.from({ length: 420 }, (_, index) => {
+    const pace = 1 + (0.004 * (1 + Math.sin(index / 40)));
+    level *= pace;
+    return { date: day(index), value: level };
+  });
+  const result = calculateLiquidityCyclePosition(points);
+  assert.equal(result.status, 'calculated');
+  assert.equal(result.growthPercentile > 0 && result.growthPercentile < 100, true, `percentile was ${result.growthPercentile}`);
+  assert.equal(['Expanding', 'Expanding but decelerating', 'Mid-cycle', 'Contracting', 'Contracting but turning up'].includes(result.phase), true);
+});
+
+test('the liquidity cycle refuses a history it cannot rank', () => {
+  const result = calculateLiquidityCyclePosition([{ date: '2025-01-01', value: 100 }]);
+  assert.equal(result.status, 'unavailable');
+  assert.equal(result.levelPercentile, null);
+});
+
+test('the macro regime is stamped with its oldest binding input, not its freshest', () => {
+  const daily = (key, start, step, count, endOffsetDays = 0) => ({
+    key,
+    multiplier: 1,
+    history: Array.from({ length: count }, (_, index) => ({
+      date: new Date(Date.UTC(2025, 0, 1) + ((index - endOffsetDays) * 86_400_000)).toISOString().slice(0, 10),
+      value: start + (index * step),
+    })),
+  });
+  const model = calculateMacroRegimeModel([
+    // NFCI stops 60 days before VIX does.
+    daily('financialConditions', -0.2, 0.001, 240, 60),
+    daily('highYieldSpread', 3.4, 0.002, 300),
+    daily('vix', 16, 0.01, 300),
+  ]);
+  assert.equal(model.status !== 'unavailable', true);
+  assert.equal(model.asOf, model.vintage.oldestInput.date);
+  assert.equal(model.vintage.oldestInput.key, 'financialConditions');
+  assert.equal(model.vintage.spreadDays >= 55, true, `spread was ${model.vintage.spreadDays}`);
+  assert.match(model.vintage.note, /oldest input/);
+});
+
+test('a driver missing its change term scores on level alone and says so', () => {
+  const short = (key, value) => ({ key, multiplier: 1, history: [{ date: '2025-06-02', value }] });
+  const long = (key, start, step) => ({
+    key,
+    multiplier: 1,
+    history: Array.from({ length: 300 }, (_, index) => ({
+      date: new Date(Date.UTC(2025, 0, index + 1)).toISOString().slice(0, 10),
+      value: start + (index * step),
+    })),
+  });
+  // NFCI has one observation, so its 91-day change cannot be computed. The old
+  // model treated that as "no change", which reads calm rather than unknown.
+  const model = calculateMacroRegimeModel([short('financialConditions', 0.6), long('highYieldSpread', 3.4, 0.002), long('vix', 16, 0.01)]);
+  assert.equal(model.partialDrivers.includes('Financial conditions'), true);
+  const driver = model.drivers.find((entry) => entry.key === 'financialConditions');
+  assert.equal(Number.isFinite(driver.score), true);
+  // 50 - (0.6 * 40) = 26, with no change term added in either direction.
+  assert.equal(driver.score, 26);
+});
+
+test('percentile prose does not print "2th"', () => {
+  const day = (index) => new Date(Date.UTC(2018, 0, 1) + (index * 7 * 86_400_000)).toISOString().slice(0, 10);
+  let level = 1_000_000;
+  const points = Array.from({ length: 420 }, (_, index) => {
+    level *= 1 + (0.004 * (1 + Math.sin(index / 40)));
+    return { date: day(index), value: level };
+  });
+  const result = calculateLiquidityCyclePosition(points);
+  assert.equal(/\b\d*[123]th\b/.test(result.read), false, `bad ordinal in: ${result.read}`);
+  assert.match(result.read, /percentile of \d+ readings/);
 });

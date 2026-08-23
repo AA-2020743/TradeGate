@@ -447,6 +447,26 @@ function driverComposite(drivers, minimumCoverage, minimumDrivers = 1) {
   };
 }
 
+// Below this the two impulses are the same reading and the label was being
+// decided by float noise: a 1e-9 difference flipped Accelerating to Decelerating.
+const IMPULSE_MOMENTUM_BAND = 0.02;
+
+function describeImpulseMomentum(shortImpulse, longImpulse) {
+  if (shortImpulse === null || longImpulse === null) return 'Unavailable';
+  const gap = shortImpulse - longImpulse;
+  if (Math.abs(gap) < IMPULSE_MOMENTUM_BAND) return 'Steady';
+  return gap > 0 ? 'Accelerating' : 'Decelerating';
+}
+
+/**
+ * True when a model actually published a reading. Models that cannot publish
+ * now return an object carrying the reason rather than a bare null, so a plain
+ * truthiness check would treat "unavailable, and here is why" as a result.
+ */
+export function isPublished(model) {
+  return Boolean(model) && model.status !== 'unavailable';
+}
+
 export function calculateUsLiquidityModel(seriesList) {
   const series = Object.fromEntries(seriesList.map((item) => [item.key, item]));
   const fed = pointsForSeries(series.fedBalanceSheet);
@@ -455,13 +475,7 @@ export function calculateUsLiquidityModel(seriesList) {
   const m2 = pointsForSeries(series.usM2);
   const dollar = pointsForSeries(series.dxy);
 
-  const netLiquidity = fed.flatMap((point) => {
-    const treasuryPoint = latestAtOrBefore(treasury, point.date);
-    const reverseRepoPoint = latestAtOrBefore(reverseRepo, point.date);
-    return treasuryPoint && reverseRepoPoint
-      ? [{ date: point.date, value: point.value - treasuryPoint.value - reverseRepoPoint.value }]
-      : [];
-  });
+  const netLiquidity = buildNetLiquiditySeries(fed, treasury, reverseRepo);
 
   const driverDefinitions = [
     { key: 'netLiquidity', name: 'Fed net liquidity', change: changeOverDays(netLiquidity, 91), scale: 3, weight: 0.55 },
@@ -472,7 +486,22 @@ export function calculateUsLiquidityModel(seriesList) {
     ...driver,
     impulse: boundedImpulse(driver.change, driver.scale, driver.inverse),
   })).filter((driver) => driver.impulse !== null);
-  if (drivers.length !== driverDefinitions.length) return null;
+  if (drivers.length !== driverDefinitions.length) {
+    const missing = driverDefinitions.filter((definition) => !drivers.some((driver) => driver.key === definition.key));
+    return {
+      version: 'us-liquidity-v1',
+      status: 'unavailable',
+      reason: `Every driver is mandatory for the net-liquidity impulse; missing ${missing.map((driver) => driver.name).join(', ')}.`,
+      asOf: netLiquidity.at(-1)?.date ?? null,
+      score: null,
+      regime: null,
+      momentum: 'Unavailable',
+      netLiquidity: netLiquidity.at(-1)?.value ?? null,
+      history: netLiquidity,
+      missing: missing.map((driver) => driver.name),
+      drivers: driverDefinitions.map(({ key, name, weight }) => ({ key, name, changePercent: null, impulse: null, weight })),
+    };
+  }
 
   const availableWeight = drivers.reduce((total, driver) => total + driver.weight, 0);
   const composite = drivers.reduce((total, driver) => total + (driver.impulse * driver.weight), 0) / availableWeight;
@@ -483,9 +512,7 @@ export function calculateUsLiquidityModel(seriesList) {
   const regime = composite >= 0.15 ? 'Expansion' : composite <= -0.15 ? 'Contraction' : 'Neutral';
   const shortNetImpulse = boundedImpulse(changeOverDays(netLiquidity, 28), 1.5);
   const longNetImpulse = boundedImpulse(changeOverDays(netLiquidity, 91), 3);
-  const momentum = shortNetImpulse === null || longNetImpulse === null
-    ? 'Unavailable'
-    : shortNetImpulse > longNetImpulse ? 'Accelerating' : 'Decelerating';
+  const momentum = describeImpulseMomentum(shortNetImpulse, longNetImpulse);
   const deltaOverDays = (points, days) => {
     if (points.length < 2) return null;
     const latest = points.at(-1);
@@ -517,6 +544,7 @@ export function calculateUsLiquidityModel(seriesList) {
 
   return {
     version: 'us-liquidity-v1',
+    status: 'calculated',
     asOf: netLiquidity.at(-1)?.date ?? null,
     score,
     regime,
@@ -533,6 +561,33 @@ export function calculateUsLiquidityModel(seriesList) {
 }
 
 const GLOBAL_LIQUIDITY_MAX_GAP_DAYS = 35;
+// The Fed publishes weekly, the TGA and RRP daily. Carrying the last known
+// value forward is right across a few days and wrong across a few months: if
+// one leg stops updating, net liquidity would keep printing as though it were
+// still current. Every leg is bounded by the same gap the cross-currency legs
+// already use.
+const NET_LIQUIDITY_MAX_GAP_DAYS = 10;
+
+function alignedAtOrBefore(points, date, maxGapDays) {
+  const point = latestAtOrBefore(points, date);
+  if (!point) return null;
+  return ((new Date(date) - new Date(point.date)) / DAY_MS) <= maxGapDays ? point : null;
+}
+
+/**
+ * Net liquidity on the Fed's own publication dates: balance sheet minus the
+ * Treasury general account minus reverse repo, each leg required to be within
+ * `maxGapDays` of the date being computed.
+ */
+function buildNetLiquiditySeries(fed, treasury, reverseRepo, maxGapDays = NET_LIQUIDITY_MAX_GAP_DAYS) {
+  return fed.flatMap((point) => {
+    const treasuryPoint = alignedAtOrBefore(treasury, point.date, maxGapDays);
+    const reverseRepoPoint = alignedAtOrBefore(reverseRepo, point.date, maxGapDays);
+    if (!treasuryPoint || !reverseRepoPoint) return [];
+    const value = point.value - treasuryPoint.value - reverseRepoPoint.value;
+    return Number.isFinite(value) ? [{ date: point.date, value }] : [];
+  });
+}
 
 function alignedUsdLeg(points, fxPoints, conversion) {
   const legs = [];
@@ -645,6 +700,79 @@ export function calculateLiquidityRunway(seriesList, { windowDays = 91 } = {}) {
 }
 
 
+/** 1st, 2nd, 3rd — a hardcoded "th" suffix prints "2th" and gives itself away. */
+function ordinal(value) {
+  if (!Number.isFinite(value)) return '—';
+  const lastTwo = Math.abs(value) % 100;
+  if (lastTwo >= 11 && lastTwo <= 13) return `${value}th`;
+  return `${value}${{ 1: 'st', 2: 'nd', 3: 'rd' }[Math.abs(value) % 10] ?? 'th'}`;
+}
+
+const CYCLE_WINDOW_DAYS = 1095;
+const CYCLE_TREND_DAYS = 365;
+
+/**
+ * Where the liquidity pool sits in its own cycle, which a percentile of the
+ * raw level cannot answer. A pool that grows over decades is at its highest
+ * level almost every day of an expansion, so that percentile is a ratchet, not
+ * a gauge.
+ *
+ * Two readings that do move: the level ranked against a bounded trailing
+ * window, and the year-over-year growth rate ranked against its own history.
+ * The second is the one that turns at a cycle top, because the pool keeps
+ * growing while the rate of growth rolls over.
+ */
+export function calculateLiquidityCyclePosition(points, { windowDays = CYCLE_WINDOW_DAYS, trendDays = CYCLE_TREND_DAYS } = {}) {
+  const series = (points ?? []).filter((point) => Number.isFinite(point.value) && point.date);
+  if (series.length < 2) {
+    return { status: 'unavailable', reason: 'A pooled liquidity history is required.', levelPercentile: null, growthPercentile: null };
+  }
+  const latest = series.at(-1);
+  const cutoff = new Date(new Date(latest.date).getTime() - (windowDays * DAY_MS)).toISOString().slice(0, 10);
+  const window = series.filter((point) => point.date >= cutoff);
+  const levelPercentile = window.length >= 12
+    ? Math.round((window.filter((point) => point.value <= latest.value).length / window.length) * 100)
+    : null;
+
+  // Year-over-year growth at every point that has a year of history behind it.
+  const growth = series.flatMap((point) => {
+    const prior = alignedAtOrBefore(series, new Date(new Date(point.date).getTime() - (trendDays * DAY_MS)).toISOString().slice(0, 10), 45);
+    return prior && prior.value > 0 ? [{ date: point.date, value: ((point.value / prior.value) - 1) * 100 }] : [];
+  });
+  const currentGrowth = growth.at(-1)?.value ?? null;
+  const growthPercentile = growth.length >= 24 && currentGrowth !== null
+    ? Math.round((growth.filter((point) => point.value <= currentGrowth).length / growth.length) * 100)
+    : null;
+  const growthTrend = growth.length >= 4 && currentGrowth !== null
+    ? currentGrowth - growth.at(-4).value
+    : null;
+
+  const phase = growthPercentile === null ? null
+    : growthPercentile >= 70 ? (growthTrend !== null && growthTrend < 0 ? 'Expanding but decelerating' : 'Expanding')
+      : growthPercentile <= 30 ? (growthTrend !== null && growthTrend > 0 ? 'Contracting but turning up' : 'Contracting')
+        : 'Mid-cycle';
+
+  return {
+    status: levelPercentile === null && growthPercentile === null ? 'unavailable'
+      : growthPercentile === null ? 'provisional' : 'calculated',
+    reason: levelPercentile === null && growthPercentile === null ? 'Not enough pooled history to rank either the level or its growth rate.' : null,
+    asOf: latest.date,
+    observations: series.length,
+    windowDays,
+    rankedAgainst: window.length,
+    levelPercentile,
+    growthPercent: currentGrowth === null ? null : Math.round(currentGrowth * 100) / 100,
+    growthPercentile,
+    growthObservations: growth.length,
+    growthTrend: growthTrend === null ? null : Math.round(growthTrend * 100) / 100,
+    phase,
+    read: growthPercentile === null
+      ? `The pool sits at the ${ordinal(levelPercentile)} percentile of its last ${window.length} readings; a year-over-year growth rate needs more history before the cycle position can be placed.`
+      : `${phase}: the pool is growing ${currentGrowth > 0 ? '+' : ''}${Math.round(currentGrowth * 100) / 100}% year over year, the ${ordinal(growthPercentile)} percentile of ${growth.length} readings, while the level sits at the ${ordinal(levelPercentile)} of its last ${Math.round(windowDays / 365)} years.`,
+    methodology: `The level is ranked against a trailing ${windowDays}-day window rather than the whole history, because a pool that grows over decades is near its all-time high on most days of an expansion and that percentile carries no information. The growth reading is the year-over-year rate ranked against its own history, which is what actually turns at a cycle top: the pool keeps growing while the rate of growth rolls over.`,
+  };
+}
+
 export function calculateGlobalLiquidityModel(seriesList) {
   const series = Object.fromEntries(seriesList.map((item) => [item.key, item]));
   const fed = pointsForSeries(series.fedBalanceSheet);
@@ -659,20 +787,37 @@ export function calculateGlobalLiquidityModel(seriesList) {
   const yuanPerUsd = pointsForSeries(series.yuanPerUsd);
   const dollar = pointsForSeries(series.dxy);
 
-  const usLeg = fed.flatMap((point) => {
-    const treasuryPoint = latestAtOrBefore(treasury, point.date);
-    const reverseRepoPoint = latestAtOrBefore(reverseRepo, point.date);
-    if (!treasuryPoint || !reverseRepoPoint) return [];
-    const value = point.value - treasuryPoint.value - reverseRepoPoint.value;
-    return Number.isFinite(value) && value > 0 ? [{ date: point.date, value }] : [];
-  });
+  const usLeg = buildNetLiquiditySeries(fed, treasury, reverseRepo).filter((point) => point.value > 0);
   const ecbLeg = alignedUsdLeg(ecb, eurUsd, (value, rate) => value * rate);
   const bojLeg = alignedUsdLeg(boj, yenPerUsd, (value, rate) => (value * 100) / rate);
   const pbocLeg = alignedUsdLeg(pboc, yuanPerUsd, (value, rate) => (value * 1000) / rate);
-  if (!usLeg.length || !ecbLeg.length || !bojLeg.length) return null;
+  const unavailableGlobal = (reason, missing = []) => ({
+    version: 'global-liquidity-v1',
+    status: 'unavailable',
+    reason,
+    asOf: null,
+    score: null,
+    regime: null,
+    momentum: 'Unavailable',
+    globalLiquidityUsdMillions: null,
+    cyclePercentile: null,
+    cycle: null,
+    centralBanks: [],
+    history: [],
+    missing,
+    drivers: [],
+  });
+  const missingLegs = [
+    ...(usLeg.length ? [] : ['US net liquidity (Fed, TGA, RRP)']),
+    ...(ecbLeg.length ? [] : ['ECB balance sheet converted at EURUSD']),
+    ...(bojLeg.length ? [] : ['BoJ balance sheet converted at USDJPY']),
+  ];
+  if (missingLegs.length) return unavailableGlobal(`The US, ECB and BoJ legs are all required before a pool can be summed; missing ${missingLegs.join(', ')}.`, missingLegs);
 
   const globalLiquidity = sumAlignedSeries([usLeg, ecbLeg, bojLeg, ...(pbocLeg.length ? [pbocLeg] : [])]);
-  if (!globalLiquidity.length) return null;
+  if (!globalLiquidity.length) {
+    return unavailableGlobal(`No date has every central-bank leg within ${GLOBAL_LIQUIDITY_MAX_GAP_DAYS} days of it, so the pool cannot be summed without carrying a stale leg forward.`, ['A date shared by every central-bank leg']);
+  }
 
   const exUs = sumAlignedSeries([ecbLeg, bojLeg]);
   const driverDefinitions = [
@@ -687,7 +832,12 @@ export function calculateGlobalLiquidityModel(seriesList) {
     ...driver,
     impulse: boundedImpulse(driver.change, driver.scale, driver.inverse),
   })).filter((driver) => driver.impulse !== null);
-  if (!coreDriverKeys.every((key) => drivers.some((driver) => driver.key === key))) return null;
+  if (!coreDriverKeys.every((key) => drivers.some((driver) => driver.key === key))) {
+    const missingDrivers = coreDriverKeys
+      .filter((key) => !drivers.some((driver) => driver.key === key))
+      .map((key) => driverDefinitions.find((definition) => definition.key === key)?.name ?? key);
+    return unavailableGlobal(`The core drivers are mandatory; missing ${missingDrivers.join(', ')}.`, missingDrivers);
+  }
 
   const availableWeight = drivers.reduce((total, driver) => total + driver.weight, 0);
   const composite = drivers.reduce((total, driver) => total + (driver.impulse * driver.weight), 0) / availableWeight;
@@ -698,16 +848,17 @@ export function calculateGlobalLiquidityModel(seriesList) {
   const regime = composite >= 0.15 ? 'Expansion' : composite <= -0.15 ? 'Contraction' : 'Neutral';
   const shortImpulse = boundedImpulse(changeOverDays(globalLiquidity, 28), 1.5);
   const longImpulse = boundedImpulse(changeOverDays(globalLiquidity, 91), 3);
-  const momentum = shortImpulse === null || longImpulse === null
-    ? 'Unavailable'
-    : shortImpulse > longImpulse ? 'Accelerating' : 'Decelerating';
+  const momentum = describeImpulseMomentum(shortImpulse, longImpulse);
   const confidenceScore = Math.round(((availableWeight * 0.55) + (agreement * 0.45)) * 100);
 
   const latestTotal = globalLiquidity.at(-1)?.value ?? null;
-  const rankedHistory = globalLiquidity.filter((point) => Number.isFinite(point.value)).map((point) => point.value);
-  const cyclePercentile = latestTotal === null || rankedHistory.length < 2
-    ? null
-    : Math.round((rankedHistory.filter((value) => value <= latestTotal).length / rankedHistory.length) * 100);
+  const cycle = calculateLiquidityCyclePosition(globalLiquidity);
+  // Kept for callers that still read it, but it is the trailing-window level
+  // percentile now rather than the whole-history one. Ranking a trending level
+  // against its entire past answers "is this the largest the pool has ever
+  // been", which in any expansion is yes - a number that reads like a cycle
+  // gauge and moves like a ratchet.
+  const cyclePercentile = cycle.levelPercentile;
   const legSummary = [
     { key: 'us', name: 'United States (net liquidity)', points: usLeg },
     { key: 'ecb', name: 'European Central Bank', points: ecbLeg },
@@ -729,6 +880,7 @@ export function calculateGlobalLiquidityModel(seriesList) {
 
   return {
     version: 'global-liquidity-v1',
+    status: 'calculated',
     asOf: globalLiquidity.at(-1)?.date ?? null,
     score,
     regime,
@@ -738,6 +890,7 @@ export function calculateGlobalLiquidityModel(seriesList) {
     breadth: { positive: positiveDrivers, negative: negativeDrivers, total: drivers.length },
     globalLiquidityUsdMillions: latestTotal,
     cyclePercentile,
+    cycle,
     centralBanks: legSummary,
     composite,
     history: globalLiquidity,
@@ -1462,7 +1615,20 @@ export function calculateUsdStrengthModel(seriesList, liquidityModel = null) {
   const series = Object.fromEntries(seriesList.map((item) => [item.key, item]));
   const dollar = pointsForSeries(series.dxy);
   const dollarTechnical = calculateTechnicalSnapshot(dollar.map((point) => ({ timestamp: `${point.date}T00:00:00.000Z`, value: point.value })));
-  if (!dollarTechnical) return null;
+  if (!dollarTechnical) {
+    return {
+      version: 'usd-strength-v1',
+      status: 'unavailable',
+      reason: `A broad-dollar history of at least 30 observations is required; ${dollar.length} available.`,
+      asOf: dollar.at(-1)?.date ?? null,
+      score: null,
+      regime: null,
+      coverage: 0,
+      missing: ['FRED DTWEXBGS broad-dollar history'],
+      drivers: [],
+      history: dollar,
+    };
+  }
 
   const realYield = pointsForSeries(series.realYield10y);
   const frontEndYield = pointsForSeries(series.us2yYield);
@@ -1475,7 +1641,7 @@ export function calculateUsdStrengthModel(seriesList, liquidityModel = null) {
   const financialConditionsLatest = financialConditions.at(-1)?.value ?? null;
   const stressScores = [
     Number.isFinite(vixLatest) ? clamp(50 + ((vixLatest - 20) * 3)) : null,
-    Number.isFinite(financialConditionsLatest) ? clamp(50 + (financialConditionsLatest * 35) + ((financialConditionsChange ?? 0) * 25)) : null,
+    Number.isFinite(financialConditionsLatest) ? clamp(50 + (financialConditionsLatest * 35) + (Number.isFinite(financialConditionsChange) ? financialConditionsChange * 25 : 0)) : null,
   ].filter(Number.isFinite);
   const drivers = [
     { key: 'dollarTrend', name: 'Broad-dollar trend', score: dollarTechnical.components.trend, weight: 0.3, value: dollarTechnical.latest, change: dollarTechnical.indicators.momentum20d, source: 'FRED DTWEXBGS' },
@@ -1486,7 +1652,22 @@ export function calculateUsdStrengthModel(seriesList, liquidityModel = null) {
     { key: 'liquidity', name: 'Inverse dollar-liquidity impulse', score: Number.isFinite(liquidityModel?.score) ? 100 - liquidityModel.score : null, weight: 0.15, value: liquidityModel?.score, change: liquidityModel?.composite, source: liquidityModel?.version },
   ];
   const model = driverComposite(drivers, 0.45, 2);
-  if (!model.publishable) return null;
+  if (!model.publishable) {
+    return {
+      version: 'usd-strength-v1',
+      status: 'unavailable',
+      reason: `The dollar model needs at least two drivers covering 45% of its weight; it has ${model.coverage}%.`,
+      asOf: dollar.at(-1)?.date ?? null,
+      score: null,
+      regime: null,
+      coverage: model.coverage,
+      missing: model.missing,
+      drivers: model.drivers,
+      indicators: dollarTechnical.indicators,
+      observations: dollarTechnical.observations,
+      history: dollar,
+    };
+  }
   const regime = model.score >= 70 ? 'Strong' : model.score >= 58 ? 'Firm' : model.score <= 30 ? 'Weak' : model.score <= 42 ? 'Soft' : 'Neutral';
   const confidenceScore = Math.round((model.coverage * 0.8) + (Math.min(dollarTechnical.observations / 252, 1) * 20));
   const dollarSmile = vixLatest >= 25
@@ -1549,7 +1730,7 @@ export function calculateDollarScenarios(seriesList, { growthSpread60d = null } 
 
   const stressVol = Number.isFinite(volatility) ? clamp(50 + ((volatility - 20) * 3)) : null;
   const stressCredit = Number.isFinite(creditSpread)
-    ? clamp(50 + ((creditSpread - 4) * 8) + ((creditChange ?? 0) * 40))
+    ? clamp(50 + ((creditSpread - 4) * 8) + (Number.isFinite(creditChange) ? creditChange * 40 : 0))
     : null;
   const stressConditions = Number.isFinite(conditions) ? clamp(50 + (conditions * 35)) : null;
   const carryReal = Number.isFinite(realYieldChange) ? clamp(50 + (Math.tanh(realYieldChange / 0.5) * 50)) : null;
@@ -1683,8 +1864,12 @@ export function calculateMacroRegimeModel(seriesList, liquidityModel = null, usd
   const drivers = [
     { key: 'liquidity', name: 'US liquidity impulse', score: liquidityModel?.score, weight: 0.25, value: liquidityModel?.score, change: liquidityModel?.composite, source: liquidityModel?.version },
     { key: 'globalLiquidity', name: 'Global liquidity impulse', score: globalLiquidityModel?.score, weight: 0.15, value: globalLiquidityModel?.score, change: globalLiquidityModel?.composite, source: globalLiquidityModel?.version },
-    { key: 'financialConditions', name: 'Financial conditions', score: Number.isFinite(financialLatest) ? clamp(50 - (financialLatest * 40) - ((financialChange ?? 0) * 30)) : null, weight: 0.2, value: financialLatest, change: financialChange, source: 'FRED NFCI' },
-    { key: 'credit', name: 'High-yield credit', score: Number.isFinite(creditLatest) ? clamp(80 - ((creditLatest - 3) * 15) - ((creditChange ?? 0) * 20)) : null, weight: 0.18, value: creditLatest, change: creditChange, source: 'FRED BAMLH0A0HYM2' },
+    // The change term is dropped when it is missing rather than treated as
+    // zero, and the weight it would have carried is reweighted onto the level.
+    // Defaulting an absent change to "no change" made a driver read calmer the
+    // less the model actually knew about it.
+    { key: 'financialConditions', name: 'Financial conditions', score: Number.isFinite(financialLatest) ? clamp(50 - (financialLatest * 40) - (Number.isFinite(financialChange) ? financialChange * 30 : 0)) : null, weight: 0.2, value: financialLatest, change: financialChange, partial: Number.isFinite(financialLatest) && !Number.isFinite(financialChange), source: 'FRED NFCI' },
+    { key: 'credit', name: 'High-yield credit', score: Number.isFinite(creditLatest) ? clamp(80 - ((creditLatest - 3) * 15) - (Number.isFinite(creditChange) ? creditChange * 20 : 0)) : null, weight: 0.18, value: creditLatest, change: creditChange, partial: Number.isFinite(creditLatest) && !Number.isFinite(creditChange), source: 'FRED BAMLH0A0HYM2' },
     { key: 'volatility', name: 'Equity volatility', score: Number.isFinite(vixLatest) ? clamp(100 - ((vixLatest - 12) * 3.5)) : null, weight: 0.12, value: vixLatest, change: absoluteChangeOverDays(volatility, 28), source: 'FRED VIXCLS' },
     { key: 'dollar', name: 'Inverse dollar pressure', score: Number.isFinite(usdStrengthModel?.score) ? 100 - usdStrengthModel.score : null, weight: 0.1, value: usdStrengthModel?.score, change: usdStrengthModel?.indicators?.momentum20d, source: usdStrengthModel?.version },
   ];
@@ -1698,11 +1883,31 @@ export function calculateMacroRegimeModel(seriesList, liquidityModel = null, usd
   // Panic overrides the score bands entirely, so proximity to them would be
   // misleading while it holds.
   const proximity = panicConfirmed ? null : calculateMacroRegimeProximity(model.score);
-  const asOf = [liquidityModel?.asOf, usdStrengthModel?.asOf, financialConditions.at(-1)?.date, credit.at(-1)?.date, volatility.at(-1)?.date].filter(Boolean).sort().at(-1) ?? null;
+  // The regime is only as current as its oldest binding input. Publishing the
+  // freshest one stamped a model leaning on a six-week-old NFCI reading with
+  // today's VIX date; both ends are now published and `asOf` is the older.
+  const contributing = [
+    { key: 'liquidity', name: 'US liquidity model', date: liquidityModel?.asOf ?? null },
+    { key: 'dollar', name: 'Dollar strength model', date: usdStrengthModel?.asOf ?? null },
+    { key: 'financialConditions', name: 'FRED NFCI', date: financialConditions.at(-1)?.date ?? null },
+    { key: 'credit', name: 'FRED BAMLH0A0HYM2', date: credit.at(-1)?.date ?? null },
+    { key: 'volatility', name: 'FRED VIXCLS', date: volatility.at(-1)?.date ?? null },
+  ].filter((entry) => entry.date && model.drivers.some((driver) => driver.key === entry.key && driver.score !== null));
+  const dated = contributing.map((entry) => entry.date).sort();
+  const asOf = dated.at(0) ?? null;
+  const oldestInput = contributing.find((entry) => entry.date === dated.at(0)) ?? null;
+  const freshestInput = contributing.find((entry) => entry.date === dated.at(-1)) ?? null;
   return {
     version: 'macro-regime-v1',
     status: model.coverage >= 75 ? 'calculated' : 'provisional',
     asOf,
+    vintage: {
+      oldestInput,
+      freshestInput,
+      spreadDays: oldestInput && freshestInput ? Math.round((new Date(freshestInput.date) - new Date(oldestInput.date)) / DAY_MS) : null,
+      note: 'asOf is the oldest input still binding on the score, not the freshest one available.',
+    },
+    partialDrivers: model.drivers.filter((driver) => drivers.find((definition) => definition.key === driver.key)?.partial).map((driver) => driver.name),
     score: model.score,
     regime,
     coverage: model.coverage,

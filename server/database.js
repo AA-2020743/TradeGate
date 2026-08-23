@@ -122,7 +122,11 @@ export async function finishIngestionRun(id, status, observationsWritten, detail
 }
 
 export async function persistModelOutput(modelId, model, inputLineage = [], ingestionRunId = null) {
-  if (!pool || !model) return;
+  // A model that could not publish now returns an object carrying its reason
+  // rather than null. Storing those would fill the output history with rows
+  // whose score is null and whose asOf may be too, which the narrative builder
+  // would then read back as a reading.
+  if (!pool || !model || model.status === 'unavailable') return;
   await pool.query(
     `INSERT INTO model_outputs (model_id, version, calculated_at, effective_at, output, input_lineage, ingestion_run_id)
      VALUES ($1, $2, NOW(), $3, $4::jsonb, $5::jsonb, $6)`,

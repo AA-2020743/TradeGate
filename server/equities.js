@@ -1,5 +1,5 @@
 import { getStoredMarketHistories, getStoredSeriesCoverage, isDatabaseConfigured } from './database.js';
-import { calculateTechnicalSnapshot } from './analytics.js';
+import { calculateTechnicalSnapshot, isPublished } from './analytics.js';
 import { calculateBottomSignal, calculateBasketRotation, calculateCaptureProfile, calculateDrawdownProfile, calculateEquityRegime, calculateMacroSensitivities, calculateSectorBreadthProxy, calculateSectorDispersion, calculateSectorRotation, calculateTopRisk, calculateVolatilityTermStructure } from './equityAnalytics.js';
 import {
   attachSeriesCoverage,
@@ -131,9 +131,10 @@ export async function getEquityDashboard(requestedSymbol = 'SPY') {
       },
       {
         name: 'US liquidity',
-        status: liquidity?.model ? 'available' : 'unavailable',
+        status: isPublished(liquidity?.model) ? 'available' : 'unavailable',
         source: liquidity?.model?.version ?? null,
         asOf: liquidity?.model?.asOf ?? null,
+        disclosure: isPublished(liquidity?.model) ? undefined : liquidity?.model?.reason ?? undefined,
       },
       {
         name: 'Analyst EPS revisions',

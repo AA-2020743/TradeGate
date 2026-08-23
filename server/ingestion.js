@@ -1,6 +1,6 @@
 import { config } from './config.js';
 import { observationTimestamp, runIngestionJob } from './ingestionRun.js';
-import { buildWorkspaceNarrative, calculateTechnicalSnapshot } from './analytics.js';
+import { buildWorkspaceNarrative, calculateTechnicalSnapshot, isPublished } from './analytics.js';
 import {
   acquireIngestionLock,
   finishIngestionRun,
@@ -202,7 +202,9 @@ const RESEARCH_WORKSPACES = [
     modelId: 'liquidity-states',
     load: async () => {
       const snapshot = await getLiquiditySnapshot();
-      if (!snapshot?.model && !snapshot?.globalLiquidity) throw new Error('Liquidity models unavailable');
+      if (!isPublished(snapshot?.model) && !isPublished(snapshot?.globalLiquidity)) {
+        throw new Error(`Liquidity models unavailable: ${snapshot?.model?.reason ?? snapshot?.globalLiquidity?.reason ?? 'no reason published'}`);
+      }
       return {
         asOf: new Date().toISOString(),
         version: 'liquidity-states-v1',

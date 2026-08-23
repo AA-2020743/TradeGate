@@ -5,7 +5,7 @@ import { calculateBreadthDivergence } from './equityAnalytics.js';
 import { calculateBitcoinTechnicals, calculateMovingAverageStack } from './bitcoinTechnicals.js';
 import { calculateRevisionBreadth, calculateThrustLog } from './equityAnalytics.js';
 import { calculateBitcoinRangeModels } from './bitcoinOhlc.js';
-import { buildCoingeckoRequest, buildHeatmapRow, buildSocrataRequest, buildLiquidityNarrative, buildLiquidityTransmission, buildWorkspaceNarrative, calculateBitcoinCyclePhase, calculateChangeCorrelations, calculateCryptoRotation, calculateDollarScenarios, calculateDollarTransmissionRead, calculateLeadLag, calculateLiquidityRunway, calculateOpenInterestQuadrant, calculatePositioningModel, calculateCrossMarketRelationship, calculateGlobalLiquidityModel, calculateHeatmapRisk, calculateMacroRegimeModel, calculateMetalsCostStructure, calculateRsi, calculateScreenerScores, calculateTechnicalSnapshot, calculateTrendQuality, classifyHeadlineSentiment, calculateUsdStrengthModel, calculateUsLiquidityModel } from './analytics.js';
+import { buildCoingeckoRequest, buildHeatmapRow, buildSocrataRequest, buildLiquidityNarrative, buildLiquidityTransmission, buildWorkspaceNarrative, calculateBitcoinCyclePhase, calculateChangeCorrelations, calculateCryptoRotation, calculateDollarScenarios, calculateDollarTransmissionRead, calculateLeadLag, calculateLiquidityRunway, calculateOpenInterestQuadrant, calculatePositioningModel, calculateCrossMarketRelationship, calculateGlobalLiquidityModel, calculateHeatmapRisk, calculateMacroRegimeModel, calculateMetalsCostStructure, calculateRsi, calculateScreenerScores, calculateTechnicalSnapshot, calculateTrendQuality, classifyHeadlineSentiment, isPublished, calculateUsdStrengthModel, calculateUsLiquidityModel } from './analytics.js';
 import { getStoredFredSeries, getStoredMarketHistory, getStoredMarketSnapshot, getRecentModelOutputs, isDatabaseConfigured, reserveProviderCredits } from './database.js';
 import { getAllEquityHistorySymbols, getCoreEquityHistorySymbols } from './equityCatalog.js';
 import { describeSeriesFreshness, isCryptoHistoryStale, isCotReportStale, isDailyCloseStale, isFredSeriesStale, isPbocObservationStale, monthsBetween } from './freshness.js';
@@ -542,7 +542,8 @@ export async function getMarketHeatmap() {
   return withCache('analytics:market-heatmap', 15 * 60_000, async () => {
     const [positioningResult, liquidityResult] = await Promise.allSettled([getMarketPositioning(), getLiquiditySnapshot()]);
     const positioning = positioningResult.status === 'fulfilled' ? positioningResult.value.model : null;
-    const globalLiquidity = liquidityResult.status === 'fulfilled' ? liquidityResult.value.globalLiquidity : null;
+    const globalLiquidityRaw = liquidityResult.status === 'fulfilled' ? liquidityResult.value.globalLiquidity : null;
+    const globalLiquidity = isPublished(globalLiquidityRaw) ? globalLiquidityRaw : null;
     const toPoints = (points) => (points ?? []).filter((point) => Number.isFinite(point.value)).map((point) => ({ timestamp: point.timestamp ?? `${point.date}T00:00:00.000Z`, value: point.value }));
     const spyHistory = await getMarketHistory('SPY', '1Y').catch(() => null);
     const spyPoints = toPoints(spyHistory?.stale ? [] : spyHistory?.points);
@@ -1549,7 +1550,7 @@ export async function getMetalsWorkspace() {
       cotDetail,
       ratios: { goldSilver: goldSilverRatio, goldCopper: goldCopperRatio },
       costStructure,
-      macro: liquidity?.usdStrength && liquidity?.globalLiquidity ? { dollar: { score: liquidity.usdStrength.score, regime: liquidity.usdStrength.regime }, globalLiquidity: { score: liquidity.globalLiquidity.score, regime: liquidity.globalLiquidity.regime } } : null,
+      macro: isPublished(liquidity?.usdStrength) && isPublished(liquidity?.globalLiquidity) ? { dollar: { score: liquidity.usdStrength.score, regime: liquidity.usdStrength.regime }, globalLiquidity: { score: liquidity.globalLiquidity.score, regime: liquidity.globalLiquidity.regime } } : null,
       methodology: 'Spot metals use front CME/COMEX futures (GC, SI, PL, PA) and miners use ETF close histories from Yahoo Finance; scores are technical-v1 with 20-day annualized volatility and 20-session momentum. COT figures reuse the platform gold contract percentile. Cross-ratios divide aligned GC/SI and GC/HG futures closes, percentile-ranked over the shared one-year window.',
     };
   });
@@ -2196,12 +2197,12 @@ export async function getLiquiditySnapshot(options = {}) {
     if (staleLiveSeries.length) errors.push(`Latest FRED responses are stale: ${staleLiveSeries.map((item) => item.id).join(', ')}`);
     if (staleSeries.length) errors.push(`FRED series are stale and excluded from models: ${staleSeries.map((item) => item.id).join(', ')}`);
     const values = Object.fromEntries(modelSeries.map((item) => [item.key, item.value * item.multiplier]));
-    const hasNetLiquidityInputs = ['fedBalanceSheet', 'treasuryGeneralAccount', 'reverseRepo'].every((key) => values[key] !== undefined);
     const model = calculateUsLiquidityModel(modelSeries);
     const globalLiquidity = calculateGlobalLiquidityModel(modelSeries);
     const liquidityRunway = calculateLiquidityRunway(modelSeries);
-    const usdStrength = calculateUsdStrengthModel(modelSeries, model);
-    const macroRegime = calculateMacroRegimeModel(modelSeries, model, usdStrength, globalLiquidity);
+    const publishable = (candidate) => (isPublished(candidate) ? candidate : null);
+    const usdStrength = calculateUsdStrengthModel(modelSeries, publishable(model));
+    const macroRegime = calculateMacroRegimeModel(modelSeries, publishable(model), publishable(usdStrength), publishable(globalLiquidity));
     const dollarScenarios = calculateDollarScenarios(modelSeries, { growthSpread60d: await getGlobalGrowthSpread() });
     const stablecoins = await getStablecoinIssuance().catch(() => null);
     let narrative = null;
@@ -2241,7 +2242,11 @@ export async function getLiquiditySnapshot(options = {}) {
       asOf: new Date().toISOString(),
       provider: { configured: true, mode: config.fredApiKey ? 'api' : 'public-csv', name: 'FRED', storedFallbacks: series.filter((item) => item.stored).length, staleSeries: staleSeries.length },
       series,
-      netLiquidity: hasNetLiquidityInputs ? values.fedBalanceSheet - values.treasuryGeneralAccount - values.reverseRepo : null,
+      // One net-liquidity number, and it is the date-aligned one the model
+      // publishes. Subtracting each series' own latest value gave a second,
+      // different figure for the same quantity whenever the weekly Fed print
+      // and the daily TGA/RRP prints landed on different days.
+      netLiquidity: model?.netLiquidity ?? null,
       model,
       liquidityRunway,
       globalLiquidity,
@@ -2256,7 +2261,10 @@ export async function getLiquiditySnapshot(options = {}) {
 }
 
 export function calculateDollarTransmission(liquidity, dxyBtc) {
-  const usdStrength = liquidity?.usdStrength ?? null;
+  // An unavailable dollar model still carries its raw indicators. Reading
+  // momentum off one that failed its own coverage threshold would let the
+  // transmission publish a direction the model itself declined to publish.
+  const usdStrength = isPublished(liquidity?.usdStrength) ? liquidity.usdStrength : null;
   const corr60 = dxyBtc?.model?.correlations?.['60D'];
   const read = calculateDollarTransmissionRead({
     usdMomentum: usdStrength?.indicators?.momentum20d ?? null,
