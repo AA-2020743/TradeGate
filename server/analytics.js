@@ -947,6 +947,59 @@ export function calculateHeatmapRisk(assets = []) {
   };
 }
 
+/**
+ * Open-interest quadrant from Binance's openInterestHist rows.
+ *
+ * The endpoint publishes contracts (`sumOpenInterest`) and the notional value
+ * of those contracts (`sumOpenInterestValue`). Notional is contracts times
+ * price, so it cannot stand in for price: whenever the contract move dominates,
+ * its sign follows open interest rather than the tape, and the quadrant lands
+ * on the opposite read — a rally on falling open interest reports as a
+ * deleveraging washout instead of a spot-led advance. Price has to be recovered
+ * by dividing notional by contracts.
+ *
+ * Rows are also paired before filtering: dropping the two fields independently
+ * lets the series fall out of step, so `n` bars back would mean different dates
+ * in each.
+ */
+export function calculateOpenInterestQuadrant(rows, { lookbackBars = 7 } = {}) {
+  const paired = (rows ?? [])
+    .map((row) => ({ contracts: Number(row?.openInterest), notional: Number(row?.openInterestValue) }))
+    .filter((row) => Number.isFinite(row.contracts) && row.contracts > 0 && Number.isFinite(row.notional) && row.notional > 0);
+  if (paired.length < lookbackBars + 1) {
+    return { status: 'unavailable', reason: `Needs ${lookbackBars + 1} paired open-interest observations.`, quadrant: null, observations: paired.length };
+  }
+  const latest = paired.at(-1);
+  const prior = paired.at(-(lookbackBars + 1));
+  const impliedPrice = (row) => row.notional / row.contracts;
+  const oiChange = ((latest.contracts / prior.contracts) - 1) * 100;
+  const priceChange = ((impliedPrice(latest) / impliedPrice(prior)) - 1) * 100;
+
+  const quadrant = priceChange >= 0
+    ? (oiChange >= 0 ? 'Levered expansion' : 'Spot-led advance')
+    : (oiChange >= 0 ? 'Levered pressure' : 'Deleveraging washout');
+  const reads = {
+    'Levered expansion': 'Price and open interest are both rising, so the advance is being carried with added leverage.',
+    'Spot-led advance': 'Price is rising while open interest falls, so the bid is coming from spot rather than from new leverage.',
+    'Levered pressure': 'Price is falling while open interest rises, which is positions being added into weakness.',
+    'Deleveraging washout': 'Price and open interest are both falling, so leverage is being unwound rather than defended.',
+  };
+
+  return {
+    status: 'calculated',
+    quadrant,
+    oiChange7d: Math.round(oiChange * 100) / 100,
+    priceChange7d: Math.round(priceChange * 100) / 100,
+    openInterest: latest.contracts,
+    impliedPrice: Math.round(impliedPrice(latest) * 100) / 100,
+    lookbackBars,
+    observations: paired.length,
+    read: reads[quadrant],
+    methodology: `Open interest is Binance's contract total and price is recovered as notional divided by contracts, since the published notional is itself contracts times price and follows open interest whenever the contract move dominates. Both are compared over ${lookbackBars} bars.`,
+  };
+}
+
+
 export function calculatePositioningModel(reports) {
   const usable = reports.filter((report) => Array.isArray(report.history) && report.history.length >= 26);
   const contracts = usable.map((report) => {

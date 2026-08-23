@@ -2,7 +2,7 @@ import { config } from './config.js';
 import { withCache } from './cache.js';
 import { settle, unwrap } from './settled.js';
 import { calculateBreadthDivergence } from './equityAnalytics.js';
-import { buildCoingeckoRequest, buildHeatmapRow, buildSocrataRequest, buildLiquidityNarrative, buildLiquidityTransmission, buildWorkspaceNarrative, calculateBitcoinCyclePhase, calculateChangeCorrelations, calculateCryptoRotation, calculateDollarScenarios, calculateDollarTransmissionRead, calculateLeadLag, calculateLiquidityRunway, calculatePositioningModel, calculateCrossMarketRelationship, calculateGlobalLiquidityModel, calculateHeatmapRisk, calculateMacroRegimeModel, calculateMetalsCostStructure, calculateRsi, calculateScreenerScores, calculateTechnicalSnapshot, calculateTrendQuality, classifyHeadlineSentiment, calculateUsdStrengthModel, calculateUsLiquidityModel } from './analytics.js';
+import { buildCoingeckoRequest, buildHeatmapRow, buildSocrataRequest, buildLiquidityNarrative, buildLiquidityTransmission, buildWorkspaceNarrative, calculateBitcoinCyclePhase, calculateChangeCorrelations, calculateCryptoRotation, calculateDollarScenarios, calculateDollarTransmissionRead, calculateLeadLag, calculateLiquidityRunway, calculateOpenInterestQuadrant, calculatePositioningModel, calculateCrossMarketRelationship, calculateGlobalLiquidityModel, calculateHeatmapRisk, calculateMacroRegimeModel, calculateMetalsCostStructure, calculateRsi, calculateScreenerScores, calculateTechnicalSnapshot, calculateTrendQuality, classifyHeadlineSentiment, calculateUsdStrengthModel, calculateUsLiquidityModel } from './analytics.js';
 import { getStoredFredSeries, getStoredMarketHistory, getStoredMarketSnapshot, getRecentModelOutputs, isDatabaseConfigured, reserveProviderCredits } from './database.js';
 import { getAllEquityHistorySymbols, getCoreEquityHistorySymbols } from './equityCatalog.js';
 import { describeSeriesFreshness, isCryptoHistoryStale, isCotReportStale, isDailyCloseStale, isFredSeriesStale, isPbocObservationStale, monthsBetween } from './freshness.js';
@@ -678,17 +678,12 @@ async function getBinanceFundingLeg() {
 async function getBinancePositioningLeg() {
   const rows = await fetchJson('https://fapi.binance.com/futures/data/openInterestHist?symbol=BTCUSDT&period=1d&limit=30');
   if (!Array.isArray(rows) || rows.length < 9) throw new Error('Binance open-interest history unavailable');
-  const oi = rows.map((row) => asNumber(row.sumOpenInterest)).filter((value) => Number.isFinite(value));
-  const price = rows.map((row) => asNumber(row.sumOpenInterestValue)).filter((value) => Number.isFinite(value));
-  const oiChange7d = oi.at(-1) && oi.at(-8) ? ((oi.at(-1) / oi.at(-8)) - 1) * 100 : null;
-  const priceChange7d = price.at(-1) && price.at(-8) ? ((price.at(-1) / price.at(-8)) - 1) * 100 : null;
-  if (!Number.isFinite(oiChange7d) || !Number.isFinite(priceChange7d)) throw new Error('Open-interest series incomplete');
-  let quadrant;
-  if (priceChange7d >= 0 && oiChange7d >= 0) quadrant = 'Levered expansion';
-  else if (priceChange7d >= 0 && oiChange7d < 0) quadrant = 'Spot-led advance';
-  else if (priceChange7d < 0 && oiChange7d >= 0) quadrant = 'Levered pressure';
-  else quadrant = 'Deleveraging washout';
-  return { openInterest: oi.at(-1), oiChange7d, priceChange7d, quadrant };
+  const quadrant = calculateOpenInterestQuadrant(rows.map((row) => ({
+    openInterest: asNumber(row.sumOpenInterest),
+    openInterestValue: asNumber(row.sumOpenInterestValue),
+  })));
+  if (quadrant.status !== 'calculated') throw new Error(quadrant.reason);
+  return quadrant;
 }
 
 let bitcoinOnchainMemo = null;

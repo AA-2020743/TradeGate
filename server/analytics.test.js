@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { buildAtomFeed, buildCoingeckoRequest, buildSocrataRequest, buildHeatmapRow, buildLiquidityNarrative, buildLiquidityTransmission, buildWorkspaceNarrative, calculateBitcoinCyclePhase, calculateChangeCorrelations, calculateCryptoRotation, calculateDollarScenarios, calculateDollarTransmissionRead, calculateLeadLag, calculateLiquidityRunway, calculatePositioningModel, calculateCrossMarketRelationship, calculateGlobalLiquidityModel, calculateHeatmapRisk, calculateMacroRegimeModel, calculateMacroRegimeProximity, classifyMacroRegimeByScore, calculateMetalsCostStructure, calculateRsi, calculateScreenerScores, calculateSeriesLeadLag, calculateTechnicalSnapshot, calculateTrendQuality, classifyHeadlineSentiment, calculateUsdStrengthModel, calculateUsLiquidityModel, escapeXml, pearsonCorrelation } from './analytics.js';
+import { buildAtomFeed, buildCoingeckoRequest, buildSocrataRequest, buildHeatmapRow, buildLiquidityNarrative, buildLiquidityTransmission, buildWorkspaceNarrative, calculateBitcoinCyclePhase, calculateChangeCorrelations, calculateCryptoRotation, calculateDollarScenarios, calculateDollarTransmissionRead, calculateLeadLag, calculateLiquidityRunway, calculatePositioningModel, calculateCrossMarketRelationship, calculateGlobalLiquidityModel, calculateHeatmapRisk, calculateMacroRegimeModel, calculateMacroRegimeProximity, classifyMacroRegimeByScore, calculateMetalsCostStructure, calculateOpenInterestQuadrant, calculateRsi, calculateScreenerScores, calculateSeriesLeadLag, calculateTechnicalSnapshot, calculateTrendQuality, classifyHeadlineSentiment, calculateUsdStrengthModel, calculateUsLiquidityModel, escapeXml, pearsonCorrelation } from './analytics.js';
 
 test('RSI reaches 100 for an uninterrupted advance', () => {
   const values = Array.from({ length: 30 }, (_, index) => 100 + index);
@@ -1340,4 +1340,73 @@ test('a shorter window is honoured in both the pace and the methodology', () => 
   // The same 300bn drawdown over one month is a far faster pace, so less runway.
   assert.ok(model.runwayMonths < 1.5, `runway ${model.runwayMonths}`);
   assert.match(model.methodology, /over 30 days/);
+});
+
+// Binance publishes contracts and their notional value; price is the quotient.
+const oiRows = (contractsSeries, priceSeries) => contractsSeries.map((contracts, index) => ({
+  openInterest: contracts,
+  openInterestValue: contracts * priceSeries[index],
+}));
+const flat = (value, length = 8) => Array.from({ length }, () => value);
+
+test('a rally on falling open interest is spot-led, not a washout', () => {
+  // The notional falls here because contracts drop faster than price rises;
+  // reading notional as price would call this a deleveraging washout.
+  const rows = oiRows([80_000, ...flat(78_000, 6), 64_000], [60_000, ...flat(62_000, 6), 66_000]);
+  const model = calculateOpenInterestQuadrant(rows);
+  assert.equal(model.status, 'calculated');
+  assert.equal(model.quadrant, 'Spot-led advance');
+  assert.ok(model.priceChange7d > 0, `price change ${model.priceChange7d}`);
+  assert.ok(model.oiChange7d < 0, `oi change ${model.oiChange7d}`);
+  assert.equal(Math.round(((80_000 * 60_000) / 80_000)), 60_000);
+});
+
+test('a decline on rising open interest is levered pressure, not expansion', () => {
+  const rows = oiRows([60_000, ...flat(62_000, 6), 84_000], [70_000, ...flat(69_000, 6), 61_600]);
+  const model = calculateOpenInterestQuadrant(rows);
+  assert.equal(model.quadrant, 'Levered pressure');
+  assert.ok(model.priceChange7d < 0);
+  assert.ok(model.oiChange7d > 0);
+});
+
+test('both rising is a levered expansion and both falling a washout', () => {
+  const up = calculateOpenInterestQuadrant(oiRows([70_000, ...flat(72_000, 6), 80_000], [60_000, ...flat(61_000, 6), 66_000]));
+  assert.equal(up.quadrant, 'Levered expansion');
+  const down = calculateOpenInterestQuadrant(oiRows([80_000, ...flat(78_000, 6), 70_000], [66_000, ...flat(64_000, 6), 60_000]));
+  assert.equal(down.quadrant, 'Deleveraging washout');
+});
+
+test('price is recovered from notional rather than read off it', () => {
+  // Contracts halve while price doubles: notional is unchanged, so anything
+  // reading notional as price would see no move at all.
+  const rows = oiRows([80_000, ...flat(80_000, 6), 40_000], [50_000, ...flat(50_000, 6), 100_000]);
+  const model = calculateOpenInterestQuadrant(rows);
+  assert.equal(model.priceChange7d, 100);
+  assert.equal(model.oiChange7d, -50);
+  assert.equal(model.quadrant, 'Spot-led advance');
+  assert.equal(model.impliedPrice, 100_000);
+});
+
+test('rows are paired before filtering so the two series cannot fall out of step', () => {
+  const rows = oiRows([80_000, ...flat(78_000, 6), 64_000], [60_000, ...flat(62_000, 6), 66_000]);
+  // A row missing one field must drop entirely, not shift one series by a bar.
+  const damaged = rows.map((row, index) => (index === 3 ? { ...row, openInterestValue: null } : row));
+  const model = calculateOpenInterestQuadrant(damaged);
+  assert.equal(model.observations, rows.length - 1);
+  assert.equal(model.status, 'unavailable');
+});
+
+test('too little history withholds the quadrant', () => {
+  assert.equal(calculateOpenInterestQuadrant(oiRows(flat(70_000, 5), flat(60_000, 5))).status, 'unavailable');
+  assert.equal(calculateOpenInterestQuadrant([]).status, 'unavailable');
+  assert.equal(calculateOpenInterestQuadrant().status, 'unavailable');
+  assert.match(calculateOpenInterestQuadrant([]).reason, /8 paired open-interest observations/);
+});
+
+test('zero or negative contract counts are dropped rather than dividing', () => {
+  const rows = oiRows([80_000, ...flat(78_000, 6), 64_000], [60_000, ...flat(62_000, 6), 66_000]);
+  const withZero = [{ openInterest: 0, openInterestValue: 0 }, ...rows];
+  const model = calculateOpenInterestQuadrant(withZero);
+  assert.equal(model.status, 'calculated');
+  assert.ok(Number.isFinite(model.impliedPrice));
 });
