@@ -97,3 +97,63 @@ test('nothing is sent when no transition matches', async () => {
   });
   assert.equal(result.status, 'quiet');
 });
+
+test('a transport failure is retried with backoff and can succeed', async () => {
+  const waits = [];
+  let calls = 0;
+  const result = await deliverAlerts(alerts, {
+    url: 'https://example.com/hook',
+    wait: async (ms) => { waits.push(ms); },
+    fetchImplementation: async () => {
+      calls += 1;
+      if (calls < 3) throw new Error('socket hang up');
+      return { ok: true, status: 200 };
+    },
+  });
+  assert.equal(result.status, 'delivered');
+  assert.equal(result.attempts, 3);
+  assert.deepEqual(waits, [500, 1000], 'backoff doubles between attempts');
+});
+
+test('a 5xx is retried and a 4xx is not', async () => {
+  let serverErrors = 0;
+  const retried = await deliverAlerts(alerts, {
+    url: 'https://example.com/hook',
+    wait: async () => {},
+    fetchImplementation: async () => { serverErrors += 1; return { ok: false, status: 503 }; },
+  });
+  assert.equal(serverErrors, 3);
+  assert.equal(retried.retryable, true);
+
+  let clientErrors = 0;
+  const abandoned = await deliverAlerts(alerts, {
+    url: 'https://example.com/hook',
+    wait: async () => {},
+    fetchImplementation: async () => { clientErrors += 1; return { ok: false, status: 400 }; },
+  });
+  // The receiver is saying the request is wrong; sending it twice more is noise.
+  assert.equal(clientErrors, 1);
+  assert.equal(abandoned.retryable, false);
+  assert.match(abandoned.reason, /responded 400/);
+});
+
+test('a rate-limited webhook is retried rather than abandoned', async () => {
+  let calls = 0;
+  await deliverAlerts(alerts, {
+    url: 'https://example.com/hook',
+    wait: async () => {},
+    fetchImplementation: async () => { calls += 1; return { ok: false, status: 429 }; },
+  });
+  assert.equal(calls, 3, '429 means try later, not stop trying');
+});
+
+test('one attempt is honoured when retries are switched off', async () => {
+  let calls = 0;
+  await deliverAlerts(alerts, {
+    url: 'https://example.com/hook',
+    attempts: 1,
+    wait: async () => { throw new Error('must not wait'); },
+    fetchImplementation: async () => { calls += 1; throw new Error('down'); },
+  });
+  assert.equal(calls, 1);
+});

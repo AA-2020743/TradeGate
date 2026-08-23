@@ -112,8 +112,23 @@ export async function ingestMarketHistory() {
 }
 
 export async function ingestLiquiditySnapshot() {
-  return executeIngestion('fred-liquidity', async ({ runId, reportWritten }) => {
+  return executeIngestion('fred-liquidity', async (context) => {
     const snapshot = await getLiquiditySnapshot({ refresh: true });
+    return persistLiquiditySnapshot(snapshot, context);
+  });
+}
+
+/**
+ * Writes a liquidity snapshot: its series, its model outputs, its alert
+ * transitions and its backfill rows.
+ *
+ * Split out from the job so the whole path can be exercised against a real
+ * database with a synthetic snapshot. It writes thirteen model outputs, alert
+ * state and backfill rows, and none of that was reachable by a test while it
+ * lived inside a function that begins by calling a live provider.
+ */
+export async function persistLiquiditySnapshot(snapshot, { runId = null, reportWritten = () => {} } = {}) {
+  {
     if (!snapshot.series.length) throw new Error('No FRED series were returned');
 
     for (const series of snapshot.series) {
@@ -125,8 +140,10 @@ export async function ingestLiquiditySnapshot() {
         name: series.name,
         assetClass: 'Macro',
         frequency: 'provider-defined',
-        unit: series.unit,
-        currency: series.unit.startsWith('USD') ? 'USD' : null,
+        unit: series.unit ?? null,
+        // A series arriving without a unit used to take the whole macro job down
+        // on this property access.
+        currency: String(series.unit ?? '').startsWith('USD') ? 'USD' : null,
         metadata: { key: series.key, multiplier: series.multiplier },
         observations: series.history.map((observation) => ({
           observedAt: `${observation.date}T00:00:00.000Z`,
@@ -249,7 +266,7 @@ export async function ingestLiquiditySnapshot() {
       status: snapshot.errors.length || !snapshot.model ? 'partial' : 'completed',
       details: { seriesReceived: snapshot.series.length, modelVersion: snapshot.model?.version ?? null, usdStrengthVersion: snapshot.usdStrength?.version ?? null, macroRegimeVersion: snapshot.macroRegime?.version ?? null, regimeCorrelationVersion, persistedMacroModels, macroAlertsRaised, backfilledRows, alertDelivery, providerErrors: [...snapshot.errors, ...persistenceErrors] },
     };
-  });
+  }
 }
 
 const RESEARCH_WORKSPACES = [

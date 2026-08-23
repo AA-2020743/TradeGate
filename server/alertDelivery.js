@@ -32,15 +32,20 @@ export function selectDeliverableAlerts(alerts, { severities = DEFAULT_SEVERITIE
 }
 
 /**
- * Posts the selected transitions. Never throws: a webhook that is down must not
- * take an ingestion run with it, so the failure is returned for the run's own
- * details rather than propagated.
+ * Posts the selected transitions, retrying transport failures and 5xx with
+ * exponential backoff. Never throws: a webhook that is down must not take an
+ * ingestion run with it, so the failure is returned for the run's own details
+ * rather than propagated. A 4xx is not retried — the receiver is saying the
+ * request is wrong, and repeating it will not make it right.
  */
 export async function deliverAlerts(alerts, {
   url = '',
   severities = DEFAULT_SEVERITIES,
   fetchImplementation = fetch,
   timeoutMs = 5_000,
+  attempts = 3,
+  backoffMs = 500,
+  wait = (ms) => new Promise((resolve) => { setTimeout(resolve, ms); }),
   now = () => new Date().toISOString(),
 } = {}) {
   if (!url) return { status: 'disabled', reason: 'No alert webhook is configured.', delivered: 0 };
@@ -50,34 +55,42 @@ export async function deliverAlerts(alerts, {
   const entries = selectDeliverableAlerts(alerts, { severities });
   if (!entries.length) return { status: 'quiet', reason: 'No transition matched the delivery severities.', delivered: 0 };
 
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
-  try {
-    const response = await fetchImplementation(url, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      signal: controller.signal,
-      body: JSON.stringify({
-        source: 'tradegate',
-        asOf: now(),
-        // The full set is included so a receiver can render context without a
-        // second call, but only the transitions above are counted as delivered.
-        transitions: entries.map((entry) => ({ key: entry.key, severity: entry.severity, transition: entry.transition, text: entry.text })),
-        liveCount: alerts?.entries?.length ?? 0,
-      }),
-    });
-    if (!response?.ok) {
-      return { status: 'failed', reason: `The webhook responded ${response?.status ?? 'with no status'}.`, delivered: 0, attempted: entries.length };
+  const body = JSON.stringify({
+    source: 'tradegate',
+    asOf: now(),
+    // The full set is included so a receiver can render context without a
+    // second call, but only the transitions above are counted as delivered.
+    transitions: entries.map((entry) => ({ key: entry.key, severity: entry.severity, transition: entry.transition, text: entry.text })),
+    liveCount: alerts?.entries?.length ?? 0,
+  });
+
+  // A 4xx is the receiver telling us the request is wrong; repeating it will
+  // not make it right, so only transport failures and 5xx are retried.
+  const worthRetrying = (status) => !Number.isFinite(status) || status >= 500 || status === 429;
+  let lastReason = null;
+  for (let attempt = 1; attempt <= Math.max(1, attempts); attempt += 1) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    try {
+      const response = await fetchImplementation(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        signal: controller.signal,
+        body,
+      });
+      if (response?.ok) {
+        return { status: 'delivered', delivered: entries.length, keys: entries.map((entry) => entry.key), attempts: attempt };
+      }
+      lastReason = `The webhook responded ${response?.status ?? 'with no status'}.`;
+      if (!worthRetrying(response?.status)) {
+        return { status: 'failed', reason: lastReason, delivered: 0, attempted: entries.length, attempts: attempt, retryable: false };
+      }
+    } catch (error) {
+      lastReason = error.name === 'AbortError' ? `The webhook did not respond within ${timeoutMs}ms.` : error.message;
+    } finally {
+      clearTimeout(timer);
     }
-    return { status: 'delivered', delivered: entries.length, keys: entries.map((entry) => entry.key) };
-  } catch (error) {
-    return {
-      status: 'failed',
-      reason: error.name === 'AbortError' ? `The webhook did not respond within ${timeoutMs}ms.` : error.message,
-      delivered: 0,
-      attempted: entries.length,
-    };
-  } finally {
-    clearTimeout(timer);
+    if (attempt < Math.max(1, attempts)) await wait(backoffMs * (2 ** (attempt - 1)));
   }
+  return { status: 'failed', reason: lastReason, delivered: 0, attempted: entries.length, attempts: Math.max(1, attempts), retryable: true };
 }

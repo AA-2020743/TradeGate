@@ -403,9 +403,59 @@ app.get('/api/analytics/fx', async (_request, response, next) => {
   }
 });
 
+// Twenty-two FRED series at up to 2,500 observations each is about four
+// megabytes of history on every page load. The client reads five headline
+// values from `series` and the last twenty-one points of three FX pairs, so the
+// response carries a year of each series and says what it trimmed. The
+// snapshot object itself is untouched: the models and the regime-correlation
+// pass that read it internally still see every observation.
+const SNAPSHOT_SERIES_HISTORY_POINTS = 260;
+
+function trimSnapshotForResponse(snapshot) {
+  if (!Array.isArray(snapshot?.series)) return snapshot;
+  return {
+    ...snapshot,
+    series: snapshot.series.map((series) => {
+      const history = series.history ?? [];
+      if (history.length <= SNAPSHOT_SERIES_HISTORY_POINTS) return series;
+      return {
+        ...series,
+        history: history.slice(-SNAPSHOT_SERIES_HISTORY_POINTS),
+        historyTruncated: { kept: SNAPSHOT_SERIES_HISTORY_POINTS, total: history.length },
+      };
+    }),
+    seriesHistoryNote: `Series histories are trimmed to their most recent ${SNAPSHOT_SERIES_HISTORY_POINTS} observations for transport; the models run on the full history server-side.`,
+  };
+}
+
 app.get('/api/macro/liquidity', async (_request, response, next) => {
   try {
-    response.json(await getLiquiditySnapshot());
+    response.json(trimSnapshotForResponse(await getLiquiditySnapshot()));
+  } catch (error) {
+    next(error);
+  }
+});
+
+/**
+ * The cross-model layer alone. The liquidity snapshot carries around thirty
+ * models with their full histories in one object, which is a heavy payload for
+ * what is now the section's landing view — the overview needs a small fraction
+ * of it and nothing else on the page needs the rest to render.
+ */
+app.get('/api/macro/consensus', async (_request, response, next) => {
+  try {
+    const snapshot = await getLiquiditySnapshot();
+    response.json({
+      asOf: snapshot.asOf,
+      consensus: snapshot.consensus ?? null,
+      consensusHistory: snapshot.consensusHistory ?? null,
+      macroAlerts: snapshot.macroAlerts ?? null,
+      modelCorrelation: snapshot.modelCorrelation ?? null,
+      weightOverlap: snapshot.weightOverlap ?? null,
+      // Named so a caller can tell an unavailable model from one this endpoint
+      // simply does not carry.
+      omitted: 'Model histories, series observations and the individual macro models are served by /api/macro/liquidity.',
+    });
   } catch (error) {
     next(error);
   }
