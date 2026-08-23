@@ -1,4 +1,5 @@
 import { config } from './config.js';
+import { observationTimestamp, runIngestionJob } from './ingestionRun.js';
 import { buildWorkspaceNarrative, calculateTechnicalSnapshot } from './analytics.js';
 import {
   acquireIngestionLock,
@@ -13,31 +14,12 @@ import {
 } from './database.js';
 import { getBitcoinCycleWorkspace, calculateDollarTransmission, getDxyBitcoinRelationship, getEquityRiskAppetite, getFxWorkspace, getIngestionHistorySymbols, getLiquiditySnapshot, getMarketHeatmap, getMarketHistory, getMarketSnapshot, getMetalsWorkspace, getRegimeCorrelations, getSentimentSnapshot, REGIME_CORRELATION_PAIRS } from './providers.js';
 
-function observationTimestamp(value, fallback) {
-  const timestamp = value ? new Date(value) : new Date(fallback);
-  return Number.isNaN(timestamp.getTime()) ? new Date(fallback).toISOString() : timestamp.toISOString();
-}
-
-async function executeIngestion(jobName, loader) {
-  const lock = await acquireIngestionLock(jobName);
-  if (!lock.acquired) return { status: 'skipped', observationsWritten: 0, details: { reason: 'Job is active on another process' } };
-  let runId = null;
-  let observationsWritten = 0;
-  const reportWritten = (count) => {
-    observationsWritten += count;
-  };
-  try {
-    runId = await startIngestionRun(jobName);
-    const result = await loader({ runId, reportWritten });
-    const status = result.status ?? 'completed';
-    await finishIngestionRun(runId, status, observationsWritten, result.details);
-    return { ...result, status, observationsWritten };
-  } catch (error) {
-    await finishIngestionRun(runId, 'failed', observationsWritten, {}, error.message);
-    throw error;
-  } finally {
-    await lock.release();
-  }
+function executeIngestion(jobName, loader) {
+  return runIngestionJob(jobName, loader, {
+    acquireLock: acquireIngestionLock,
+    startRun: startIngestionRun,
+    finishRun: finishIngestionRun,
+  });
 }
 
 export async function ingestMarketSnapshot() {
