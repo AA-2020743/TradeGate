@@ -15,6 +15,7 @@ import {
   pruneModelOutputs,
   startIngestionRun,
 } from './database.js';
+import { logger } from './log.js';
 import { getBitcoinCycleWorkspace, calculateDollarTransmission, getDxyBitcoinRelationship, getEquityRiskAppetite, getFxWorkspace, getIngestionHistorySymbols, getLiquiditySnapshot, getMarketHeatmap, getMarketHistory, getMarketSnapshot, getMetalsWorkspace, getRegimeCorrelations, getSentimentSnapshot, REGIME_CORRELATION_PAIRS } from './providers.js';
 
 function executeIngestion(jobName, loader) {
@@ -274,7 +275,7 @@ export async function persistLiquiditySnapshot(snapshot, { runId = null, reportW
       // A retention failure is housekeeping, not a reason to fail a run that
       // has already written everything it came to write.
       prunedOutputs = -1;
-      console.error('Model-output retention sweep failed:', error.message);
+      logger.warn('Model-output retention sweep failed', { job: 'liquidity', runId, error });
     }
 
     let regimeCorrelationVersion = null;
@@ -399,7 +400,7 @@ export function startIngestionScheduler() {
     try {
       await track(ingestMarketSnapshot());
     } catch (error) {
-      console.error('Market ingestion failed:', error.message);
+      logger.error('Ingestion run failed', { job: 'market', error });
     } finally {
       marketRunning = false;
     }
@@ -411,7 +412,7 @@ export function startIngestionScheduler() {
     try {
       await track(ingestLiquiditySnapshot());
     } catch (error) {
-      console.error('Macro ingestion failed:', error.message);
+      logger.error('Ingestion run failed', { job: 'macro', error });
     } finally {
       macroRunning = false;
     }
@@ -429,7 +430,7 @@ export function startIngestionScheduler() {
       }
       await track(ingestMarketHistory());
     } catch (error) {
-      console.error('History ingestion failed:', error.message);
+      logger.error('Ingestion run failed', { job: 'history', error });
     } finally {
       historyRunning = false;
     }
@@ -441,7 +442,7 @@ export function startIngestionScheduler() {
     try {
       await track(ingestResearchWorkspaces());
     } catch (error) {
-      console.error('Research workspace ingestion failed:', error.message);
+      logger.error('Ingestion run failed', { job: 'research', error });
     } finally {
       researchRunning = false;
     }

@@ -578,3 +578,29 @@ describe('a run that cannot deliver an alert holds it for the next one', async (
   const stored = (await database.getRecentModelOutputs('macro-alerts', 1))[0].output;
   assert.equal(Array.isArray(stored.pendingDelivery), true, 'the owed queue must survive the round trip');
 });
+
+
+describe('a schema behind the migrations on disk is not reported as migrated', async () => {
+  await reset();
+  const applied = await pool.query('SELECT filename FROM schema_migrations ORDER BY filename');
+  assert.equal(applied.rowCount >= 6, true, 'the test database applies every migration');
+
+  const current = await database.getDatabaseHealth();
+  assert.equal(current.migrated, true);
+  assert.deepEqual(current.pending, []);
+  assert.equal(current.applied, current.available);
+
+  // Pretend a migration was added that this database has never seen. The check
+  // used to assert one hardcoded filename, so a database three migrations
+  // behind reported itself fully migrated and every reader believed it.
+  const { mkdtemp, writeFile } = await import('node:fs/promises');
+  const { tmpdir } = await import('node:os');
+  const directory = await mkdtemp(path.join(tmpdir(), 'tradegate-migrations-'));
+  for (const row of applied.rows) await writeFile(path.join(directory, row.filename), '-- applied');
+  await writeFile(path.join(directory, '999_future.sql'), '-- never applied here');
+
+  const behind = await database.getDatabaseHealth({ migrationDirectory: directory });
+  assert.equal(behind.migrated, false);
+  assert.equal(behind.mode, 'migration-required');
+  assert.deepEqual(behind.pending, ['999_future.sql']);
+});

@@ -1,3 +1,6 @@
+import { readdir } from 'node:fs/promises';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import pg from 'pg';
 import { config } from './config.js';
 import { isDailyCloseStale, isFredSeriesStale } from './freshness.js';
@@ -17,7 +20,15 @@ export function isDatabaseConfigured() {
   return Boolean(pool);
 }
 
-export async function getDatabaseHealth() {
+/**
+ * Whether the schema is actually current.
+ *
+ * This used to assert one hardcoded filename — 003 — so a database three
+ * migrations behind reported itself fully migrated and every reader downstream
+ * believed it. The check now compares what has been applied against what is on
+ * disk, which cannot go stale when a migration is added.
+ */
+export async function getDatabaseHealth({ migrationDirectory = null } = {}) {
   if (!pool) return { configured: false, connected: false, migrated: false, mode: 'not-configured', purpose: 'Time-series persistence and revision history' };
   try {
     const result = await pool.query(
@@ -25,11 +36,25 @@ export async function getDatabaseHealth() {
          to_regclass('public.observations') AS observations,
          to_regclass('public.schema_migrations') AS migrations`,
     );
-    const latestMigration = result.rows[0].migrations
-      ? await pool.query("SELECT EXISTS (SELECT 1 FROM schema_migrations WHERE filename = '003_provider_credit_usage.sql') AS applied")
-      : null;
-    const migrated = Boolean(result.rows[0].observations && latestMigration?.rows[0].applied);
-    return { configured: true, connected: true, migrated, mode: migrated ? 'postgresql' : 'migration-required', purpose: 'Time-series persistence and revision history' };
+    if (!result.rows[0].observations || !result.rows[0].migrations) {
+      return { configured: true, connected: true, migrated: false, mode: 'migration-required', pending: ['every migration'], purpose: 'Time-series persistence and revision history' };
+    }
+    const directory = migrationDirectory
+      ?? path.join(path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..'), 'database', 'migrations');
+    const onDisk = (await readdir(directory)).filter((file) => file.endsWith('.sql')).sort();
+    const applied = new Set((await pool.query('SELECT filename FROM schema_migrations')).rows.map((row) => row.filename));
+    const pending = onDisk.filter((file) => !applied.has(file));
+    const migrated = onDisk.length > 0 && pending.length === 0;
+    return {
+      configured: true,
+      connected: true,
+      migrated,
+      mode: migrated ? 'postgresql' : 'migration-required',
+      applied: applied.size,
+      available: onDisk.length,
+      pending,
+      purpose: 'Time-series persistence and revision history',
+    };
   } catch (error) {
     return { configured: true, connected: false, migrated: false, mode: 'unavailable', purpose: 'Time-series persistence and revision history', error: error.message };
   }

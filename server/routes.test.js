@@ -224,3 +224,56 @@ test('the headers a client actually receives follow that policy', async () => {
   assert.match(health.headers.get('cache-control') ?? '', /max-age=30/);
 });
 
+
+test('a revalidated read answers 304 instead of resending the body', async () => {
+  const first = await get('/api/macro/liquidity');
+  const etag = first.headers.get('etag');
+  assert.match(etag ?? '', /^W\//, 'a read must carry a validator');
+  const body = await first.text();
+  assert.equal(body.length > 0, true);
+
+  const second = await get('/api/macro/liquidity', { headers: { 'If-None-Match': etag } });
+  assert.equal(second.status, 304);
+  assert.equal((await second.text()).length, 0, '304 carries no body by definition');
+  // The cache directives must survive onto the 304, or a client learns nothing
+  // about how long the answer it already holds stays good.
+  assert.match(second.headers.get('cache-control') ?? '', /max-age=/);
+});
+
+test('a changed payload produces a different validator', async () => {
+  const health = await get('/api/health');
+  const liquidity = await get('/api/macro/liquidity');
+  assert.notEqual(health.headers.get('etag'), liquidity.headers.get('etag'));
+  await health.text();
+  await liquidity.text();
+});
+
+test('a stale validator is ignored rather than answered 304', async () => {
+  const response = await get('/api/health', { headers: { 'If-None-Match': 'W/"not-the-current-one"' } });
+  assert.equal(response.status, 200);
+  assert.equal((await response.text()).length > 0, true);
+});
+
+test('a write is never answered from a validator', async () => {
+  const response = await get('/api/watchlists', {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json', 'If-None-Match': 'W/"anything"' },
+    body: JSON.stringify({ Core: ['SPY'] }),
+  });
+  assert.notEqual(response.status, 304, 'a receipt for something that just happened cannot come from a cache');
+  await response.json();
+});
+
+test('writes carry their own rate-limit budget, separate from reads', async () => {
+  const { config } = await import('./config.js');
+  assert.equal(config.apiWriteRateLimit < config.apiRateLimit, true, 'a write budget that matches the read budget is not a budget');
+  const response = await get('/api/watchlists', {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ Core: ['SPY'] }),
+  });
+  // The write limiter sets its own headers, so the advertised ceiling on a
+  // write is the write ceiling rather than the shared read one.
+  assert.equal(Number(response.headers.get('ratelimit-limit')), config.apiWriteRateLimit);
+  await response.json();
+});

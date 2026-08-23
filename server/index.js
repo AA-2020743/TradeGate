@@ -1,5 +1,6 @@
 import express from 'express';
 import { existsSync } from 'node:fs';
+import { createHash } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import { config } from './config.js';
@@ -15,6 +16,7 @@ import {
   subsectorCatalog,
 } from './equityCatalog.js';
 import { getEquityDashboard, getSectorDashboard } from './equities.js';
+import { logger } from './log.js';
 import { startIngestionScheduler } from './ingestion.js';
 import { createRateLimiter } from './rateLimit.js';
 import { getBitcoinCycleWorkspace, getBlockedSources, calculateDollarTransmission, getCryptoGlobal, getDxyBitcoinRelationship, getEquityRiskAppetite, getEquityScreener, getEthereumRotation, getFxWorkspace, getIntradayRotation, getLiquiditySnapshot, getMarketHeatmap, getMarketHistory, getMarketPositioning, getMarketSnapshot, getMetalsWorkspace, getNewsWire, getProviderHealth, getRegimeCorrelations, getSentimentSnapshot, getStablecoinLeadLag, getTechnicalSnapshot } from './providers.js';
@@ -81,6 +83,45 @@ app.use('/api', (request, response, next) => {
   next();
 });
 app.use('/api', rateLimiter.middleware);
+// A write is far more expensive than a read and there is only one of them, so
+// it gets its own, much tighter budget on top of the shared one. Sharing a
+// single limiter let a caller spend the whole read allowance on writes.
+const writeLimiter = createRateLimiter({ limit: config.apiWriteRateLimit, windowMs: config.apiRateWindowMs });
+app.use('/api', (request, response, next) => {
+  if (request.method === 'GET' || request.method === 'HEAD') return next();
+  return writeLimiter.middleware(request, response, next);
+});
+
+/**
+ * Conditional requests. The cache windows tell a client how long it may reuse a
+ * response, but a revalidation still transferred the whole body — up to a few
+ * hundred kilobytes of macro payload for an answer the server had not
+ * recomputed. A weak ETag over the serialised body turns that into a 304.
+ */
+function sendJsonWithEtag(request, response, payload) {
+  const body = JSON.stringify(payload);
+  const etag = `W/"${createHash('sha1').update(body).digest('base64url')}"`;
+  response.setHeader('ETag', etag);
+  const requested = request.headers['if-none-match'];
+  if (requested && requested.split(',').some((candidate) => candidate.trim() === etag)) {
+    // 304 carries no body by definition, so the headers a cache needs must
+    // already be set by the time this returns.
+    response.status(304).end();
+    return;
+  }
+  response.type('application/json').send(body);
+}
+
+app.use('/api', (request, response, next) => {
+  // Only reads: a write's response is a receipt for something that just
+  // happened and must never be answered from a cache.
+  if (request.method !== 'GET' && request.method !== 'HEAD') return next();
+  response.json = (payload) => {
+    sendJsonWithEtag(request, response, payload);
+    return response;
+  };
+  return next();
+});
 
 app.get('/api/health', async (_request, response) => {
   const database = await getDatabaseHealth();
@@ -221,7 +262,7 @@ app.get('/api/analytics/screener', async (_request, response, next) => {
         await persistModelOutput('screener-v1', { version: payload.version ?? 'screener-v1', asOf: payload.asOf, breakouts }, ['equity:spx-universe', 'analytics:screener']);
         lastPersistedScreenerAsOf = payload.asOf;
       } catch (persistenceError) {
-        console.error('Screener persistence failed:', persistenceError.message);
+        logger.warn('Screener persistence failed', { route: '/api/equities/screener', error: persistenceError });
       }
     }
     response.json(alertsRaised === undefined ? payload : { ...payload, alertsRaised });
@@ -603,10 +644,12 @@ function classifyRequestError(error) {
   return { status: 502, body: { error: 'Unable to fetch data from an upstream provider.', kind: 'upstream' } };
 }
 
-app.use((error, _request, response, _next) => {
+app.use((error, request, response, _next) => {
   const { status, body } = classifyRequestError(error);
   // A 4xx is the caller's business and does not belong in the server log.
-  if (status >= 500) console.error(error);
+  if (status >= 500) {
+    logger.error('Request failed', { method: request.method, path: request.path, status, kind: body.kind, error });
+  }
   response.status(status).json(body);
 });
 
@@ -625,11 +668,11 @@ if (startedDirectly) {
   // rejection that slips past a request handler must be logged and survived,
   // not answered by terminating every in-flight request on the box.
   process.on('unhandledRejection', (reason) => {
-    console.error('Unhandled rejection (server continuing):', reason instanceof Error ? reason.stack ?? reason.message : reason);
+    logger.error('Unhandled rejection (server continuing)', reason instanceof Error ? { error: reason } : { reason: String(reason) });
   });
 
   const server = app.listen(config.port, config.host, () => {
-    console.log(`TradeGate API listening on http://${config.host}:${config.port}`);
+    logger.info('TradeGate API listening', { url: `http://${config.host}:${config.port}` });
   });
   const stopIngestion = startIngestionScheduler();
   let shutdownStarted = false;
@@ -646,7 +689,7 @@ if (startedDirectly) {
 
   const requestShutdown = () => {
     void shutdown().catch((error) => {
-      console.error('Graceful shutdown failed:', error);
+      logger.error('Graceful shutdown failed', { error });
       process.exitCode = 1;
     });
   };

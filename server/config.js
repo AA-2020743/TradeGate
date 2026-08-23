@@ -42,5 +42,7 @@ export const config = {
   alertWebhookUrl: process.env.ALERT_WEBHOOK_URL ?? '',
   alertWebhookSeverities: (process.env.ALERT_WEBHOOK_SEVERITIES ?? 'high').split(',').map((entry) => entry.trim()).filter(Boolean),
   apiRateLimit: numberFromEnvironment('API_RATE_LIMIT', 120),
+  // Writes are rarer and heavier than reads and share the same window.
+  apiWriteRateLimit: numberFromEnvironment('API_WRITE_RATE_LIMIT', 20),
   apiRateWindowMs: numberFromEnvironment('API_RATE_WINDOW_MS', 60_000),
 };
