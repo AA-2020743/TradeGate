@@ -494,6 +494,49 @@ function RotationCell({ rotation }) {
   >{label}</em>;
 }
 
+/**
+ * Two independent readings of how much of the tape is one trade: how tightly
+ * sectors move together, and how far apart their returns end up. Both are
+ * ranked against their own history, so a drifting baseline does not read as a
+ * regime change.
+ */
+function SectorDispersionSection({ dispersion }) {
+  const status = dispersion?.status ?? 'unavailable';
+  const published = status !== 'unavailable';
+  return <>
+    <section className="equity-section-heading"><div><p className="section-kicker">CORRELATION &amp; DISPERSION · {status.toUpperCase()}</p><h2>{published ? dispersion.regime : 'Awaiting fresh sector histories'}</h2></div>{published ? <span className="data-pill">{dispersion.sectors} sectors · {dispersion.observations} shared sessions</span> : null}</section>
+    <section className="equity-macro-matrix">
+      <article className="equity-rotation-panel panel wide">
+        {published ? <>
+          <div className="equity-rotation-head styles-head"><span>Reading</span><span>Value</span></div>
+          <div className="equity-rotation-row styles-row"><span><strong>Average pairwise correlation</strong><small>{Number.isFinite(dispersion.correlationPercentile) ? `${dispersion.correlationPercentile}th percentile of ${dispersion.rankedAgainst} rolling readings` : `Ranked against fixed levels — only ${dispersion.rankedAgainst} rolling readings available`}</small></span><b>{dispersion.correlation.toFixed(2)}</b></div>
+          <div className="equity-rotation-row styles-row"><span><strong>Return dispersion</strong><small>{`Standard deviation of ${dispersion.returnWindow}-session sector returns`}</small></span><b>{Number.isFinite(dispersion.dispersion) ? `${dispersion.dispersion}%` : '—'}</b></div>
+          <div className="equity-rotation-row styles-row"><span><strong>Leader minus laggard</strong><small>{dispersion.leader && dispersion.laggard ? `${dispersion.leader.name} vs ${dispersion.laggard.name}` : 'Awaiting sector returns'}</small></span><b>{Number.isFinite(dispersion.spread) ? `${dispersion.spread}%` : '—'}</b></div>
+          <div className="equity-rotation-row styles-row"><span><strong>Sectors beating the benchmark</strong><small>{Number.isFinite(dispersion.benchmarkReturn) ? `Benchmark ${dispersion.benchmarkReturn > 0 ? '+' : ''}${dispersion.benchmarkReturn}% over ${dispersion.returnWindow} sessions` : 'Benchmark history required'}</small></span><b>{Number.isFinite(dispersion.leadershipBreadth) ? `${dispersion.sectorsBeatingBenchmark} of ${dispersion.sectors} · ${dispersion.leadershipBreadth}%` : '—'}</b></div>
+        </> : <div className="equity-empty">{dispersion?.reason ?? 'Correlation and dispersion publish once several sector histories share enough sessions.'}</div>}
+        <p className="equity-source-line">{published ? dispersion.read : ''}</p>
+        <p className="equity-source-line">{dispersion?.methodology ?? ''}</p>
+      </article>
+    </section>
+  </>;
+}
+
+/** Where the index sits inside its own drawdown history. */
+function DrawdownProfilePanel({ drawdown }) {
+  const status = drawdown?.status ?? 'unavailable';
+  const published = status === 'calculated';
+  return <article className={`panel ${published ? '' : 'preview-section'}`}>
+    <div className="panel-title"><div><p className="section-kicker">DRAWDOWN PROFILE · {status.toUpperCase()}</p><h3>{published ? drawdown.state : 'Awaiting a multi-year close history'}</h3></div>{published ? <span className="data-pill">{drawdown.observations} sessions</span> : null}</div>
+    {published ? <>
+      <div className="detail-score"><span>Below the running peak</span><b>{drawdown.drawdownPercent}%</b><small>{drawdown.inDrawdown ? `${drawdown.sessionsSincePeak} sessions since the ${drawdown.peakDate} peak of ${drawdown.peak}` : `New high — this history spent ${drawdown.underwaterSharePercent}% of its sessions below a prior peak`}</small></div>
+      <div className="equity-rotation-row styles-row"><span><strong>Depth percentile</strong><small>Against every session in this history</small></span><b>{drawdown.depthPercentile}%</b></div>
+      <div className="equity-rotation-row styles-row"><span><strong>Completed episodes</strong><small>{Number.isFinite(drawdown.medianCompletedTrough) ? `Median trough ${drawdown.medianCompletedTrough}%` : 'None completed inside this window'}</small></span><b>{drawdown.completedEpisodes}</b></div>
+      <div className="equity-rotation-row styles-row"><span><strong>Worst completed episode</strong><small>{drawdown.deepest ? `From the ${drawdown.deepest.peakDate} peak · ${drawdown.deepest.recoverySessions} sessions to recover` : 'No episode has completed inside this window'}</small></span><b>{drawdown.deepest ? `${drawdown.deepest.trough}%` : '—'}</b></div>
+    </> : <div className="equity-empty">{drawdown?.reason ?? 'A multi-year daily close history is required.'}</div>}
+    <p className="model-footnote">{published ? `${drawdown.read} Measured on ${drawdown.source ?? 'the available close history'}.` : ''} {drawdown?.methodology ?? ''}</p>
+  </article>;
+}
+
 function EquitiesDashboard({ platformData }) {
   const [selectedSymbol, setSelectedSymbol] = React.useState('SPY');
   const research = useEquityResearch(selectedSymbol);
@@ -537,6 +580,7 @@ function EquitiesDashboard({ platformData }) {
       <EquitySignalCard kicker="TOP-RISK DETECTION" title="Top risk unavailable" model={dashboard?.topRisk} empty="Top risk requires technical deterioration plus constituent breadth and independent confirmation." />
       <EquitySignalCard kicker="BOTTOM / RALLY DETECTION" title="Bottom signal unavailable" model={dashboard?.bottomSignal} empty="Bottom detection requires a breadth washout/thrust plus technical and macro confirmation." />
       <EquitySignalCard kicker="CONSTITUENT BREADTH" title={dashboard?.breadth?.status === 'calculated' ? 'Calculated breadth' : dashboard?.breadth?.status === 'partial' ? 'Partial breadth' : 'Breadth unavailable'} model={dashboard?.breadth} empty={dashboard?.breadth?.reason ?? 'Constituent histories are not connected.'} coverageLabel="constituent coverage" />
+      <DrawdownProfilePanel drawdown={dashboard?.drawdown} />
     </section>
 
     <section className="equity-regime-layout">
@@ -554,6 +598,8 @@ function EquitiesDashboard({ platformData }) {
     {rotation?.subsectors?.length ? <section className="equity-section-heading"><div><p className="section-kicker">SUBSECTOR ROTATION</p><h2>Granular leadership inside each sector</h2></div><EquityStatus status="calculated" label={`${rotation.subsectors.length} tracked`} /></section> : null}
     {rotation?.subsectors?.length ? <section className="equity-subsector-rotation"><article className="equity-rotation-panel panel wide"><div className="equity-rotation-head subsector-head"><span>Rank</span><span>Subsector</span><span>Group</span><span>Quadrant</span><span>Rotation 20D</span><span>20D vs SPY</span><span>60D vs SPY</span><span>Score</span></div>{rotation.subsectors.map((row) => <div className="equity-rotation-row subsector-row" key={row.symbol}><b>{row.rank}</b><span><strong>{row.name}</strong><small>{row.symbol}</small></span><small>{row.group}</small><i className={row.quadrant ? row.quadrant.toLowerCase() : 'neutral'}>{row.quadrant ?? '—'}</i><RotationCell rotation={row.rotation} /><span className={row.relative20 >= 0 ? 'positive' : 'negative'}>{formatPercent(row.relative20)}</span><span className={row.relative60 >= 0 ? 'positive' : 'negative'}>{formatPercent(row.relative60)}</span><b>{row.score}</b></div>)}<p className="equity-source-line">Ranks are global across all {rotation.sectors.length + rotation.subsectors.length} tracked ETF proxies. Quadrants use 20- and 60-session relative performance versus SPY.</p></article></section> : null}
 
+    <SectorDispersionSection dispersion={sectorData?.dispersion} />
+
     <section className="equity-section-heading"><div><p className="section-kicker">MACRO SENSITIVITY MATRIX · CALCULATED</p><h2>How each ETF trades against macro drivers</h2></div><span className="data-pill">{sectorData?.macroSensitivity?.window ?? '60 aligned changes'}</span></section>
     <section className="equity-macro-matrix">
       <article className="equity-rotation-panel panel wide">
@@ -570,7 +616,7 @@ function EquitiesDashboard({ platformData }) {
           };
           return <div className="equity-rotation-row macro-row" key={`ms-${row.symbol}`}><span><strong>{row.name}</strong><small>{row.symbol}</small></span>{cell(ms.dollar, 'dollar')}{cell(ms.realYield, 'realYield')}{cell(ms.vix, 'vix')}{cell(ms.credit, 'credit')}<small>{row.sensitivity ?? '—'}</small></div>;
         })}
-        <p className="equity-source-line">Pearson correlations of 60-day daily ETF changes against stored FRED histories ({Object.entries(sectorData?.macroSensitivity?.sources ?? {}).filter(([, source]) => source).map(([key]) => key).join(', ') || 'FRED sources pending'}). Subsectors without catalog sensitivity show a dash.</p>
+        <p className="equity-source-line">Pearson correlations over 60 aligned changes against fresh stored FRED histories; each cell names its own window on hover, and a weekly driver is marked ·w because 60 of its observations span more than a year ({Object.entries(sectorData?.macroSensitivity?.sources ?? {}).filter(([, source]) => source).map(([key]) => key).join(', ') || 'FRED sources pending'}). Subsectors without catalog sensitivity show a dash.</p>
       </article>
     </section>
 
@@ -638,14 +684,14 @@ function EquitiesDashboard({ platformData }) {
       })()}
     </section>
 
-    <section className="equity-section-heading"><div><p className="section-kicker">MARKET INTERNALS · CALCULATED PROXY</p><h2>Participation across the ETF universe</h2></div><EquityStatus status={sectorData?.sectorBreadth?.status} label="Histories pending" /></section>
+    <section className="equity-section-heading"><div><p className="section-kicker">MARKET INTERNALS · {(sectorData?.sectorBreadth?.status ?? 'unavailable').toUpperCase()} PROXY</p><h2>Participation across the ETF universe</h2></div><EquityStatus status={sectorData?.sectorBreadth?.status} label={sectorData?.sectorBreadth?.status === 'unavailable' || !sectorData?.sectorBreadth ? 'Histories pending' : sectorData.sectorBreadth.missing?.length ? `${sectorData.sectorBreadth.universeSize} ETFs · narrowed base` : `${sectorData.sectorBreadth.universeSize} ETFs`} /></section>
     <section className="equity-macro-matrix">
       <article className="equity-rotation-panel panel wide">
-        {sectorData?.sectorBreadth?.status === 'calculated' ? <>
+        {sectorData?.sectorBreadth?.status && sectorData.sectorBreadth.status !== 'unavailable' ? <>
           <div className="equity-rotation-head styles-head"><span>Universe of {sectorData.sectorBreadth.universeSize} ETFs</span><span>Reading</span></div>
-          <div className="equity-rotation-row styles-row"><span><strong>Above 50-day average</strong><small>Trend participation</small></span><b>{sectorData.sectorBreadth.pctAbove50}%</b></div>
-          <div className="equity-rotation-row styles-row"><span><strong>Above 200-day average</strong><small>Long-cycle participation</small></span><b>{sectorData.sectorBreadth.pctAbove200}%</b></div>
-          <div className="equity-rotation-row styles-row"><span><strong>20-session advancers</strong><small>Short-term breadth</small></span><b>{sectorData.sectorBreadth.advancersPct}%</b></div>
+          <div className="equity-rotation-row styles-row"><span><strong>Above 50-day average</strong><small>{`Trend participation · ${sectorData.sectorBreadth.eligible?.above50 ?? 0} of ${sectorData.sectorBreadth.universeSize} carry 50 sessions`}</small></span><b>{Number.isFinite(sectorData.sectorBreadth.pctAbove50) ? `${sectorData.sectorBreadth.pctAbove50}%` : '—'}</b></div>
+          <div className="equity-rotation-row styles-row"><span><strong>Above 200-day average</strong><small>{Number.isFinite(sectorData.sectorBreadth.pctAbove200) ? `Long-cycle participation · ${sectorData.sectorBreadth.eligible?.above200} of ${sectorData.sectorBreadth.universeSize} carry 200 sessions` : 'No ETF carries 200 sessions yet — never computed from a shorter window'}</small></span><b>{Number.isFinite(sectorData.sectorBreadth.pctAbove200) ? `${sectorData.sectorBreadth.pctAbove200}%` : '—'}</b></div>
+          <div className="equity-rotation-row styles-row"><span><strong>20-session advancers</strong><small>Short-term breadth</small></span><b>{Number.isFinite(sectorData.sectorBreadth.advancersPct) ? `${sectorData.sectorBreadth.advancersPct}%` : '—'}</b></div>
           <div className="equity-rotation-row styles-row"><span><strong>New 60-session highs / lows</strong><small>Within 2% of extreme</small></span><b>{sectorData.sectorBreadth.newHighs} / {sectorData.sectorBreadth.newLows}</b></div>
           <div className="equity-rotation-row styles-row"><span><strong>50-day trend thrust</strong><small>Universe-average 20-session slope</small></span><b className={(sectorData.sectorBreadth.thrust20 ?? 0) >= 0 ? 'positive' : 'negative'}>{Number.isFinite(sectorData.sectorBreadth.thrust20) ? `${sectorData.sectorBreadth.thrust20 > 0 ? '+' : ''}${sectorData.sectorBreadth.thrust20}%` : '—'}</b></div>
         </> : <div className="equity-empty">{sectorData?.sectorBreadth?.reason ?? 'Fresh ETF histories are required before the participation proxy can publish.'}</div>}

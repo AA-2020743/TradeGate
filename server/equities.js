@@ -1,6 +1,6 @@
 import { getStoredMarketHistories, getStoredSeriesCoverage, isDatabaseConfigured } from './database.js';
 import { calculateTechnicalSnapshot } from './analytics.js';
-import { calculateBottomSignal, calculateBasketRotation, calculateEquityRegime, calculateMacroSensitivities, calculateSectorBreadthProxy, calculateSectorRotation, calculateTopRisk } from './equityAnalytics.js';
+import { calculateBottomSignal, calculateBasketRotation, calculateDrawdownProfile, calculateEquityRegime, calculateMacroSensitivities, calculateSectorBreadthProxy, calculateSectorDispersion, calculateSectorRotation, calculateTopRisk } from './equityAnalytics.js';
 import {
   attachSeriesCoverage,
   breadthRequirements,
@@ -10,7 +10,7 @@ import {
   sentimentRequirements,
   subsectorCatalog,
 } from './equityCatalog.js';
-import { getEquityRiskAppetite, getLiquiditySnapshot, getMarketHistory, getTechnicalSnapshot } from './providers.js';
+import { getEquityLongHistory, getEquityRiskAppetite, getLiquiditySnapshot, getMarketHistory, getTechnicalSnapshot } from './providers.js';
 import { isDailyCloseStale } from './freshness.js';
 
 const unavailableBreadth = {
@@ -58,11 +58,12 @@ export async function getEquityDashboard(requestedSymbol = 'SPY') {
   const index = indexCatalog.find((item) => item.symbol === symbol);
   if (!index) throw new Error(`Unsupported equity index proxy: ${symbol}`);
 
-  const [technicalResult, liquidityResult, riskAppetiteResult, liveTechnicalResult] = await Promise.allSettled([
+  const [technicalResult, liquidityResult, riskAppetiteResult, liveTechnicalResult, longHistoryResult] = await Promise.allSettled([
     getStoredTechnicalSnapshot(symbol),
     getLiquiditySnapshot(),
     getEquityRiskAppetite(),
     getMarketHistory(symbol, '1Y', { preferStored: false }),
+    getEquityLongHistory(symbol),
   ]);
   const technical = technicalResult.status === 'fulfilled' ? technicalResult.value : null;
   const liquidity = liquidityResult.status === 'fulfilled' ? liquidityResult.value : null;
@@ -71,9 +72,25 @@ export async function getEquityDashboard(requestedSymbol = 'SPY') {
   if (!usableTechnical && liveTechnicalResult.status === 'fulfilled' && liveTechnicalResult.value?.points?.length) {
     usableTechnical = calculateTechnicalSnapshot(liveTechnicalResult.value.points);
   }
-  const constituentBreadth = riskAppetite?.spxBreadth?.status === 'calculated'
+  // A partial breadth read is kept. The signal models mark themselves
+  // provisional when they lean on one, which is more useful than publishing
+  // nothing at all on a slightly incomplete universe.
+  const breadthStatus = riskAppetite?.spxBreadth?.status;
+  const constituentBreadth = breadthStatus === 'calculated' || breadthStatus === 'partial'
     ? { ...riskAppetite.spxBreadth }
     : unavailableBreadth;
+  // Prefer the multi-year history: a drawdown ranked against twelve months of
+  // sessions is barely ranked at all. The one-year feed is the fallback, and
+  // whichever is used is named in the published profile.
+  const longHistory = longHistoryResult.status === 'fulfilled' ? longHistoryResult.value.points ?? [] : [];
+  const oneYearHistory = liveTechnicalResult.status === 'fulfilled' ? liveTechnicalResult.value?.points ?? [] : [];
+  const drawdownHistory = longHistory.length >= oneYearHistory.length ? longHistory : oneYearHistory;
+  const drawdownSource = drawdownHistory === longHistory && longHistory.length
+    ? `${longHistoryResult.value.years}-year Yahoo ${symbol} daily closes`
+    : oneYearHistory.length ? `one-year ${symbol} daily closes` : null;
+  const drawdown = drawdownHistory.length
+    ? { ...calculateDrawdownProfile(drawdownHistory), source: drawdownSource }
+    : { version: 'equity-drawdown-profile-v1', status: 'unavailable', reason: `A ${symbol} daily close history is required to place the current drawdown against its own past: ${longHistoryResult.reason?.message ?? 'no history responded'}`, observations: 0, source: null };
   const regime = calculateEquityRegime({ technical: usableTechnical, liquidity: liquidity?.model, breadth: constituentBreadth });
   const topRisk = calculateTopRisk({ technical: usableTechnical, breadth: constituentBreadth, liquidity: liquidity?.model });
   const bottomSignal = calculateBottomSignal({ technical: usableTechnical, breadth: constituentBreadth, liquidity: liquidity?.model });
@@ -84,9 +101,10 @@ export async function getEquityDashboard(requestedSymbol = 'SPY') {
     index,
     technical,
     regime,
+    drawdown,
     topRisk,
     bottomSignal,
-    breadth: constituentBreadth.status === 'calculated' ? constituentBreadth : unavailableBreadth,
+    breadth: constituentBreadth,
     sentiment: unavailableDataset('Sentiment', sentimentRequirements),
     positioning: unavailableDataset('Positioning', positioningRequirements),
     flows: unavailableDataset('Flows', ['ETF flows', 'Mutual-fund flows', 'Institutional flows', 'Retail flows', 'Options flows']),
@@ -108,7 +126,12 @@ export async function getEquityDashboard(requestedSymbol = 'SPY') {
         source: liquidity?.model?.version ?? null,
         asOf: liquidity?.model?.asOf ?? null,
       },
-      { name: 'Constituent breadth', status: 'unavailable', source: null, asOf: null },
+      {
+        name: 'Constituent breadth',
+        status: constituentBreadth.status === 'calculated' ? 'available' : constituentBreadth.status === 'partial' || constituentBreadth.status === 'provisional' ? 'partial' : 'unavailable',
+        source: constituentBreadth.source ?? null,
+        asOf: constituentBreadth.asOf ?? null,
+      },
       { name: 'Sentiment and positioning', status: 'unavailable', source: null, asOf: null },
     ],
     errors: [
@@ -161,7 +184,7 @@ export async function getSectorDashboard() {
       .filter((input) => input.points.length)
       .map((input) => ({ symbol: input.symbol, points: normalizeStoredPoints(input.points) })),
   );
-  const usableBreadth = breadthProxy.status === 'calculated' ? breadthProxy : unavailableBreadth;
+  const usableBreadth = breadthProxy.status === 'unavailable' ? unavailableBreadth : breadthProxy;
   const usableSectorTechnical = spyTechnical?.stale ? null : spyTechnical?.model ?? null;
   const sectorTopRisk = calculateTopRisk({ technical: usableSectorTechnical, breadth: usableBreadth, liquidity: liquidity?.model });
   const sectorBottomSignal = calculateBottomSignal({ technical: usableSectorTechnical, breadth: usableBreadth, liquidity: liquidity?.model });
@@ -177,13 +200,23 @@ export async function getSectorDashboard() {
     credit: fredHistoryByKey.highYieldSpread ?? [],
   };
   const macroSources = Object.fromEntries(Object.entries(macroSeries).map(([key, history]) => [key, history.length ? 'FRED stored history' : null]));
+  // Rotation drops stale ETF histories; the sensitivity matrix must drop the
+  // same ones. Correlating a driver against a history that stopped updating
+  // reports a relationship that no longer has a current side to it.
+  const freshPointsBySymbol = new Map(rotationInputs.map((input) => [input.symbol, input.points]));
   const withSensitivities = rotation.sectors.map((row) => ({
     ...row,
     sensitivity: sectorMetadata.get(row.symbol)?.sensitivity ?? null,
-    macroSensitivity: calculateMacroSensitivities(normalizeStoredPoints(histories.get(row.symbol) ?? []), macroSeries),
+    macroSensitivity: calculateMacroSensitivities(normalizeStoredPoints(freshPointsBySymbol.get(row.symbol) ?? []), macroSeries),
   }));
   const sectors = withSensitivities.filter((row) => row.group === null);
   const subsectors = withSensitivities.filter((row) => row.group !== null);
+
+  const dispersion = calculateSectorDispersion(
+    sectorCatalog.map((sector) => ({ ...sector, points: normalizeStoredPoints(histories.get(sector.symbol) ?? []) }))
+      .filter((sector) => historyIsFresh(histories.get(sector.symbol) ?? [])),
+    normalizeStoredPoints(usableBenchmarkHistory),
+  );
 
   const stylePairs = [
     { key: 'growthValue', leftName: 'Growth (QQQ)', rightName: 'Value tilt (DIA)', leftSymbols: ['QQQ'], rightSymbols: ['DIA'], leftLeader: 'Growth', rightLeader: 'Value' },
@@ -200,13 +233,16 @@ export async function getSectorDashboard() {
     storage: { configured: isDatabaseConfigured(), available: storageAvailable, coverageAvailable },
     rotation: { ...rotation, sectors, subsectors },
     styles,
-    macroSensitivity: { sources: macroSources, window: '60D changes' },
+    // Each driver publishes its own window label, because 60 observations
+    // against a weekly series is not 60 sessions. The dashboard-level label
+    // says what is common to all of them and no more.
+    macroSensitivity: { sources: macroSources, window: '60 aligned changes per driver' },
     sectors: attachSeriesCoverage(sectorCatalog, coverage),
     subsectors: attachSeriesCoverage(subsectorCatalog, coverage),
-    sectorBreadth: breadthProxy.status === 'calculated' ? breadthProxy : {
+    sectorBreadth: breadthProxy.status === 'unavailable' ? {
       status: 'unavailable',
-      reason: 'Fresh sector and subsector ETF histories are required for the participation proxy.',
-    },
+      reason: breadthProxy.reason ?? 'Fresh sector and subsector ETF histories are required for the participation proxy.',
+    } : breadthProxy,
     topRisk: sectorTopRisk,
     bottomSignal: sectorBottomSignal,
     flows: unavailableDataset('Sector flows', ['ETF creations/redemptions', 'Mutual-fund flows', 'Institutional flows', 'Options flows']),

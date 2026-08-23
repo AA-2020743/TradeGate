@@ -1,4 +1,4 @@
-import { calculateChangeCorrelations, calculateTechnicalSnapshot } from './analytics.js';
+import { calculateChangeCorrelations, calculateTechnicalSnapshot, pearsonCorrelation } from './analytics.js';
 
 function clamp(value, minimum = 0, maximum = 100) {
   return Math.min(maximum, Math.max(minimum, value));
@@ -7,6 +7,21 @@ function clamp(value, minimum = 0, maximum = 100) {
 function mean(values) {
   return values.length ? values.reduce((total, value) => total + value, 0) / values.length : null;
 }
+
+function deviation(values) {
+  if (values.length < 2) return null;
+  const average = mean(values);
+  return Math.sqrt(values.reduce((total, value) => total + ((value - average) ** 2), 0) / (values.length - 1));
+}
+
+function median(values) {
+  if (!values.length) return null;
+  const sorted = [...values].sort((left, right) => left - right);
+  const middle = Math.floor(sorted.length / 2);
+  return sorted.length % 2 ? sorted[middle] : (sorted[middle - 1] + sorted[middle]) / 2;
+}
+
+const pearson = pearsonCorrelation;
 
 function percentChange(values, periods) {
   if (values.length <= periods || values.at(-(periods + 1)) === 0) return null;
@@ -71,9 +86,23 @@ const REGIME_SETTINGS = {
   'Risk-off contraction': { trend: 10, momentum: 10, meanReversion: 10, defensive: 40, macro: 30, alertThreshold: 75, holdingPeriod: '5-30 sessions' },
 };
 
+/**
+ * Breadth that publishes a score on a narrower base is still evidence. Taking
+ * only "calculated" threw away a breadth read at, say, 80% universe coverage
+ * and, because breadth is a mandatory leg, took the whole top-risk and
+ * bottom-signal models down with it. A partial leg is used and the model that
+ * used it is marked provisional, which is the honest middle.
+ */
+function usableBreadth(breadth) {
+  if (!breadth || !Number.isFinite(breadth.score ?? breadth.topRisk ?? breadth.bottomScore)) return { leg: null, partial: false };
+  if (breadth.status === 'calculated') return { leg: breadth, partial: false };
+  if (breadth.status === 'partial' || breadth.status === 'provisional') return { leg: breadth, partial: true };
+  return { leg: null, partial: false };
+}
+
 export function calculateEquityRegime({ technical, liquidity, breadth, credit, sentiment, positioning } = {}) {
   const volatility = technical?.indicators?.annualizedVolatility20d;
-  const calculatedBreadth = breadth?.status === 'calculated' ? breadth : null;
+  const { leg: calculatedBreadth, partial: breadthPartial } = usableBreadth(breadth);
   const definitions = [
     { key: 'trend', name: 'Price trend', score: technical?.components?.trend, weight: 0.24, source: 'Provider close history' },
     { key: 'momentum', name: 'Price momentum', score: technical?.components?.momentum, weight: 0.18, source: 'Provider close history' },
@@ -104,7 +133,8 @@ export function calculateEquityRegime({ technical, liquidity, breadth, credit, s
   const confidenceScore = Math.round((model.coverage * 0.65) + (agreement * 100 * 0.35));
   return {
     version: 'equity-regime-v1',
-    status: model.coverage >= 75 ? 'calculated' : 'provisional',
+    status: model.coverage >= 75 && !breadthPartial ? 'calculated' : 'provisional',
+    breadthPartial,
     asOf: technical.asOf,
     ...model,
     regime,
@@ -157,70 +187,97 @@ function technicalBottomScore(technical) {
   ]);
 }
 
-export function calculateSectorBreadthProxy(inputs) {
-  const usable = (inputs ?? []).filter((input) => Array.isArray(input?.points) && input.points.length >= 60);
+/**
+ * Participation across whatever ETF histories are fresh. Each average is only
+ * counted for the ETFs that actually carry enough history for it: a 200-day
+ * line computed from 60 closes is a 60-day line, and publishing it under the
+ * 200-day label was the model quietly answering a question it had not asked.
+ */
+export function calculateSectorBreadthProxy(inputs, { minimumObservations = 60 } = {}) {
+  const usable = (inputs ?? []).filter((input) => Array.isArray(input?.points) && input.points.length >= minimumObservations);
   if (!usable.length) {
-    return { version: 'sector-breadth-proxy-v1', status: 'unavailable', source: 'Sector/subsector ETF participation proxy', missing: ['At least one ETF history with 60 or more sessions'] };
+    return { version: 'sector-breadth-proxy-v2', status: 'unavailable', source: 'Sector/subsector ETF participation proxy', missing: [`At least one ETF history with ${minimumObservations} or more sessions`] };
   }
 
   const stats = usable.map((input) => {
     const values = input.points.map((point) => point.value).filter(Number.isFinite);
     const latest = values.at(-1);
-    const sma = (period) => values.length >= period ? mean(values.slice(-period)) : null;
+    const sma = (period) => (values.length >= period ? mean(values.slice(-period)) : null);
     const sma50 = sma(50);
-    const sma200 = sma(Math.min(200, values.length));
+    const sma200 = sma(200);
     const window60 = values.slice(-60);
     const high60 = Math.max(...window60);
     const low60 = Math.min(...window60);
     const past20 = values.at(-21);
-    const pastThrust = values.length >= 71 ? values.at(-71) : values[0];
     const sma50Past = values.length >= 70 ? mean(values.slice(-70, -20)) : null;
     return {
       symbol: input.symbol,
-      above50: Number.isFinite(sma50) && Number.isFinite(latest) ? latest > sma50 : false,
-      above200: Number.isFinite(sma200) && Number.isFinite(latest) ? latest > sma200 : false,
-      advancing: Number.isFinite(past20) && past20 > 0 && Number.isFinite(latest) ? ((latest / past20) - 1) > 0 : false,
-      newHigh: Number.isFinite(latest) && latest >= (high60 * 0.98),
-      newLow: Number.isFinite(latest) && latest <= (low60 * 1.02),
+      above50: Number.isFinite(sma50) ? latest > sma50 : null,
+      above200: Number.isFinite(sma200) ? latest > sma200 : null,
+      advancing: Number.isFinite(past20) && past20 > 0 ? ((latest / past20) - 1) > 0 : null,
+      newHigh: latest >= (high60 * 0.98),
+      newLow: latest <= (low60 * 1.02),
       thrustDelta: Number.isFinite(sma50Past) && sma50Past > 0 && Number.isFinite(sma50) ? (((sma50 / sma50Past) - 1) * 100) : null,
       asOf: input.points.at(-1)?.date ?? null,
     };
   });
 
-  const count = (predicate) => stats.filter(predicate).length;
+  // A metric is a share of the ETFs that could answer it, never of the whole
+  // universe: mixing "cannot say" in with "no" reads as weakness that is not
+  // in the data.
+  const share = (key) => {
+    const answered = stats.filter((stat) => stat[key] !== null);
+    if (!answered.length) return { percent: null, eligible: 0 };
+    return { percent: Math.round((answered.filter((stat) => stat[key]).length / answered.length) * 100), eligible: answered.length };
+  };
+  const above50 = share('above50');
+  const above200 = share('above200');
+  const advancers = share('advancing');
   const universeSize = stats.length;
-  const pctAbove50 = Math.round((count((stat) => stat.above50) / universeSize) * 100);
-  const pctAbove200 = Math.round((count((stat) => stat.above200) / universeSize) * 100);
-  const advancersPct = Math.round((count((stat) => stat.advancing) / universeSize) * 100);
-  const newHighs = count((stat) => stat.newHigh);
-  const newLows = count((stat) => stat.newLow);
+  const newHighs = stats.filter((stat) => stat.newHigh).length;
+  const newLows = stats.filter((stat) => stat.newLow).length;
   const thrustValues = stats.map((stat) => stat.thrustDelta).filter(Number.isFinite);
-  const thrust20 = thrustValues.length ? Number((thrustValues.reduce((total, value) => total + value, 0) / thrustValues.length).toFixed(2)) : null;
-  const participation = (pctAbove50 * 0.6) + (pctAbove200 * 0.4);
-  const topRisk = Math.round(clamp(100 - participation));
-  const bottomScore = Math.round(clamp(((100 - participation) * 0.7) + (Math.max(thrust20 ?? 0, 0) * 3)));
+  const thrust20 = thrustValues.length ? Number(mean(thrustValues).toFixed(2)) : null;
+
+  const participationLegs = [
+    { value: above50.percent, weight: 0.6 },
+    { value: above200.percent, weight: 0.4 },
+  ].filter((leg) => Number.isFinite(leg.value));
+  const participationWeight = participationLegs.reduce((total, leg) => total + leg.weight, 0);
+  const participation = participationWeight
+    ? participationLegs.reduce((total, leg) => total + (leg.value * leg.weight), 0) / participationWeight
+    : null;
+  const topRisk = participation === null ? null : Math.round(clamp(100 - participation));
+  const bottomScore = participation === null ? null : Math.round(clamp(((100 - participation) * 0.7) + (Math.max(thrust20 ?? 0, 0) * 3)));
   const asOf = stats.map((stat) => stat.asOf).filter(Boolean).sort().at(-1) ?? null;
+  const missing = [
+    ...(above200.eligible < universeSize ? [`${universeSize - above200.eligible} of ${universeSize} ETFs lack 200 sessions for the long-cycle line`] : []),
+    ...(above50.eligible < universeSize ? [`${universeSize - above50.eligible} of ${universeSize} ETFs lack 50 sessions`] : []),
+  ];
 
   return {
-    version: 'sector-breadth-proxy-v1',
-    status: 'calculated',
+    version: 'sector-breadth-proxy-v2',
+    status: participation === null ? 'unavailable' : missing.length ? 'provisional' : 'calculated',
+    reason: participation === null ? 'No ETF in the universe carries enough history for a moving-average line.' : null,
     source: 'Sector/subsector ETF participation proxy',
     asOf,
     universeSize,
-    pctAbove50,
-    pctAbove200,
-    advancersPct,
+    pctAbove50: above50.percent,
+    pctAbove200: above200.percent,
+    advancersPct: advancers.percent,
+    eligible: { above50: above50.eligible, above200: above200.eligible, advancers: advancers.eligible },
     newHighs,
     newLows,
     thrust20,
     topRisk,
     bottomScore,
-    methodology: 'Participation proxy across sector and subsector ETF close histories; not a substitute for constituent-level breadth.',
+    missing,
+    methodology: `Participation across sector and subsector ETF close histories, requiring ${minimumObservations} sessions to enter the universe. Each moving-average line is a share of the ETFs carrying enough history for that specific average - the 200-day line is never computed from fewer than 200 closes - so a short-history universe reports a narrower base rather than a wrong number. Not a substitute for constituent-level breadth.`,
   };
 }
 
 export function calculateTopRisk({ technical, breadth, sentiment, positioning, credit, liquidity, flows } = {}) {
-  const calculatedBreadth = breadth?.status === 'calculated' ? breadth : null;
+  const { leg: calculatedBreadth, partial: breadthPartial } = usableBreadth(breadth);
   const definitions = [
     { key: 'technical', name: 'Technical deterioration', score: technicalTopRisk(technical), weight: 0.25, source: 'Provider close history' },
     { key: 'breadth', name: 'Breadth deterioration', score: calculatedBreadth?.topRisk, weight: 0.2, source: calculatedBreadth?.source },
@@ -234,7 +291,8 @@ export function calculateTopRisk({ technical, breadth, sentiment, positioning, c
   const score = model.publishable ? model.score : null;
   return {
     version: 'equity-top-risk-v1',
-    status: model.publishable ? 'calculated' : 'unavailable',
+    status: !model.publishable ? 'unavailable' : breadthPartial ? 'provisional' : 'calculated',
+    breadthPartial,
     asOf: technical?.asOf ?? null,
     ...model,
     score,
@@ -243,7 +301,7 @@ export function calculateTopRisk({ technical, breadth, sentiment, positioning, c
 }
 
 export function calculateBottomSignal({ technical, breadth, sentiment, positioning, credit, liquidity, flows } = {}) {
-  const calculatedBreadth = breadth?.status === 'calculated' ? breadth : null;
+  const { leg: calculatedBreadth, partial: breadthPartial } = usableBreadth(breadth);
   const definitions = [
     { key: 'technical', name: 'Technical washout and turn', score: technicalBottomScore(technical), weight: 0.25, source: 'Provider close history' },
     { key: 'breadth', name: 'Breadth washout and thrust', score: calculatedBreadth?.bottomScore, weight: 0.2, source: calculatedBreadth?.source },
@@ -260,7 +318,8 @@ export function calculateBottomSignal({ technical, breadth, sentiment, positioni
   const breadthConfirmed = Number.isFinite(calculatedBreadth?.bottomScore) && calculatedBreadth.bottomScore >= 60;
   return {
     version: 'equity-bottom-signal-v1',
-    status: model.publishable ? 'calculated' : 'unavailable',
+    status: !model.publishable ? 'unavailable' : breadthPartial ? 'provisional' : 'calculated',
+    breadthPartial,
     asOf: technical?.asOf ?? null,
     ...model,
     score,
@@ -318,7 +377,13 @@ export function calculateBreadth(constituents, options = {}) {
       advances,
       declines,
       netAdvances: advances - declines,
+      // Deliberately advances over every observed name, not over advances plus
+      // declines as the classic Zweig ratio does. Excluding unchanged closes
+      // reads 100% participation off a single riser in a flat tape; including
+      // them costs a little precision and cannot invent breadth that is not
+      // there. The published `ratioBasis` names which of the two this is.
       advanceRatio: observed ? advances / observed : null,
+      unchanged: observed - advances - declines,
       advanceVolume,
       declineVolume,
       volumeParticipants,
@@ -408,11 +473,15 @@ export function calculateBreadth(constituents, options = {}) {
     'Sector breadth',
     'Small-cap vs large-cap participation',
   ];
+  // One cumulative line, and the chart is the tail of it. Summing the whole
+  // series for the headline while restarting the chart's line at zero 252
+  // sessions ago gave two different numbers for the same quantity.
   let advanceDeclineLine = 0;
-  const history = daily.slice(-252).map((day) => {
+  const cumulative = daily.map((day) => {
     advanceDeclineLine += day.netAdvances;
     return { date: day.date, netAdvances: day.netAdvances, advanceDeclineLine };
   });
+  const history = cumulative.slice(-252);
   const universeCoverage = expectedConstituents ? Math.round((latestMetrics.eligible20 / expectedConstituents) * 100) : 0;
 
   return {
@@ -432,7 +501,7 @@ export function calculateBreadth(constituents, options = {}) {
     advanceDecline: {
       advances: daily.at(-1).advances,
       declines: daily.at(-1).declines,
-      line: netAdvances.reduce((total, value) => total + value, 0),
+      line: cumulative.at(-1).advanceDeclineLine,
       volume: hasVolume ? { advance: daily.at(-1).advanceVolume, decline: daily.at(-1).declineVolume } : null,
     },
     mcClellan: {
@@ -443,6 +512,8 @@ export function calculateBreadth(constituents, options = {}) {
     newHighs: latestMetrics.eligible252 >= minimumConstituents ? latestMetrics.highs : null,
     newLows: latestMetrics.eligible252 >= minimumConstituents ? latestMetrics.lows : null,
     breadthThrust: breadthThrust === null ? null : breadthThrust * 100,
+    ratioBasis: 'advances / all observed constituents (unchanged closes included in the denominator)',
+    unchanged: daily.at(-1).unchanged,
     thrustTriggered: previousThrust !== null && previousThrust < 0.4 && breadthThrust >= 0.615,
     history,
     unavailable,
@@ -745,5 +816,198 @@ export function calculateSectorRotation(sectors, benchmarkPoints) {
     leavingLeadership: calculated.filter((sector) => sector.rotation?.moved && sector.rotation.previousQuadrant === 'Leading').map((sector) => sector.symbol),
     sectors: calculated,
     missing: calculated.length < sectors.length ? [`${sectors.length - calculated.length} sector histories`] : [],
+  };
+}
+
+/**
+ * How much of the tape is one trade. Two independent readings answer that: the
+ * average pairwise correlation of daily sector changes, and the cross-sectional
+ * spread of their returns. High correlation with low dispersion is a market
+ * moving on a single macro factor, where sector selection buys almost nothing;
+ * low correlation with wide dispersion is a market where it buys a great deal.
+ *
+ * Both are ranked against their own trailing history rather than against fixed
+ * thresholds, because the baseline level of correlation drifts with the regime.
+ */
+export function calculateSectorDispersion(sectors, benchmarkPoints, { window = 60, returnWindow = 20, rankWindow = 252, minimumSectors = 5 } = {}) {
+  const version = 'sector-dispersion-v1';
+  const normalized = (sectors ?? [])
+    .map((sector) => ({ symbol: sector.symbol, name: sector.name, points: normalizeHistory(sector.points ?? []) }))
+    .filter((sector) => sector.points.length > window);
+  if (normalized.length < minimumSectors) {
+    return { version, status: 'unavailable', reason: `Needs ${minimumSectors} sector histories of more than ${window} sessions; ${normalized.length} available.`, sectors: normalized.length };
+  }
+
+  // Only dates every sector shares, so a correlation is never computed across a
+  // gap one member had and the others did not.
+  const valueMaps = normalized.map((sector) => new Map(sector.points.map((point) => [point.date, point.value])));
+  const dates = [...valueMaps[0].keys()].filter((date) => valueMaps.every((map) => map.has(date))).sort();
+  if (dates.length < window + 2) {
+    return { version, status: 'unavailable', reason: `Needs ${window + 2} sessions shared by every sector; ${dates.length} available.`, sectors: normalized.length };
+  }
+
+  const changesBySector = valueMaps.map((map) => dates.slice(1).map((date, index) => {
+    const previous = map.get(dates[index]);
+    const current = map.get(date);
+    return previous > 0 ? ((current / previous) - 1) * 100 : null;
+  }));
+
+  const meanPairwiseCorrelation = (endExclusive) => {
+    const slices = changesBySector.map((changes) => changes.slice(endExclusive - window, endExclusive).filter(Number.isFinite));
+    if (slices.some((slice) => slice.length < window)) return null;
+    const correlations = [];
+    for (let left = 0; left < slices.length; left += 1) {
+      for (let right = left + 1; right < slices.length; right += 1) {
+        const value = pearson(slices[left], slices[right]);
+        if (Number.isFinite(value)) correlations.push(value);
+      }
+    }
+    return correlations.length ? mean(correlations) : null;
+  };
+
+  const totalChanges = changesBySector[0].length;
+  const correlation = meanPairwiseCorrelation(totalChanges);
+  if (correlation === null) {
+    return { version, status: 'unavailable', reason: 'Not enough overlapping daily changes to correlate every sector pair.', sectors: normalized.length };
+  }
+  const rollingCorrelations = [];
+  for (let end = window; end <= totalChanges; end += 1) {
+    if (end < totalChanges - rankWindow) continue;
+    const value = meanPairwiseCorrelation(end);
+    if (Number.isFinite(value)) rollingCorrelations.push(value);
+  }
+
+  const sectorReturns = normalized.map((sector, index) => {
+    const map = valueMaps[index];
+    const start = map.get(dates.at(-(returnWindow + 1)));
+    const end = map.get(dates.at(-1));
+    return { symbol: sector.symbol, name: sector.name, return: start > 0 ? ((end / start) - 1) * 100 : null };
+  });
+  const usableReturns = sectorReturns.map((entry) => entry.return).filter(Number.isFinite);
+  const dispersion = usableReturns.length >= minimumSectors ? deviation(usableReturns) : null;
+
+  const benchmark = normalizeHistory(benchmarkPoints ?? []);
+  const benchmarkMap = new Map(benchmark.map((point) => [point.date, point.value]));
+  const benchmarkStart = benchmarkMap.get(dates.at(-(returnWindow + 1)));
+  const benchmarkEnd = benchmarkMap.get(dates.at(-1));
+  const benchmarkReturn = Number.isFinite(benchmarkStart) && benchmarkStart > 0 && Number.isFinite(benchmarkEnd)
+    ? ((benchmarkEnd / benchmarkStart) - 1) * 100
+    : null;
+  const beating = benchmarkReturn === null
+    ? null
+    : sectorReturns.filter((entry) => Number.isFinite(entry.return) && entry.return > benchmarkReturn).length;
+  const leadershipBreadth = beating === null ? null : Math.round((beating / usableReturns.length) * 100);
+
+  const correlationPercentile = rollingCorrelations.length >= 40 ? percentileRank(rollingCorrelations, correlation) : null;
+  const ranked = [...sectorReturns].filter((entry) => Number.isFinite(entry.return)).sort((left, right) => right.return - left.return);
+  const highCorrelation = correlationPercentile === null ? correlation >= 0.7 : correlationPercentile >= 70;
+  const lowCorrelation = correlationPercentile === null ? correlation <= 0.4 : correlationPercentile <= 30;
+  const regime = highCorrelation ? 'One macro trade'
+    : lowCorrelation ? "Stock-picker's tape"
+      : 'Mixed';
+
+  return {
+    version,
+    status: correlationPercentile === null || dispersion === null ? 'provisional' : 'calculated',
+    asOf: dates.at(-1),
+    sectors: normalized.length,
+    observations: dates.length,
+    window,
+    returnWindow,
+    correlation: Math.round(correlation * 1000) / 1000,
+    correlationPercentile,
+    rankedAgainst: rollingCorrelations.length,
+    dispersion: dispersion === null ? null : Math.round(dispersion * 100) / 100,
+    spread: ranked.length ? Math.round((ranked[0].return - ranked.at(-1).return) * 100) / 100 : null,
+    leader: ranked[0] ?? null,
+    laggard: ranked.at(-1) ?? null,
+    benchmarkReturn: benchmarkReturn === null ? null : Math.round(benchmarkReturn * 100) / 100,
+    sectorsBeatingBenchmark: beating,
+    leadershipBreadth,
+    regime,
+    read: `Sectors move together at an average pairwise correlation of ${correlation.toFixed(2)}${correlationPercentile === null ? '' : `, the ${ordinal(correlationPercentile)} percentile of the last ${rollingCorrelations.length} readings`}${dispersion === null ? '' : `, and ${returnWindow}-session sector returns scattered ${dispersion.toFixed(1)} points either side of their average`}. ${regime === 'One macro trade' ? 'Sector selection is buying little here — the index is the trade.' : regime === "Stock-picker's tape" ? 'Sectors are moving on their own drivers, so selection carries real weight.' : 'Neither a single macro factor nor genuinely independent sectors.'}${leadershipBreadth === null ? '' : ` ${beating} of ${usableReturns.length} sectors are ahead of the benchmark over ${returnWindow} sessions.`}`,
+    methodology: `Average pairwise Pearson correlation of daily percentage changes across every sector pair over ${window} sessions shared by all of them, ranked against its own last ${rankWindow} rolling readings. Dispersion is the standard deviation of ${returnWindow}-session sector returns. The regime is read from the correlation percentile rather than a fixed level, because the baseline drifts between regimes; with too little history to rank, it falls back to absolute thresholds and reports as provisional.`,
+  };
+}
+
+/**
+ * Where the index sits inside its own drawdown history: how far below the
+ * running peak, how long it has been there, and how that depth ranks against
+ * every drawdown the available history contains.
+ */
+export function calculateDrawdownProfile(points, { minimumObservations = 250 } = {}) {
+  const version = 'equity-drawdown-profile-v1';
+  const history = normalizeHistory(points ?? []);
+  if (history.length < minimumObservations) {
+    return { version, status: 'unavailable', reason: `Needs ${minimumObservations} sessions to rank a drawdown against its own history; ${history.length} available.`, observations: history.length };
+  }
+
+  let peak = -Infinity;
+  let peakDate = null;
+  const drawdowns = history.map((point) => {
+    if (point.value > peak) {
+      peak = point.value;
+      peakDate = point.date;
+    }
+    return { date: point.date, drawdown: ((point.value / peak) - 1) * 100, peak, peakDate };
+  });
+
+  // Each completed episode: from the session the index left its peak to the one
+  // it regained it. An episode still open is reported separately rather than
+  // being counted as if it had already recovered.
+  const episodes = [];
+  let open = null;
+  drawdowns.forEach((entry, index) => {
+    if (entry.drawdown < 0 && !open) {
+      open = { peakDate: entry.peakDate, startIndex: index, trough: entry.drawdown, troughDate: entry.date };
+    } else if (open) {
+      if (entry.drawdown < open.trough) {
+        open.trough = entry.drawdown;
+        open.troughDate = entry.date;
+      }
+      if (entry.drawdown >= 0) {
+        episodes.push({ ...open, recoveredOn: entry.date, sessions: index - open.startIndex, recovered: true });
+        open = null;
+      }
+    }
+  });
+
+  const current = drawdowns.at(-1);
+  const sessionsSincePeak = drawdowns.length - 1 - drawdowns.findIndex((entry) => entry.date === current.peakDate);
+  const completedTroughs = episodes.map((episode) => episode.trough);
+  const deepest = episodes.length ? episodes.reduce((worst, episode) => (episode.trough < worst.trough ? episode : worst)) : null;
+  const longest = episodes.length ? episodes.reduce((slowest, episode) => (episode.sessions > slowest.sessions ? episode : slowest)) : null;
+  // Rank against every session's drawdown, so "how unusual is today" is answered
+  // by the whole distribution rather than by the handful of completed episodes.
+  const depthPercentile = percentileRank(drawdowns.map((entry) => entry.drawdown), current.drawdown);
+  const underwaterShare = Math.round((drawdowns.filter((entry) => entry.drawdown < -1e-9).length / drawdowns.length) * 100);
+
+  const state = current.drawdown >= -1 ? 'At the highs'
+    : current.drawdown >= -5 ? 'Shallow pullback'
+      : current.drawdown >= -10 ? 'Correction'
+        : current.drawdown >= -20 ? 'Deep correction'
+          : 'Bear-market drawdown';
+
+  return {
+    version,
+    status: 'calculated',
+    asOf: current.date,
+    observations: history.length,
+    drawdownPercent: Math.round(current.drawdown * 100) / 100,
+    peak: Math.round(current.peak * 100) / 100,
+    peakDate: current.peakDate,
+    sessionsSincePeak,
+    state,
+    depthPercentile,
+    underwaterSharePercent: underwaterShare,
+    completedEpisodes: episodes.length,
+    medianCompletedTrough: completedTroughs.length ? Math.round(median(completedTroughs) * 100) / 100 : null,
+    deepest: deepest ? { trough: Math.round(deepest.trough * 100) / 100, troughDate: deepest.troughDate, peakDate: deepest.peakDate, recoverySessions: deepest.sessions } : null,
+    slowestRecovery: longest ? { trough: Math.round(longest.trough * 100) / 100, sessions: longest.sessions, peakDate: longest.peakDate } : null,
+    inDrawdown: current.drawdown < -1e-9,
+    read: current.drawdown >= -1e-9
+      ? `The index closed at a new high for this ${history.length}-session window, which has spent ${underwaterShare}% of its sessions below a prior peak.`
+      : `${state}: ${Math.abs(current.drawdown).toFixed(1)}% below the ${current.peakDate} peak after ${sessionsSincePeak} sessions, deeper than ${depthPercentile}% of the sessions in this history.${deepest ? ` The worst completed episode here fell ${Math.abs(deepest.trough).toFixed(1)}% and took ${deepest.recoverySessions} sessions to recover.` : ''}`,
+    methodology: 'Drawdown is measured against the running peak of the available history, so it is window-dependent and states its window. A completed episode runs from the session the index left a peak to the session it regained it; an episode still open is reported as the current drawdown rather than counted among the completed ones. The depth percentile ranks today against every session in the history, not against the handful of completed episodes, which are too few to rank against.',
   };
 }

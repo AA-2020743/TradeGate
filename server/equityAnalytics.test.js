@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { calculateBasketRotation, calculateBottomSignal, calculateBreadth, calculateBreadthDivergence, calculateEquityRegime, calculateMacroSensitivities, calculateSectorRotation, calculateTopRisk, rrgQuadrant } from './equityAnalytics.js';
+import { calculateBasketRotation, calculateBottomSignal, calculateBreadth, calculateBreadthDivergence, calculateDrawdownProfile, calculateEquityRegime, calculateMacroSensitivities, calculateSectorBreadthProxy, calculateSectorDispersion, calculateSectorRotation, calculateTopRisk, rrgQuadrant } from './equityAnalytics.js';
 
 function technicalFixture(overrides = {}) {
   return {
@@ -29,19 +29,47 @@ test('regime model refuses to classify without mandatory technical inputs', () =
   assert.equal(model.regime, null);
 });
 
-test('partial breadth does not contribute full-strength parent signals', () => {
+test('partial breadth is used but marks the parent signal provisional', () => {
+  // Breadth on a narrower universe is still evidence. Discarding it entirely
+  // took the whole model down with it, because breadth is a mandatory leg -
+  // a worse outcome than a disclosed provisional read.
   const regime = calculateEquityRegime({
     technical: technicalFixture(),
     liquidity: { score: 70, version: 'liquidity-test' },
     breadth: { status: 'partial', score: 100, source: 'test' },
   });
-  assert.equal(regime.coverage, 64);
+  assert.equal(regime.coverage, 82);
+  assert.equal(regime.status, 'provisional');
+  assert.equal(regime.breadthPartial, true);
+
   const top = calculateTopRisk({
     technical: technicalFixture(),
     breadth: { status: 'partial', topRisk: 100, source: 'test' },
     sentiment: { euphoria: 100, source: 'test' },
   });
+  assert.equal(top.status, 'provisional');
+  assert.equal(top.breadthPartial, true);
+  assert.equal(Number.isFinite(top.score), true);
+});
+
+test('breadth carrying no score at all is still discarded', () => {
+  const top = calculateTopRisk({
+    technical: technicalFixture(),
+    breadth: { status: 'partial', topRisk: null, score: null, bottomScore: null, source: 'test' },
+    sentiment: { euphoria: 100, source: 'test' },
+  });
   assert.equal(top.status, 'unavailable');
+  assert.equal(top.breadthPartial, false);
+});
+
+test('fully calculated breadth leaves the parent signal calculated', () => {
+  const regime = calculateEquityRegime({
+    technical: technicalFixture(),
+    liquidity: { score: 70, version: 'liquidity-test' },
+    breadth: { status: 'calculated', score: 100, source: 'test' },
+  });
+  assert.equal(regime.status, 'calculated');
+  assert.equal(regime.breadthPartial, false);
 });
 
 test('top and bottom models do not publish from technical and liquidity alone', () => {
@@ -593,4 +621,192 @@ test('a basket missing a member publishes nothing rather than a partial spread',
   const out = calculateBasketRotation([basketPair], new Map([['L', basketSeries((index) => 100 + index)]]));
   assert.equal(out.pairs[0].status, 'unavailable');
   assert.equal(out.status, 'unavailable');
+});
+
+function dailySeries(length, valueAt, startYear = 2024) {
+  return Array.from({ length }, (_, index) => ({
+    timestamp: new Date(Date.UTC(startYear, 0, index + 1)).toISOString(),
+    value: valueAt(index),
+  }));
+}
+
+test('the participation proxy never computes a 200-day line from fewer than 200 closes', () => {
+  const short = Array.from({ length: 6 }, (_, sector) => ({
+    symbol: `S${sector}`,
+    points: dailySeries(90, (index) => 100 + index + sector).map((point) => ({ date: point.timestamp.slice(0, 10), value: point.value })),
+  }));
+  const proxy = calculateSectorBreadthProxy(short);
+  assert.equal(proxy.version, 'sector-breadth-proxy-v2');
+  assert.equal(proxy.status, 'provisional');
+  assert.equal(proxy.pctAbove50, 100);
+  assert.equal(proxy.pctAbove200, null, 'a 90-close average must not be published as the 200-day line');
+  assert.equal(proxy.eligible.above200, 0);
+  assert.match(proxy.missing[0], /lack 200 sessions/);
+});
+
+test('the participation proxy publishes the long-cycle line once the history supports it', () => {
+  const long = Array.from({ length: 6 }, (_, sector) => ({
+    symbol: `L${sector}`,
+    points: dailySeries(300, (index) => 100 + index + sector).map((point) => ({ date: point.timestamp.slice(0, 10), value: point.value })),
+  }));
+  const proxy = calculateSectorBreadthProxy(long);
+  assert.equal(proxy.status, 'calculated');
+  assert.equal(proxy.pctAbove200, 100);
+  assert.equal(proxy.eligible.above200, 6);
+  assert.deepEqual(proxy.missing, []);
+});
+
+test('a metric is a share of the ETFs that could answer it, not of the whole universe', () => {
+  const mixed = [
+    ...Array.from({ length: 3 }, (_, sector) => ({
+      symbol: `A${sector}`,
+      points: dailySeries(300, (index) => 100 + index).map((point) => ({ date: point.timestamp.slice(0, 10), value: point.value })),
+    })),
+    ...Array.from({ length: 3 }, (_, sector) => ({
+      symbol: `B${sector}`,
+      points: dailySeries(80, (index) => 100 + index).map((point) => ({ date: point.timestamp.slice(0, 10), value: point.value })),
+    })),
+  ];
+  const proxy = calculateSectorBreadthProxy(mixed);
+  assert.equal(proxy.universeSize, 6);
+  assert.equal(proxy.eligible.above200, 3);
+  // All three that can answer are above their 200-day line: 100%, not 50%.
+  assert.equal(proxy.pctAbove200, 100);
+});
+
+test('the proxy refuses a universe with no usable history at all', () => {
+  assert.equal(calculateSectorBreadthProxy([]).status, 'unavailable');
+  assert.equal(calculateSectorBreadthProxy([{ symbol: 'X', points: [] }]).status, 'unavailable');
+});
+
+test('the advance/decline line in the summary is the same line the chart draws', () => {
+  const constituents = Array.from({ length: 30 }, (_, constituentIndex) => ({
+    symbol: `AD${constituentIndex}`,
+    points: dailySeries(400, (index) => 100 + (index * (constituentIndex < 20 ? 0.2 : -0.05)) + Math.sin(index / 6), 2023),
+  }));
+  const breadth = calculateBreadth(constituents);
+  assert.equal(breadth.history.length, 252);
+  assert.equal(breadth.advanceDecline.line, breadth.history.at(-1).advanceDeclineLine);
+});
+
+test('sector dispersion separates one macro trade from a stock-pickers tape', () => {
+  const common = Array.from({ length: 400 }, (_, index) => Math.sin(index / 3) * 2);
+  const together = Array.from({ length: 8 }, (_, sector) => ({
+    symbol: `T${sector}`,
+    name: `Together ${sector}`,
+    points: dailySeries(400, (index) => 100 * (1 + (common.slice(0, index + 1).reduce((total, value) => total + value, 0) / 100)) + (sector / 50), 2023),
+  }));
+  const apart = Array.from({ length: 8 }, (_, sector) => ({
+    symbol: `I${sector}`,
+    name: `Independent ${sector}`,
+    points: dailySeries(400, (index) => 100 + (Math.sin((index / 3) + (sector * 1.7)) * 4) + (index * 0.02), 2023),
+  }));
+  const benchmark = dailySeries(400, (index) => 100 + (index * 0.05), 2023);
+
+  const correlated = calculateSectorDispersion(together, benchmark);
+  const independent = calculateSectorDispersion(apart, benchmark);
+  assert.equal(correlated.correlation > independent.correlation, true, `${correlated.correlation} should exceed ${independent.correlation}`);
+  assert.equal(correlated.sectors, 8);
+  assert.equal(Number.isFinite(correlated.dispersion), true);
+});
+
+test('sector dispersion ranks correlation against its own history rather than a fixed level', () => {
+  const sectors = Array.from({ length: 8 }, (_, sector) => ({
+    symbol: `R${sector}`,
+    name: `Sector ${sector}`,
+    points: dailySeries(500, (index) => 100 + (Math.sin((index / 4) + (sector * 0.9)) * 3) + (index * 0.03), 2022),
+  }));
+  const result = calculateSectorDispersion(sectors, dailySeries(500, (index) => 100 + (index * 0.03), 2022));
+  assert.equal(result.status, 'calculated');
+  assert.equal(result.rankedAgainst >= 40, true);
+  assert.equal(result.correlationPercentile >= 0 && result.correlationPercentile <= 100, true);
+  assert.match(result.methodology, /ranked against its own/);
+});
+
+test('sector dispersion reports how many sectors are ahead of the benchmark', () => {
+  const sectors = Array.from({ length: 6 }, (_, sector) => ({
+    symbol: `B${sector}`,
+    name: `Sector ${sector}`,
+    // Three sectors climb faster than the benchmark, three slower.
+    points: dailySeries(300, (index) => 100 + (index * (sector < 3 ? 0.2 : 0.01)), 2023),
+  }));
+  const result = calculateSectorDispersion(sectors, dailySeries(300, (index) => 100 + (index * 0.1), 2023));
+  assert.equal(result.sectorsBeatingBenchmark, 3);
+  assert.equal(result.leadershipBreadth, 50);
+  assert.equal(result.leader.symbol.startsWith('B'), true);
+  assert.equal(result.laggard.return < result.leader.return, true);
+});
+
+test('sector dispersion refuses a universe or a window it cannot measure', () => {
+  assert.equal(calculateSectorDispersion([], []).status, 'unavailable');
+  const tooShort = Array.from({ length: 8 }, (_, sector) => ({
+    symbol: `S${sector}`,
+    points: dailySeries(40, (index) => 100 + index),
+  }));
+  assert.equal(calculateSectorDispersion(tooShort, dailySeries(40, (index) => 100 + index)).status, 'unavailable');
+});
+
+test('sector dispersion uses only sessions every sector shares', () => {
+  const sectors = Array.from({ length: 6 }, (_, sector) => ({
+    symbol: `G${sector}`,
+    name: `Sector ${sector}`,
+    points: dailySeries(300, (index) => 100 + (index * 0.1) + Math.sin(index / 5 + sector), 2023)
+      // One sector is missing a run of sessions in the middle.
+      .filter((point, index) => !(sector === 0 && index > 100 && index < 140)),
+  }));
+  const result = calculateSectorDispersion(sectors, dailySeries(300, (index) => 100 + (index * 0.1), 2023));
+  assert.equal(result.observations, 261, 'the 39 sessions one sector lacks must drop out for everyone');
+});
+
+test('the drawdown profile places today inside its own drawdown history', () => {
+  const points = dailySeries(600, (index) => {
+    if (index < 300) return 100 + (index * 0.3);
+    if (index < 380) return 190 - ((index - 300) * 0.5);
+    return 150 + ((index - 380) * 0.1);
+  }, 2022);
+  const result = calculateDrawdownProfile(points);
+  assert.equal(result.status, 'calculated');
+  assert.equal(result.drawdownPercent < 0, true);
+  // The peak is the first bar of the decline leg (190), not the last of the
+  // advance (189.7), which is what a running-peak measure should find.
+  assert.equal(result.peakDate, points[300].timestamp.slice(0, 10));
+  assert.equal(result.sessionsSincePeak, 299);
+  assert.equal(['Correction', 'Deep correction', 'Bear-market drawdown'].includes(result.state), true);
+  assert.equal(result.depthPercentile >= 0 && result.depthPercentile <= 100, true);
+});
+
+test('a new high is reported as a new high, not as a zero-depth drawdown', () => {
+  const result = calculateDrawdownProfile(dailySeries(400, (index) => 100 + index, 2023));
+  assert.equal(result.inDrawdown, false);
+  assert.equal(result.drawdownPercent, 0);
+  assert.equal(result.state, 'At the highs');
+  assert.match(result.read, /new high/);
+});
+
+test('an open drawdown is not counted among the completed episodes', () => {
+  const points = dailySeries(400, (index) => (index < 200 ? 100 + index : 300 - ((index - 200) * 0.4)), 2023);
+  const result = calculateDrawdownProfile(points);
+  assert.equal(result.inDrawdown, true);
+  assert.equal(result.completedEpisodes, 0);
+  assert.equal(result.deepest, null);
+});
+
+test('the drawdown profile names the worst completed episode and its recovery', () => {
+  const points = dailySeries(700, (index) => {
+    if (index < 100) return 100 + index;          // peak 199
+    if (index < 200) return 199 - ((index - 100) * 0.6);  // falls to ~139
+    if (index < 320) return 139 + ((index - 200) * 0.6);  // recovers past 199
+    return 211 + ((index - 320) * 0.05);
+  }, 2022);
+  const result = calculateDrawdownProfile(points);
+  assert.equal(result.completedEpisodes, 1);
+  assert.equal(result.deepest.trough < -25, true);
+  assert.equal(result.deepest.recoverySessions > 100, true);
+  assert.equal(result.slowestRecovery.sessions, result.deepest.recoverySessions);
+});
+
+test('the drawdown profile refuses a history too short to rank', () => {
+  const result = calculateDrawdownProfile(dailySeries(100, (index) => 100 + index));
+  assert.equal(result.status, 'unavailable');
+  assert.match(result.reason, /Needs 250 sessions/);
 });

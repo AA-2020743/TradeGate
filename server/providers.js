@@ -432,6 +432,20 @@ export function getIngestionHistorySymbols() {
   return [...INGESTION_HISTORY_SYMBOLS];
 }
 
+/**
+ * A multi-year daily close history, for models that rank today against their
+ * own past rather than describing the last few months. `getMarketHistory` tops
+ * out at a year, and a drawdown ranked against one year of sessions is barely
+ * ranked at all.
+ */
+export async function getEquityLongHistory(symbol, { years = 5 } = {}) {
+  const normalizedSymbol = symbol.toUpperCase();
+  return withCache(`history-long:${normalizedSymbol}:${years}`, 6 * 60 * 60_000, async () => {
+    const points = await getYahooHistory(normalizedSymbol, `${years}y`);
+    return { symbol: normalizedSymbol, years, source: 'Yahoo Finance', asOf: points.at(-1)?.timestamp ?? null, points };
+  });
+}
+
 export async function getMarketHistory(symbol, requestedRange, options = {}) {
   const normalizedSymbol = symbol.toUpperCase();
   const range = HISTORY_RANGES[requestedRange] ? requestedRange : '1M';
