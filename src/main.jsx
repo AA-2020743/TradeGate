@@ -434,8 +434,15 @@ function App() {
 
 function DataStatus({ data }) {
   const labels = { loading: 'Connecting', live: 'Live data', partial: 'Partial data', offline: 'Offline' };
-  const configured = Object.values(data.health?.providers ?? {}).filter((provider) => provider.configured).length;
-  return <span className={`data-status ${data.status}`} title={data.error ?? `${configured} providers configured`}><i></i>{labels[data.status]}</span>;
+  const providers = Object.values(data.health?.providers ?? {}).length;
+  const serving = providers - (data.platform?.degraded?.length ?? 0);
+  const blocked = data.platform?.blocked ?? [];
+  const title = [
+    providers ? `${serving} of ${providers} providers serving` : null,
+    data.error,
+    blocked.length ? `Blocked upstream: ${blocked.join(', ')}` : null,
+  ].filter(Boolean).join('\n');
+  return <span className={`data-status ${data.status}`} title={title || labels[data.status]}><i></i>{labels[data.status]}</span>;
 }
 
 function DataDisclosure({ data, message }) {

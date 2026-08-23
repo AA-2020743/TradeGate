@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { createPoller } from './polling.js';
+import { derivePlatformStatus } from './platformStatus.js';
 
 async function requestJson(path) {
   const response = await fetch(path, { headers: { Accept: 'application/json' } });
@@ -10,6 +11,7 @@ async function requestJson(path) {
 export function usePlatformData() {
   const [state, setState] = useState({
     status: 'loading',
+    platform: null,
     health: null,
     markets: null,
     liquidity: null,
@@ -66,12 +68,18 @@ export function usePlatformData() {
       const newsData = news.status === 'fulfilled' ? news.value : null;
       const screenerData = screener.status === 'fulfilled' ? screener.value : null;
       const alertsData = alerts.status === 'fulfilled' ? alerts.value : null;
-      const hasQuotes = Boolean(marketData?.assets?.length);
-      const hasUnconfiguredProviders = Object.values(healthData?.providers ?? {}).some((provider) => !provider.configured || (provider.connected === false && provider.mode === 'unavailable') || provider.migrated === false && provider.configured);
-      const hasErrors = [health, markets, liquidity, dxyBtc].some((result) => result.status === 'rejected') || Boolean(marketData?.errors?.length) || Boolean(liquidityData?.errors?.length) || hasUnconfiguredProviders;
+      const coreRequests = { health, markets, liquidity, dxyBtc };
+      const platform = derivePlatformStatus({
+        health: healthData,
+        markets: marketData,
+        liquidity: liquidityData,
+        failedRequests: Object.entries(coreRequests).filter(([, result]) => result.status === 'rejected').map(([name]) => name),
+        blockedSources: healthData?.blockedSources ?? [],
+      });
 
       setState({
-        status: !healthData ? 'offline' : hasQuotes && !hasErrors ? 'live' : 'partial',
+        status: platform.status,
+        platform,
         health: healthData,
         markets: marketData,
         liquidity: liquidityData,
@@ -87,7 +95,7 @@ export function usePlatformData() {
         news: newsData,
         screener: screenerData,
         alerts: alertsData,
-        error: !healthData ? 'The data API is unavailable.' : hasErrors ? 'Some data providers are unavailable.' : null,
+        error: platform.error,
       });
     };
 
