@@ -490,3 +490,55 @@ test('a driver without enough aligned changes is unavailable and says why', () =
   assert.match(detail.dollar.reason, /Fewer than 60 aligned changes/);
   assert.equal(detail.realYield.reason, 'No driver history.');
 });
+
+const riskBreadth = { status: 'calculated', topRisk: 50, bottomScore: 50, source: 'stub' };
+const riskSentiment = { euphoria: 50, pessimism: 50, source: 'stub' };
+const technicalLeg = (model) => model.drivers.find((driver) => driver.key === 'technical').score;
+
+test('a missing 200-day average or MACD no longer reads as calm', () => {
+  const overbought = { asOf: '2026-08-20', latest: 120, indicators: { rsi14: 78, sma200: 100, macd: { histogram: -1 } } };
+  const withoutMacd = { asOf: '2026-08-20', latest: 120, indicators: { rsi14: 78, sma200: 100 } };
+  const full = calculateTopRisk({ technical: overbought, breadth: riskBreadth, sentiment: riskSentiment });
+  const partial = calculateTopRisk({ technical: withoutMacd, breadth: riskBreadth, sentiment: riskSentiment });
+  // The same overbought tape must not read as less risky merely for missing a leg.
+  assert.ok(technicalLeg(partial) >= technicalLeg(full), `${technicalLeg(partial)} < ${technicalLeg(full)}`);
+});
+
+test('one technical indicator alone cannot carry a risk read', () => {
+  const rsiOnly = { asOf: '2026-08-20', latest: 120, indicators: { rsi14: 78 } };
+  const risk = calculateTopRisk({ technical: rsiOnly, breadth: riskBreadth, sentiment: riskSentiment });
+  assert.equal(technicalLeg(risk), null);
+  assert.equal(risk.status, 'unavailable');
+  assert.equal(risk.score, null);
+  assert.ok(risk.missing.includes('Technical deterioration'));
+});
+
+test('the bottom signal drops absent legs instead of scoring them unwashed', () => {
+  const washedOut = { asOf: '2026-08-20', latest: 80, indicators: { rsi14: 22, sma200: 100, macd: { histogram: 1 } } };
+  const withoutMacd = { asOf: '2026-08-20', latest: 80, indicators: { rsi14: 22, sma200: 100 } };
+  const full = calculateBottomSignal({ technical: washedOut, breadth: riskBreadth, sentiment: riskSentiment });
+  const partial = calculateBottomSignal({ technical: withoutMacd, breadth: riskBreadth, sentiment: riskSentiment });
+  assert.ok(technicalLeg(partial) >= technicalLeg(full), `${technicalLeg(partial)} < ${technicalLeg(full)}`);
+
+  const rsiOnly = calculateBottomSignal({ technical: { asOf: '2026-08-20', latest: 80, indicators: { rsi14: 22 } }, breadth: riskBreadth, sentiment: riskSentiment });
+  assert.equal(technicalLeg(rsiOnly), null);
+  assert.equal(rsiOnly.status, 'unavailable');
+});
+
+test('a zero or missing price does not turn the discount leg into a division artefact', () => {
+  for (const latest of [0, null, undefined, Number.NaN]) {
+    const model = calculateBottomSignal({
+      technical: { asOf: '2026-08-20', latest, indicators: { rsi14: 22, sma200: 100, macd: { histogram: 1 } } },
+      breadth: riskBreadth,
+      sentiment: riskSentiment,
+    });
+    const leg = technicalLeg(model);
+    assert.ok(leg === null || Number.isFinite(leg), `leg was ${leg} for latest ${latest}`);
+  }
+});
+
+test('two of three legs is enough, and both risk models agree on that threshold', () => {
+  const twoLegs = { asOf: '2026-08-20', latest: 120, indicators: { rsi14: 70, macd: { histogram: -1 } } };
+  assert.ok(Number.isFinite(technicalLeg(calculateTopRisk({ technical: twoLegs, breadth: riskBreadth, sentiment: riskSentiment }))));
+  assert.ok(Number.isFinite(technicalLeg(calculateBottomSignal({ technical: twoLegs, breadth: riskBreadth, sentiment: riskSentiment }))));
+});

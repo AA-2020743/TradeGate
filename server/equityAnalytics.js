@@ -114,24 +114,47 @@ export function calculateEquityRegime({ technical, liquidity, breadth, credit, s
   };
 }
 
+// At least two of the three legs, so a single indicator cannot carry the read.
+const MINIMUM_TECHNICAL_LEGS = 2;
+
+function technicalLegAverage(legs) {
+  const available = legs.filter(Number.isFinite);
+  return available.length >= MINIMUM_TECHNICAL_LEGS ? mean(available) : null;
+}
+
+/**
+ * A missing input is unavailable, not benign. Defaulting the extension to zero
+ * and the MACD leg to its calm value meant an absent 200-day average or MACD
+ * pulled the average toward "no risk", so the model read *lower* risk exactly
+ * when it had least to go on — the one direction a risk score must not fail in.
+ */
 function technicalTopRisk(technical) {
   if (!technical) return null;
   const rsi = technical.indicators?.rsi14;
   const latest = technical.latest;
   const sma200 = technical.indicators?.sma200;
-  const extension = Number.isFinite(sma200) && sma200 > 0 ? ((latest / sma200) - 1) * 100 : 0;
-  const macdRisk = technical.indicators?.macd?.histogram < 0 ? 75 : 25;
-  return mean([clamp(((rsi - 55) / 25) * 100), clamp(extension * 4), macdRisk].filter(Number.isFinite));
+  const macdHistogram = technical.indicators?.macd?.histogram;
+  const extension = Number.isFinite(sma200) && sma200 > 0 && Number.isFinite(latest) ? ((latest / sma200) - 1) * 100 : null;
+  return technicalLegAverage([
+    Number.isFinite(rsi) ? clamp(((rsi - 55) / 25) * 100) : null,
+    extension === null ? null : clamp(extension * 4),
+    Number.isFinite(macdHistogram) ? (macdHistogram < 0 ? 75 : 25) : null,
+  ]);
 }
 
+/** Same rule as the top-risk legs: absent inputs drop out rather than reading calm. */
 function technicalBottomScore(technical) {
   if (!technical) return null;
   const rsi = technical.indicators?.rsi14;
   const latest = technical.latest;
   const sma200 = technical.indicators?.sma200;
-  const discount = Number.isFinite(sma200) && sma200 > 0 ? ((sma200 / latest) - 1) * 100 : 0;
-  const macdTurn = technical.indicators?.macd?.histogram > 0 ? 70 : 20;
-  return mean([clamp(((45 - rsi) / 25) * 100), clamp(discount * 5), macdTurn].filter(Number.isFinite));
+  const macdHistogram = technical.indicators?.macd?.histogram;
+  const discount = Number.isFinite(sma200) && sma200 > 0 && Number.isFinite(latest) && latest > 0 ? ((sma200 / latest) - 1) * 100 : null;
+  return technicalLegAverage([
+    Number.isFinite(rsi) ? clamp(((45 - rsi) / 25) * 100) : null,
+    discount === null ? null : clamp(discount * 5),
+    Number.isFinite(macdHistogram) ? (macdHistogram > 0 ? 70 : 20) : null,
+  ]);
 }
 
 export function calculateSectorBreadthProxy(inputs) {
