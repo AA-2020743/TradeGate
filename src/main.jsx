@@ -1322,7 +1322,41 @@ function technicalCell(label, value, note) {
  * support - TD countdown, setup perfection, the TDST line - are listed as
  * withheld with the feed they need, never rendered as a number.
  */
-function BitcoinTechnicalsSection({ technicals }) {
+/**
+ * The OHLCV-dependent block. It only appears once a bar feed carrying highs and
+ * lows responds; on a close-only feed it says so instead of substituting closes
+ * for the extremes.
+ */
+function BitcoinRangeSection({ rangeModels }) {
+  const status = rangeModels?.status ?? 'unavailable';
+  const published = status !== 'unavailable';
+  const modules = rangeModels?.modules ?? {};
+  const atr = modules.atr ?? {};
+  const donchian = modules.donchian ?? {};
+  const countdown = modules.tdCountdown ?? {};
+  const obv = modules.onBalanceVolume ?? {};
+  const channels = donchian.channels ?? [];
+
+  return <>
+    <section className="macro-section-heading"><div><p className="section-kicker">RANGE, CHANNELS &amp; VOLUME · {status.toUpperCase()}</p><h2>{published ? (donchian.read ?? 'Range models published') : 'Awaiting a daily bar feed with highs and lows'}</h2></div>{published ? <span className="data-pill">{rangeModels.observations} bars · {rangeModels.withVolume} with volume</span> : null}</section>
+    <section className={`screener-panel panel ${published ? '' : 'preview-section'}`}>
+      <div className="btc-cycle-grid">
+        {technicalCell('True range (ATR)', Number.isFinite(atr.atrPercent) ? `${atr.atrPercent}%` : '—', atr.state ? `${atr.state} · ${atr.ratio}x its level 20 bars ago · ${atr.percentile}th percentile` : atr.reason ?? 'Unavailable')}
+        {channels.length ? channels.map((channel) => technicalCell(`${channel.period}-bar channel`, channel.state === 'inside' ? `${channel.positionPercent}%` : channel.state === 'breakout up' ? 'Break up' : 'Break down', `${channel.lower}–${channel.upper} · ${channel.widthPercent}% wide`))
+          : technicalCell('Donchian channels', '—', donchian.reason ?? 'Unavailable')}
+        {technicalCell('TD countdown', countdown.countdown ? `${countdown.countdown.direction === 'buy' ? 'Buy' : 'Sell'} ${countdown.countdown.count}` : countdown.status === 'calculated' ? 'None' : '—', countdown.countdown
+          ? `${countdown.countdown.complete ? 'complete at 13' : countdown.countdown.deferred ? '13 deferred — bar-13 close did not clear bar 8' : 'counting toward 13'} · ${countdown.setup.perfected ? 'perfected' : 'plain'} setup ${countdown.setup.completedOn}`
+          : countdown.status === 'calculated' ? 'No nine-bar setup has completed' : countdown.reason ?? 'Unavailable')}
+        {technicalCell('TDST line', Number.isFinite(countdown.tdst?.level) ? `${countdown.tdst.level}` : '—', countdown.tdst ? `${countdown.tdst.side} · ${countdown.tdst.broken ? 'broken' : 'holding'}` : 'Needs a completed setup on daily bars')}
+        {technicalCell('On-balance volume', obv.agreement ? obv.agreement.charAt(0).toUpperCase() + obv.agreement.slice(1) : '—', obv.status === 'calculated' ? `OBV ${obv.obvDirection} while price is ${obv.priceDirection} over ${obv.window} bars` : obv.reason ?? 'Unavailable')}
+      </div>
+      <p className="cycle-phase-read">{published ? [atr.read, countdown.read, obv.read].filter(Boolean).join(' ') : rangeModels?.reason ?? 'Range, channel, countdown and volume models publish once a daily bar feed carrying highs and lows responds.'}</p>
+      <p className="model-footnote">{[donchian.methodology, countdown.methodology].filter(Boolean).join(' ') || 'These models are withheld on a close-only feed rather than approximated from closes.'}</p>
+    </section>
+  </>;
+}
+
+function BitcoinTechnicalsSection({ technicals, rangeAvailable = false }) {
   const status = technicals?.status ?? 'unavailable';
   const published = status !== 'unavailable';
   const modules = technicals?.modules ?? {};
@@ -1356,7 +1390,9 @@ function BitcoinTechnicalsSection({ technicals }) {
       <p className="cycle-phase-read">{divergences.length
         ? divergences.map((entry) => `${entry.name}: ${entry.from.date} to ${entry.to.date}, confirmed ${entry.barsSinceConfirmed} bars ago.`).join(' ')
         : modules.divergences?.read ?? 'RSI divergences publish once enough history is available to confirm two pivots.'}</p>
-      {withheld.length ? <p className="model-footnote">Withheld rather than approximated: {withheld.map((entry) => entry.reason).join(' ')}</p> : null}
+      {withheld.length ? <p className="model-footnote">{rangeAvailable
+        ? 'The TD countdown, setup perfection and the TDST line need daily highs and lows, so they are published in the range block below rather than approximated from closes here.'
+        : `Withheld rather than approximated: ${withheld.map((entry) => entry.reason).join(' ')}`}</p> : null}
       <p className="model-footnote">{technicals?.methodology ?? technicals?.reason ?? 'Bitcoin price technicals publish once Yahoo BTC-USD history responds.'}</p>
     </section>
   </>;
@@ -1396,7 +1432,8 @@ function CryptoDashboard({ data }) {
       {(cyclePhase?.phases ?? []).map((phase) => <div className={`scenario-row ${cyclePhase?.leading?.key === phase.key ? 'scenario-leading' : ''}`} key={phase.key} title={phase.legs.map((leg) => `${leg.name}: ${leg.score ?? 'unavailable'}`).join('\n')}><span>{phase.name}<small>{phase.outcome}{phase.missing.length ? ` · missing ${phase.missing.length} of ${phase.legs.length} legs` : ''}</small></span><i><b style={{ width: `${phase.score ?? 0}%` }}></b></i><strong>{Number.isFinite(phase.score) ? phase.score : '—'}</strong></div>)}
       <p className="model-footnote">{cyclePhase?.methodology ?? 'Trend, valuation, drawdown and derivatives legs are required before a cycle phase can be placed.'}</p>
     </section>
-    <BitcoinTechnicalsSection technicals={btc?.technicals} />
+    <BitcoinTechnicalsSection technicals={btc?.technicals} rangeAvailable={btc?.rangeModels?.modules?.tdCountdown?.status === 'calculated'} />
+    <BitcoinRangeSection rangeModels={btc?.rangeModels} />
     <section className="macro-section-heading"><div><p className="section-kicker">DOLLAR TRANSMISSION · {transmission?.status?.toUpperCase() ?? 'UNAVAILABLE'}</p><h2>{transmission?.linkSign === 0 ? 'The dollar link is too weak to move bitcoin' : `${tailwindLabel} for bitcoin`}</h2></div><span className="data-pill">Favorability read</span></section>
     <section className="crypto-grid">
       <article className={`crypto-tailwind-panel panel ${hasDollarInputs ? '' : 'preview-section'}`}><div className="panel-title"><div><p className="section-kicker">IS THE DOLLAR A TAILWIND?</p><h3>{tailwindLabel}</h3></div><span className="data-pill">{Number.isFinite(tailwindScore) ? `${tailwindScore > 0 ? '+' : ''}${tailwindScore} signal` : 'Unavailable'}</span></div>

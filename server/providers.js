@@ -3,6 +3,7 @@ import { withCache } from './cache.js';
 import { settle, unwrap } from './settled.js';
 import { calculateBreadthDivergence } from './equityAnalytics.js';
 import { calculateBitcoinTechnicals, calculateMovingAverageStack } from './bitcoinTechnicals.js';
+import { calculateBitcoinRangeModels } from './bitcoinOhlc.js';
 import { buildCoingeckoRequest, buildHeatmapRow, buildSocrataRequest, buildLiquidityNarrative, buildLiquidityTransmission, buildWorkspaceNarrative, calculateBitcoinCyclePhase, calculateChangeCorrelations, calculateCryptoRotation, calculateDollarScenarios, calculateDollarTransmissionRead, calculateLeadLag, calculateLiquidityRunway, calculateOpenInterestQuadrant, calculatePositioningModel, calculateCrossMarketRelationship, calculateGlobalLiquidityModel, calculateHeatmapRisk, calculateMacroRegimeModel, calculateMetalsCostStructure, calculateRsi, calculateScreenerScores, calculateTechnicalSnapshot, calculateTrendQuality, classifyHeadlineSentiment, calculateUsdStrengthModel, calculateUsLiquidityModel } from './analytics.js';
 import { getStoredFredSeries, getStoredMarketHistory, getStoredMarketSnapshot, getRecentModelOutputs, isDatabaseConfigured, reserveProviderCredits } from './database.js';
 import { getAllEquityHistorySymbols, getCoreEquityHistorySymbols } from './equityCatalog.js';
@@ -390,6 +391,36 @@ async function getYahooHistory(symbol, yahooRange = '1y') {
     const value = asNumber(rawClose);
     if (value === null || !Number.isFinite(seconds)) return [];
     return [{ timestamp: new Date(seconds * 1000).toISOString(), value }];
+  });
+}
+
+/**
+ * The same Yahoo chart endpoint the close-only loader uses, but keeping the
+ * high, low and volume it already returns. A bar missing any of open, high,
+ * low or close is dropped rather than back-filled, because the range models
+ * downstream are only as honest as their worst bar.
+ */
+async function getYahooOhlcHistory(symbol, yahooRange = '2y') {
+  const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}?range=${encodeURIComponent(yahooRange)}&interval=1d`;
+  const payload = await fetchJson(url);
+  const result = payload?.chart?.result?.[0];
+  const timestamps = result?.timestamp ?? [];
+  const quote = result?.indicators?.quote?.[0] ?? {};
+  return timestamps.flatMap((seconds, index) => {
+    if (!Number.isFinite(seconds)) return [];
+    const open = asNumber(quote.open?.[index]);
+    const high = asNumber(quote.high?.[index]);
+    const low = asNumber(quote.low?.[index]);
+    const close = asNumber(quote.close?.[index]);
+    if ([open, high, low, close].some((value) => value === null)) return [];
+    return [{
+      date: new Date(seconds * 1000).toISOString().slice(0, 10),
+      open,
+      high,
+      low,
+      close,
+      volume: asNumber(quote.volume?.[index]),
+    }];
   });
 }
 
@@ -1193,8 +1224,9 @@ export async function getBitcoinCycleWorkspace() {
       bitcoinDerivativesMemo = { funding, positioning };
       return { funding, positioning, memoized: false };
     };
-    const [priceResult, onchainResult, derivativesResult, stablecoinsResult] = await Promise.allSettled([
+    const [priceResult, barsResult, onchainResult, derivativesResult, stablecoinsResult] = await Promise.allSettled([
       getYahooHistory('BTC-USD', '10y'),
+      getYahooOhlcHistory('BTC-USD', '5y'),
       onchainLoader(),
       derivativesLoader(),
       fetchJson('https://stablecoins.llama.fi/stablecoincharts/all'),
@@ -1322,6 +1354,10 @@ export async function getBitcoinCycleWorkspace() {
     } : { status: 'unavailable', reason: 'DefiLlama stablecoin history is required.' };
 
     const technicals = calculateBitcoinTechnicals(priceHistory);
+    const priceBars = barsResult.status === 'fulfilled' ? barsResult.value : [];
+    const rangeModels = priceBars.length
+      ? calculateBitcoinRangeModels(priceBars, { onBalanceVolume: { source: 'Yahoo BTC-USD daily bars' } })
+      : { version: 'bitcoin-range-models-v1', status: 'unavailable', reason: `Yahoo BTC-USD daily bars are required for true ranges, channels, the DeMark countdown and volume: ${barsResult.reason?.message ?? barsResult.reason ?? 'payload missing'}`, observations: 0, unavailableModules: ['atr', 'donchian', 'tdCountdown', 'onBalanceVolume'], provisionalModules: [], modules: {} };
 
     const legs = [trend, valuation, shortTermHolder, leverage, positioning, etfFlows, stablecoins, drawdown, realizedVolatility];
     const calculatedCount = legs.filter((leg) => leg.status === 'calculated').length;
@@ -1334,6 +1370,7 @@ export async function getBitcoinCycleWorkspace() {
       totalLegs: legs.length,
       phase,
       technicals,
+      rangeModels,
       trend,
       valuation,
       shortTermHolder,
@@ -1343,7 +1380,7 @@ export async function getBitcoinCycleWorkspace() {
       stablecoins,
       drawdown,
       realizedVolatility,
-      methodology: 'Trend uses Yahoo BTC-USD daily closes for the 200-day average and weekly closes for the 200-week average. The technicals block adds stochastic RSI, the four RSI divergence types on confirmed pivots, the full moving-average stack with the 50/200 cross and a Z-score of the stretch from the 200-day average, Bollinger compression, range percentile, the TD setup count, momentum slope and volatility-adjusted momentum - all from the same close series, with TD countdown, perfection and TDST withheld because they need daily highs and lows. Valuation and short-term-holder cost basis come from bitcoin-data.com on-chain series. Funding aggregates Binance and Bybit perpetual rates with a Binance-history percentile; the OI/price quadrant uses 7-day changes in Binance futures open interest versus price. Stablecoin supply is DefiLlama aggregate circulating value. Drawdown is measured from the ten-year high; realized volatility is the 30-day annualized standard deviation of log returns percentile-ranked over the same window. Spot ETF flows remain unavailable without a licensed source.',
+      methodology: 'Trend uses Yahoo BTC-USD daily closes for the 200-day average and weekly closes for the 200-week average. The technicals block adds stochastic RSI, the four RSI divergence types on confirmed pivots, the full moving-average stack with the 50/200 cross and a Z-score of the stretch from the 200-day average, Bollinger compression, range percentile, the TD setup count, momentum slope and volatility-adjusted momentum - all from the same close series. The range block adds what needs the daily high, low and volume: Wilder ATR expansion, Donchian channels measured against the channel as it stood before the current bar, the DeMark countdown with its bar-13 qualifier, setup perfection and the TDST line, and on-balance volume against price. Valuation and short-term-holder cost basis come from bitcoin-data.com on-chain series. Funding aggregates Binance and Bybit perpetual rates with a Binance-history percentile; the OI/price quadrant uses 7-day changes in Binance futures open interest versus price. Stablecoin supply is DefiLlama aggregate circulating value. Drawdown is measured from the ten-year high; realized volatility is the 30-day annualized standard deviation of log returns percentile-ranked over the same window. Spot ETF flows remain unavailable without a licensed source.',
     };
   });
 }
