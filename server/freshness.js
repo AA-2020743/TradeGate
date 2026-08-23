@@ -16,6 +16,14 @@ const FRED_MAX_OBSERVATION_AGE_DAYS = {
   DEXJPUS: 10,
   DEXCHUS: 10,
   DTWEXBGS: 10,
+  DGS10: 7,
+  DGS3MO: 7,
+  T5YIFR: 7,
+  T5YIE: 7,
+  T10YIE: 7,
+  // CPI is monthly and released with a two-to-three week lag, so a 60-day
+  // ceiling is a genuine outage rather than a slow month.
+  CPIAUCSL: 60,
 };
 
 export const PBOC_MAX_OBSERVATION_AGE_DAYS = 560;
@@ -65,6 +73,12 @@ const FRED_EXPECTED_WITHIN_DAYS = {
   DEXJPUS: 9,
   DEXCHUS: 9,
   DTWEXBGS: 9,
+  DGS10: 4,
+  DGS3MO: 4,
+  T5YIFR: 4,
+  T5YIE: 4,
+  T10YIE: 4,
+  CPIAUCSL: 45,
 };
 
 /**

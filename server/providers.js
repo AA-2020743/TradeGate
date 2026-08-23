@@ -8,6 +8,7 @@ import { calculateBitcoinRangeModels } from './bitcoinOhlc.js';
 import { buildCoingeckoRequest, buildHeatmapRow, buildSocrataRequest, buildLiquidityNarrative, buildLiquidityTransmission, buildWorkspaceNarrative, calculateBitcoinCyclePhase, calculateChangeCorrelations, calculateCryptoRotation, calculateDollarScenarios, calculateDollarTransmissionRead, calculateLeadLag, calculateLiquidityRunway, calculateOpenInterestQuadrant, calculatePositioningModel, calculateCrossMarketRelationship, calculateGlobalLiquidityModel, calculateHeatmapRisk, calculateMacroRegimeModel, calculateMetalsCostStructure, calculateRsi, calculateScreenerScores, calculateTechnicalSnapshot, calculateTrendQuality, classifyHeadlineSentiment, isPublished, calculateUsdStrengthModel, calculateUsLiquidityModel } from './analytics.js';
 import { getStoredFredSeries, getStoredMarketHistory, getStoredMarketSnapshot, getRecentModelOutputs, isDatabaseConfigured, reserveProviderCredits } from './database.js';
 import { getAllEquityHistorySymbols, getCoreEquityHistorySymbols } from './equityCatalog.js';
+import { calculateGrowthNowcast, calculateInflationNowcast, calculateLiquidityCalendar, calculateRatePath, calculateRegimeTransitions, calculateYieldCurveModel, seriesPoints } from './macroModels.js';
 import { describeSeriesFreshness, isCryptoHistoryStale, isCotReportStale, isDailyCloseStale, isFredSeriesStale, isPbocObservationStale, monthsBetween } from './freshness.js';
 
 const TWELVE_SYMBOLS = [
@@ -35,6 +36,12 @@ const FRED_SERIES = [
   { id: 'DEXUSEU', key: 'eurUsd', name: 'US dollars per euro', unit: 'USD per EUR', multiplier: 1 },
   { id: 'DEXJPUS', key: 'yenPerUsd', name: 'Yen per US dollar', unit: 'JPY per USD', multiplier: 1 },
   { id: 'DEXCHUS', key: 'yuanPerUsd', name: 'Yuan per US dollar', unit: 'CNY per USD', multiplier: 1 },
+  { id: 'DGS10', key: 'us10yYield', name: '10-Year Treasury yield', unit: 'Percent', multiplier: 1 },
+  { id: 'DGS3MO', key: 'us3mYield', name: '3-Month Treasury yield', unit: 'Percent', multiplier: 1 },
+  { id: 'T5YIFR', key: 'forwardInflation5y5y', name: '5-Year, 5-Year forward inflation expectation', unit: 'Percent', multiplier: 1 },
+  { id: 'T5YIE', key: 'breakeven5y', name: '5-Year breakeven inflation', unit: 'Percent', multiplier: 1 },
+  { id: 'T10YIE', key: 'breakeven10y', name: '10-Year breakeven inflation', unit: 'Percent', multiplier: 1 },
+  { id: 'CPIAUCSL', key: 'cpi', name: 'CPI, all urban consumers', unit: 'Index', multiplier: 1 },
 ];
 
 const PBOC_SERIES_CODE = 'M.CN.B.XDC.CNY.N';
@@ -2183,6 +2190,23 @@ async function getGlobalGrowthSpread() {
   }).catch(() => null);
 }
 
+/**
+ * The market proxies the growth nowcast runs on, all from the same Yahoo chart
+ * endpoint the rest of the workspace uses. Each is fetched independently so a
+ * single failure costs one leg rather than the whole model.
+ */
+async function getGrowthProxyHistories() {
+  return withCache('analytics:growth-proxies', 6 * 3_600_000, async () => {
+    const symbols = ['HG=F', 'GC=F', 'XLI', 'XLB', 'XLP', 'XLU', 'EEM', 'SPY'];
+    const settled = await Promise.allSettled(symbols.map((symbol) => getYahooHistory(symbol)));
+    const bySymbol = new Map(symbols.map((symbol, index) => [
+      symbol,
+      settled[index].status === 'fulfilled' ? (settled[index].value ?? []).map((point) => ({ date: point.timestamp.slice(0, 10), value: point.value })) : [],
+    ]));
+    return bySymbol;
+  }).catch(() => new Map());
+}
+
 export async function getLiquiditySnapshot(options = {}) {
   return withCache('liquidity-snapshot', 15 * 60_000, async () => {
     const storedSeries = await getStoredFredSeries().catch(() => []);
@@ -2203,7 +2227,46 @@ export async function getLiquiditySnapshot(options = {}) {
     const publishable = (candidate) => (isPublished(candidate) ? candidate : null);
     const usdStrength = calculateUsdStrengthModel(modelSeries, publishable(model));
     const macroRegime = calculateMacroRegimeModel(modelSeries, publishable(model), publishable(usdStrength), publishable(globalLiquidity));
-    const dollarScenarios = calculateDollarScenarios(modelSeries, { growthSpread60d: await getGlobalGrowthSpread() });
+    const yieldCurve = calculateYieldCurveModel(modelSeries);
+    const inflation = calculateInflationNowcast(modelSeries);
+    const ratePath = calculateRatePath(modelSeries);
+    const liquidityCalendar = calculateLiquidityCalendar(modelSeries);
+
+    const [growthProxies, benchmarkHistory] = await Promise.all([
+      getGrowthProxyHistories(),
+      getYahooHistory('SPY', '10y').then((points) => points.map((point) => ({ date: point.timestamp.slice(0, 10), value: point.value }))).catch(() => []),
+    ]);
+    const tenTwo = yieldCurve.spreads?.find((spread) => spread.key === 'tenTwo');
+    const breakevenMomentum = (() => {
+      const points = seriesPoints(modelSeries, 'breakeven10y');
+      const past = points.at(-61);
+      return points.length > 60 && past ? points.at(-1).value - past.value : null;
+    })();
+    const growthNowcast = calculateGrowthNowcast({
+      copper: growthProxies.get('HG=F'),
+      gold: growthProxies.get('GC=F'),
+      cyclicals: [growthProxies.get('XLI') ?? [], growthProxies.get('XLB') ?? []].filter((points) => points.length),
+      defensives: [growthProxies.get('XLP') ?? [], growthProxies.get('XLU') ?? []].filter((points) => points.length),
+      emerging: growthProxies.get('EEM'),
+      developed: growthProxies.get('SPY'),
+      curveSpread: Number.isFinite(tenTwo?.spread) ? tenTwo.spread : null,
+      breakeven: breakevenMomentum,
+    });
+    const regimeHistory = calculateRegimeTransitions(modelSeries, benchmarkHistory);
+
+    // The dollar smile's weak-growth arm used a single equity return spread as
+    // its only input. It now takes the nowcast when one publishes, expressed on
+    // the same axis the arm already expected, and falls back to the spread.
+    // The arm expects a spread where negative means global growth is the weak
+    // side, so a low nowcast score maps to a negative value. The leg is
+    // relabelled with whichever input actually supplied it.
+    const usingNowcast = growthNowcast.status !== 'unavailable';
+    const growthSpread60d = usingNowcast ? (growthNowcast.score - 50) / 3 : await getGlobalGrowthSpread();
+    const dollarScenarios = calculateDollarScenarios(modelSeries, {
+      growthSpread60d,
+      growthSource: usingNowcast ? `${growthNowcast.version} (${growthNowcast.coverage}% of proxies)` : 'Yahoo SPY vs EEM',
+      growthName: usingNowcast ? `Global growth nowcast, ${growthNowcast.window} sessions` : 'U.S. equity leadership, 60 sessions',
+    });
     const stablecoins = await getStablecoinIssuance().catch(() => null);
     let narrative = null;
     if (isDatabaseConfigured()) {
@@ -2252,6 +2315,12 @@ export async function getLiquiditySnapshot(options = {}) {
       globalLiquidity,
       usdStrength,
       macroRegime,
+      yieldCurve,
+      inflation,
+      ratePath,
+      liquidityCalendar,
+      growthNowcast,
+      regimeHistory,
       dollarScenarios,
       stablecoins,
       narrative,

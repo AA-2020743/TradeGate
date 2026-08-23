@@ -1719,7 +1719,7 @@ const DOLLAR_SCENARIO_DEFINITIONS = [
  * `growthSpread60d` is the 60-session return of a global equity proxy minus
  * the U.S. one; negative means the U.S. is outperforming.
  */
-export function calculateDollarScenarios(seriesList, { growthSpread60d = null } = {}) {
+export function calculateDollarScenarios(seriesList, { growthSpread60d = null, growthSource = 'Yahoo SPY vs EEM', growthName = 'U.S. equity leadership, 60 sessions' } = {}) {
   const series = Object.fromEntries((seriesList ?? []).map((item) => [item.key, item]));
   const volatility = pointsForSeries(series.vix).at(-1)?.value ?? null;
   const creditSpread = pointsForSeries(series.highYieldSpread).at(-1)?.value ?? null;
@@ -1748,10 +1748,10 @@ export function calculateDollarScenarios(seriesList, { growthSpread60d = null } 
       { key: 'realYield', name: '10Y real-yield impulse', score: carryReal, value: realYieldChange, source: 'FRED DFII10' },
       { key: 'frontEnd', name: '2Y yield impulse', score: carryFront, value: frontEndChange, source: 'FRED DGS2' },
       { key: 'creditCalm', name: 'Credit calm', score: invert(stressCredit), value: creditSpread, source: 'FRED BAMLH0A0HYM2' },
-      { key: 'leadership', name: 'U.S. equity leadership, 60 sessions', score: usLeadership, value: growthSpread60d, source: 'Yahoo SPY vs EEM' },
+      { key: 'leadership', name: growthName, score: usLeadership, value: growthSpread60d, source: growthSource },
     ],
     weakGlobalGrowth: [
-      { key: 'leadership', name: 'U.S. equity leadership, 60 sessions', score: usLeadership, value: growthSpread60d, source: 'Yahoo SPY vs EEM' },
+      { key: 'leadership', name: growthName, score: usLeadership, value: growthSpread60d, source: growthSource },
       { key: 'yieldsIdle', name: 'U.S. carry not the driver', score: invert(carryReal), value: realYieldChange, source: 'FRED DFII10' },
       { key: 'calmTape', name: 'No volatility panic', score: invert(stressVol), value: volatility, source: 'FRED VIXCLS' },
     ],

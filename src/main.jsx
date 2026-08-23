@@ -973,6 +973,102 @@ function published(model) {
   return Boolean(model) && model.status !== 'unavailable';
 }
 
+/**
+ * The curve, and specifically what it is doing rather than only where it is —
+ * the steepening out of an inversion has historically been the nearer signal.
+ */
+function YieldCurvePanel({ curve }) {
+  const status = curve?.status ?? 'unavailable';
+  const published = status !== 'unavailable';
+  return <article className={`panel ${published ? '' : 'preview-section'}`}>
+    <div className="panel-title"><div><p className="section-kicker">YIELD CURVE · {status.toUpperCase()}</p><h3>{published ? curve.state : 'Awaiting Treasury yields'}</h3></div>{published ? <span className={`data-pill ${curve.inverted ? 'pill-warning' : ''}`}>{curve.inverted ? 'Inverted' : 'Not inverted'}</span> : null}</div>
+    {published ? (curve.spreads ?? []).map((spread) => <div className="stat-row" key={spread.key}>
+      <span><strong>{spread.name}</strong><small>{spread.status === 'unavailable' ? spread.reason : `${ordinal(spread.percentile)} percentile of ${spread.rankedAgainst} sessions${spread.inverted ? ` · inverted ${spread.sessionsInverted} sessions` : spread.unInverted ? ` · un-inverted ${spread.sessionsSinceUnInversion} sessions ago` : ''}${Number.isFinite(spread.change60d) ? ` · ${spread.change60d > 0 ? '+' : ''}${spread.change60d} over 60` : ''}`}</small></span>
+      <b className={spread.status === 'unavailable' ? '' : spread.inverted ? 'negative' : 'positive'}>{Number.isFinite(spread.spread) ? `${spread.spread}%` : '—'}</b>
+    </div>) : <div className="equity-empty">{curve?.reason ?? 'The 10-year yield plus a 2-year or 3-month leg is required.'}</div>}
+    <p className="model-footnote">{published ? curve.read : ''} {curve?.methodology ?? ''}</p>
+  </article>;
+}
+
+/** Market-priced inflation against what the index is actually printing. */
+function InflationPanel({ inflation }) {
+  const status = inflation?.status ?? 'unavailable';
+  const published = status !== 'unavailable';
+  return <article className={`panel ${published ? '' : 'preview-section'}`}>
+    <div className="panel-title"><div><p className="section-kicker">INFLATION NOWCAST · {status.toUpperCase()}</p><h3>{published ? inflation.state ?? 'Market pricing published' : 'Awaiting breakeven series'}</h3></div>{published && Number.isFinite(inflation.gapVsRealized) ? <span className="data-pill">{inflation.gapVsRealized > 0 ? '+' : ''}{inflation.gapVsRealized} vs realized</span> : null}</div>
+    {published ? <>
+      {(inflation.market ?? []).map((leg) => <div className="stat-row" key={leg.key}>
+        <span><strong>{leg.name}</strong><small>{leg.status === 'unavailable' ? leg.reason : `${ordinal(leg.percentile)} percentile of ${leg.rankedAgainst} observations${Number.isFinite(leg.change60d) ? ` · ${leg.change60d > 0 ? '+' : ''}${leg.change60d} over 60` : ''}`}</small></span>
+        <b>{Number.isFinite(leg.percent) ? `${leg.percent}%` : '—'}</b>
+      </div>)}
+      <div className="stat-row"><span><strong>Realized CPI, year over year</strong><small>{inflation.realized?.status === 'calculated' ? `${inflation.realized.asOf}${inflation.realized.futureDated ? ' · dated ahead of today, which the feed should not return' : ` · ${inflation.realized.lagDays} days old, the statistic's own release lag`}${Number.isFinite(inflation.realized.threeMonthAnnualizedPercent) ? ` · ${inflation.realized.threeMonthAnnualizedPercent}% three-month annualized` : ''}` : inflation.realized?.reason}</small></span><b>{Number.isFinite(inflation.realized?.yearOverYearPercent) ? `${inflation.realized.yearOverYearPercent}%` : '—'}</b></div>
+    </> : <div className="equity-empty">{inflation?.reason ?? 'Breakeven or forward-inflation series are required.'}</div>}
+    <p className="model-footnote">{published ? inflation.read : ''} {inflation?.methodology ?? ''}</p>
+  </article>;
+}
+
+/** How many moves the Treasury curve is pricing — inferred, never a forecast. */
+function RatePathPanel({ ratePath }) {
+  const status = ratePath?.status ?? 'unavailable';
+  const published = status !== 'unavailable';
+  return <article className={`panel ${published ? '' : 'preview-section'}`}>
+    <div className="panel-title"><div><p className="section-kicker">RATE PATH · {status.toUpperCase()}</p><h3>{published ? `${Math.abs(ratePath.impliedMovesRounded) || 'No'} ${ratePath.direction === 'no material change' ? 'material change priced' : `${ratePath.direction} priced`}` : 'Awaiting the front of the curve'}</h3></div>{published ? <span className="data-pill">{ratePath.gapBasisPoints}bp 2Y vs 3M</span> : null}</div>
+    {published ? <>
+      {(ratePath.legs ?? []).map((leg) => <div className="stat-row" key={leg.key}><span><strong>{leg.name}</strong><small>{leg.asOf}</small></span><b>{Number.isFinite(leg.percent) ? `${leg.percent}%` : '—'}</b></div>)}
+      {Number.isFinite(ratePath.shift60d) ? <div className="stat-row"><span><strong>Pricing shift, 60 sessions</strong><small>Change in the implied count of moves</small></span><b className={ratePath.shift60d >= 0 ? 'positive' : 'negative'}>{ratePath.shift60d > 0 ? '+' : ''}{ratePath.shift60d}</b></div> : null}
+    </> : <div className="equity-empty">{ratePath?.reason ?? 'Both the 2-year and 3-month yields are required.'}</div>}
+    <p className="model-footnote">{published ? ratePath.read : ''} {ratePath?.methodology ?? ''}</p>
+  </article>;
+}
+
+/** The two most predictable liquidity shocks, placed forward in time. */
+function LiquidityCalendarPanel({ calendar }) {
+  const status = calendar?.status ?? 'unavailable';
+  const published = status !== 'unavailable';
+  return <article className={`panel ${published ? '' : 'preview-section'}`}>
+    <div className="panel-title"><div><p className="section-kicker">LIQUIDITY CALENDAR · {status.toUpperCase()}</p><h3>{published ? `Next ${calendar.horizonDays} days` : 'Awaiting TGA history'}</h3></div>{published ? <span className="data-pill">{calendar.quarterEnd.daysAway}d to quarter-end</span> : null}</div>
+    {published ? (calendar.events ?? []).map((event) => <div className="stat-row" key={event.key}>
+      <span><strong>{event.name}</strong><small>{event.note}</small></span>
+      <b>{event.date ? `${event.daysAway}d` : Number.isFinite(event.liquidityEffectUsdMillions) ? `${event.liquidityEffectUsdMillions >= 0 ? '+' : ''}${Math.round(event.liquidityEffectUsdMillions / 1000)}bn` : `${event.daysAway}d`}</b>
+    </div>) : <div className="equity-empty">{calendar?.reason ?? 'A year of Treasury general account history is required.'}</div>}
+    <p className="model-footnote">{published ? calendar.read : ''} {calendar?.methodology ?? ''}</p>
+  </article>;
+}
+
+/** What the regime engine's own labels have been worth in this history. */
+function RegimeHistoryPanel({ history }) {
+  const status = history?.status ?? 'unavailable';
+  const published = status !== 'unavailable';
+  const recent = (history?.transitions ?? []).slice(-5).reverse();
+  return <article className={`panel ${published ? '' : 'preview-section'}`}>
+    <div className="panel-title"><div><p className="section-kicker">REGIME HISTORY · {status.toUpperCase()}</p><h3>{published ? `${history.transitions.length} transitions since ${history.coveredFrom}` : 'Awaiting overlapping macro history'}</h3></div>{published ? <span className="data-pill">{history.current.runDays}d in {history.current.regime}</span> : null}</div>
+    {published ? <>
+      {recent.length ? <div className="stat-head"><span>Transition</span><span>Benchmark after</span></div> : null}
+      {recent.map((entry) => <div className="stat-row" key={entry.date}>
+        <span><strong>{`${entry.from} → ${entry.to}`}</strong><small>{`${entry.date} · score ${entry.score}`}</small></span>
+        <b className={Number.isFinite(entry.forward63) ? (entry.forward63 >= 0 ? 'positive' : 'negative') : ''}>{Number.isFinite(entry.forward21) ? `${entry.forward21 > 0 ? '+' : ''}${entry.forward21}% / ` : 'pending / '}{Number.isFinite(entry.forward63) ? `${entry.forward63 > 0 ? '+' : ''}${entry.forward63}%` : 'pending'}</b>
+      </div>)}
+      {recent.length ? null : <div className="equity-empty">No regime change inside the recomputed window.</div>}
+    </> : <div className="equity-empty">{history?.reason ?? 'At least two overlapping macro histories are required.'}</div>}
+    <p className="model-footnote">{published ? `${history.read} ${history.reason ?? ''}` : ''} {history?.methodology ?? ''}</p>
+  </article>;
+}
+
+/** Market proxies standing in for activity data, which they lead but do not measure. */
+function GrowthNowcastPanel({ nowcast }) {
+  const status = nowcast?.status ?? 'unavailable';
+  const published = status !== 'unavailable';
+  return <article className={`panel ${published ? '' : 'preview-section'}`}>
+    <div className="panel-title"><div><p className="section-kicker">GROWTH NOWCAST · {status.toUpperCase()}</p><h3>{published ? nowcast.state : 'Awaiting growth proxies'}</h3></div>{published ? <span className="data-pill">{nowcast.score}/100 · {nowcast.coverage}% coverage</span> : null}</div>
+    {(nowcast?.legs ?? []).map((leg) => <div className="stat-row" key={leg.key}>
+      <span><strong>{leg.name}</strong><small>{leg.score === null ? 'Unavailable' : leg.note}</small></span>
+      <b>{leg.score === null ? '—' : `${leg.score}${Number.isFinite(leg.value) ? ` · ${leg.value > 0 ? '+' : ''}${leg.value}` : ''}`}</b>
+    </div>)}
+    {published ? null : <div className="equity-empty">{nowcast?.reason ?? 'At least three growth proxies are required.'}</div>}
+    <p className="model-footnote">{published ? nowcast.read : ''} {nowcast?.methodology ?? ''}</p>
+  </article>;
+}
+
 function MacroDashboard({ data }) {
   const [activeModel, setActiveModel] = React.useState('Liquidity');
   const [correlationWindow, setCorrelationWindow] = React.useState('60D');
@@ -1013,7 +1109,7 @@ function MacroDashboard({ data }) {
   return <div className="macro-dashboard">
     <section className="macro-intro">
       <div><p className="eyebrow">MACRO RESEARCH SYSTEM</p><h1>Liquidity leads. Risk confirms.</h1><p className="intro">A cross-asset view of the forces shaping capital availability and market regime.</p></div>
-      <div className="model-tabs"><button className={activeModel === 'Liquidity' ? 'active' : ''} onClick={() => setActiveModel('Liquidity')}>US liquidity</button><button className={activeModel === 'Global' ? 'active' : ''} onClick={() => setActiveModel('Global')}>Global liquidity</button><button className={activeModel === 'Risk' ? 'active' : ''} onClick={() => setActiveModel('Risk')}>Macro regime</button><button className={activeModel === 'Correlations' ? 'active' : ''} onClick={() => setActiveModel('Correlations')}>Correlations {regimeCorrelations?.status !== 'calculated' && <small className="tab-preview">Preview</small>}</button><button className={activeModel === 'FX' ? 'active' : ''} onClick={() => setActiveModel('FX')}>USD &amp; FX</button></div>
+      <div className="model-tabs"><button className={activeModel === 'Liquidity' ? 'active' : ''} onClick={() => setActiveModel('Liquidity')}>US liquidity</button><button className={activeModel === 'Global' ? 'active' : ''} onClick={() => setActiveModel('Global')}>Global liquidity</button><button className={activeModel === 'Risk' ? 'active' : ''} onClick={() => setActiveModel('Risk')}>Macro regime</button><button className={activeModel === 'Correlations' ? 'active' : ''} onClick={() => setActiveModel('Correlations')}>Correlations {regimeCorrelations?.status !== 'calculated' && <small className="tab-preview">Preview</small>}</button><button className={activeModel === 'Rates' ? 'active' : ''} onClick={() => setActiveModel('Rates')}>Rates &amp; growth</button><button className={activeModel === 'FX' ? 'active' : ''} onClick={() => setActiveModel('FX')}>USD &amp; FX</button></div>
     </section>
     <DataDisclosure data={data} message="Every model here is a versioned calculation from keyless public sources; only panels whose sources are confirmed blocked remain preview-labeled." />
     {data.liquidity?.series?.length ? <section className="official-data-strip panel"><div><p className="section-kicker">OFFICIAL FRED OBSERVATIONS</p><b>Latest released data</b></div>{data.liquidity.series.slice(0, 5).map((series) => <div key={series.id}><span>{series.name}</span><strong>{formatMacroValue(series)}</strong><small className={series.freshness?.state === 'overdue' ? 'freshness-overdue' : undefined} title={series.freshness?.read ?? undefined}>{series.date}{series.stale ? ' · stale' : series.freshness?.state === 'overdue' ? ' · print overdue' : series.stored ? ' · stored' : ' · live'}</small></div>)}</section> : <section className="provider-setup-note"><b>Live macro feed unavailable</b><span>The server could not reach FRED (API or public CSV endpoint) and no stored observations exist yet.</span></section>}
@@ -1062,12 +1158,14 @@ function MacroDashboard({ data }) {
       </div>
     </section>
 
-    <section className="macro-section-heading"><div><p className="section-kicker">{activeModel === 'Liquidity' ? 'NET US LIQUIDITY' : activeModel === 'Global' ? 'GLOBAL CENTRAL-BANK LIQUIDITY' : activeModel === 'Risk' ? 'CROSS-ASSET CONFIRMATION' : activeModel === 'Correlations' ? 'RELATIONSHIP INTELLIGENCE' : 'USD MACRO ENGINE'}</p><h2>{activeModel === 'Liquidity' ? 'The calculated drivers behind the impulse' : activeModel === 'Global' ? 'World central-bank liquidity in dollars' : activeModel === 'Risk' ? 'What markets are pricing now' : activeModel === 'Correlations' ? 'Correlations through the current regime' : 'Where macro points for the dollar'} {activeModel === 'Correlations' && regimeCorrelations?.status !== 'calculated' && <PreviewBadge label="Contains previews" />}</h2></div>{activeModel === 'Liquidity' && <span className="data-pill">13W calculated window</span>}{activeModel === 'Global' && <span className="data-pill">13W calculated window</span>}{activeModel === 'Correlations' && <div className="window-buttons">{['20D', '60D', '1Y'].map((item) => <button className={correlationWindow === item ? 'selected' : ''} key={item} onClick={() => setCorrelationWindow(item)}>{item}</button>)}</div>}{activeModel === 'FX' && <span className="data-pill">FRED driver stack</span>}</section>
+    <section className="macro-section-heading"><div><p className="section-kicker">{activeModel === 'Liquidity' ? 'NET US LIQUIDITY' : activeModel === 'Global' ? 'GLOBAL CENTRAL-BANK LIQUIDITY' : activeModel === 'Risk' ? 'CROSS-ASSET CONFIRMATION' : activeModel === 'Correlations' ? 'RELATIONSHIP INTELLIGENCE' : activeModel === 'Rates' ? 'RATES, INFLATION & GROWTH' : 'USD MACRO ENGINE'}</p><h2>{activeModel === 'Liquidity' ? 'The calculated drivers behind the impulse' : activeModel === 'Global' ? 'World central-bank liquidity in dollars' : activeModel === 'Risk' ? 'What markets are pricing now' : activeModel === 'Correlations' ? 'Correlations through the current regime' : activeModel === 'Rates' ? 'What the curve is pricing, and what growth proxies say' : 'Where macro points for the dollar'} {activeModel === 'Correlations' && regimeCorrelations?.status !== 'calculated' && <PreviewBadge label="Contains previews" />}</h2></div>{activeModel === 'Liquidity' && <span className="data-pill">13W calculated window</span>}{activeModel === 'Global' && <span className="data-pill">13W calculated window</span>}{activeModel === 'Correlations' && <div className="window-buttons">{['20D', '60D', '1Y'].map((item) => <button className={correlationWindow === item ? 'selected' : ''} key={item} onClick={() => setCorrelationWindow(item)}>{item}</button>)}</div>}{activeModel === 'FX' && <span className="data-pill">FRED driver stack</span>}</section>
 
     {activeModel === 'Liquidity' ? <section className="liquidity-detail-grid">
       <article className="driver-panel panel"><div className="driver-panel-head"><span>Indicator</span><span>Impulse</span><span>13W change</span></div>{liquidityModel?.drivers?.length ? liquidityModel.drivers.map((driver) => { const tone = driver.impulse > 0.05 ? 'positive' : driver.impulse < -0.05 ? 'negative' : 'neutral'; return <div className="driver-row" key={driver.key}><span>{driver.name}</span><b className={tone}>{driver.impulse > 0.05 ? 'Supportive' : driver.impulse < -0.05 ? 'Restrictive' : 'Neutral'}</b><strong>{driver.changePercent >= 0 ? '+' : ''}{driver.changePercent.toFixed(2)}%</strong></div>; }) : <div className="calculation-empty">No calculated FRED drivers are available.</div>}<p className="model-footnote"><code>us-liquidity-v1</code> uses 55% Fed net liquidity, 25% US M2 growth, and 20% inverse dollar transmission. Inputs retain provider dates and units.</p></article>
       <article className={`driver-panel panel ${liquidityModel?.decomposition?.length ? '' : 'preview-section'}`}><div className="panel-title"><div><p className="section-kicker">NET-LIQUIDITY DECOMPOSITION · CALCULATED</p><h3>Which leg moved the pool</h3></div><span className="data-pill">{liquidityModel?.decomposition?.length ? 'Δ = Fed − TGA − RRP' : 'Unavailable'}</span></div>{liquidityModel?.decomposition?.length ? <>{liquidityModel.decomposition.map((window) => <div key={window.windowDays}><div className="driver-panel-head"><span>{`${window.windowDays === 28 ? '4' : '13'}-week window`}</span><span>Contribution</span><span>{`${window.netChange >= 0 ? '+' : ''}$${(window.netChange / 1000).toFixed(1)}B net`}</span></div>{window.legs.map((leg) => <div className="driver-row" key={`${window.windowDays}-${leg.key}`}><span>{leg.name}{window.dominantLeg === leg.key ? ' · dominant' : ''}</span><b className={leg.contribution >= 0 ? 'positive' : 'negative'}>{leg.contribution >= 0 ? 'Adding' : 'Draining'}</b><strong>{`${leg.contribution >= 0 ? '+' : ''}$${(leg.contribution / 1000).toFixed(1)}B`}</strong></div>)}</div>)}</> : <div className="calculation-empty">Fed balance sheet, TGA, and reverse-repo histories are all required to decompose net liquidity.</div>}<p className="model-footnote">Net liquidity is the Fed balance sheet minus the Treasury General Account minus overnight reverse repos; each leg is differenced over the same window so the contributions sum to the net change. RRP drawdowns and TGA spend-downs release liquidity even while the balance sheet shrinks.</p></article>
       <article className={`regional-panel panel ${liquidityRunway?.status === 'calculated' ? '' : 'preview-section'}`}><div className="panel-title"><div><p className="section-kicker">TIGHTENING RUNWAY · {liquidityRunway?.status?.toUpperCase() ?? 'UNAVAILABLE'}</p><h3>{liquidityRunway?.state ?? 'Awaiting Fed and reverse-repo histories'}</h3></div><span className={`data-pill ${Number.isFinite(liquidityRunway?.runwayMonths) && liquidityRunway.runwayMonths <= 6 ? 'pill-warning' : ''}`}>{Number.isFinite(liquidityRunway?.runwayMonths) ? `${liquidityRunway.runwayMonths} months left` : 'No drawdown'}</span></div><p className="regime-proximity">{liquidityRunway?.read ?? liquidityRunway?.reason}</p>{liquidityRunway?.status === 'calculated' ? <div className="signal-summary"><SignalCell label="Reverse repo" value={formatLiquidityValue(liquidityRunway.reverseRepoLevel)} /><SignalCell label="Drain / month" value={liquidityRunway.drainPerMonth > 0 ? formatLiquidityValue(liquidityRunway.drainPerMonth) : null} /><SignalCell label="Offset ratio" value={Number.isFinite(liquidityRunway.offsetRatio) ? `${liquidityRunway.offsetRatio}×` : null} /></div> : null}<p className="model-footnote">{liquidityRunway?.status === 'calculated' ? `${liquidityRunway.methodology} The Treasury general account is ${liquidityRunway.treasuryDirection ?? 'unavailable'} over the same window.` : liquidityRunway?.methodology ?? 'The runway publishes once the Fed balance sheet and reverse-repo histories both respond.'}</p></article>
+
+      <LiquidityCalendarPanel calendar={data.liquidity?.liquidityCalendar} />
 
       <article className="regional-panel panel"><div className="panel-title"><div><p className="section-kicker">GLOBAL EXTENSION</p><h3>World model calculated</h3></div><span className="data-pill">{globalLiquidity ? `${globalLiquidity.version}` : 'Not calculated'}</span></div>{globalLiquidity ? <div className="calculation-empty regional-empty">The Fed, ECB, BoJ, and PBoC legs are aggregated in USD. PBoC assets arrive via BIS with a publication lag; the Bank of England remains excluded because its series ended in 2014.</div> : <div className="calculation-empty regional-empty">ECB and BoJ histories must be ingested and normalized before a global score can be published.</div>}<button className="source-link" onClick={() => setActiveModel('Global')}>Open global model →</button></article>
     </section> : activeModel === 'Global' ? <section className="liquidity-detail-grid">
@@ -1076,6 +1174,12 @@ function MacroDashboard({ data }) {
     </section> : activeModel === 'Risk' ? <section className="risk-detail-grid">
       <article className="risk-inputs panel"><div className="panel-title"><div><p className="section-kicker">CALCULATED COMPONENTS</p><h3>Independent macro sleeves</h3></div><span className="data-pill">{macroRegime ? `${macroRegime.coverage}% coverage` : 'Unavailable'}</span></div><div className="risk-input-grid">{(macroRegime?.drivers ?? []).map((driver) => <div className="risk-input" key={driver.key}><span className={scoreTone(driver.score)}></span><b>{driver.name}</b><strong>{driver.score ?? '—'}</strong><small>{driver.score === null ? 'Missing' : driver.score > 60 ? 'Supportive' : driver.score < 40 ? 'Restrictive' : 'Balanced'}</small></div>)}</div>{!macroRegime && <div className="calculation-empty">At least two independent macro histories are required.</div>}<p className="model-footnote"><code>macro-regime-v1</code> uses US liquidity, global liquidity, financial conditions, credit, volatility, and inverse dollar pressure. Missing: {macroRegime?.missing?.join(', ') || 'none'}.</p></article>
       <article className="regime-panel panel"><div className="panel-title"><div><p className="section-kicker">DYNAMIC REGIME SETTINGS</p><h3>{macroRegime?.regime ?? 'Regime unavailable'}</h3></div><span className={`data-pill ${macroRegime?.proximity?.borderline ? 'pill-warning' : ''}`}>{macroRegime?.proximity?.borderline ? 'Borderline' : macroRegime?.status ?? 'unavailable'}</span></div>{macroRegime?.vintage?.oldestInput ? <p className="regime-proximity">{`As of ${macroRegime.asOf} — the date of the oldest input still binding on the score (${macroRegime.vintage.oldestInput.name})${macroRegime.vintage.spreadDays ? `, ${macroRegime.vintage.spreadDays} days behind the freshest (${macroRegime.vintage.freshestInput.name})` : ''}.${macroRegime.partialDrivers?.length ? ` ${macroRegime.partialDrivers.join(' and ')} ${macroRegime.partialDrivers.length === 1 ? 'is scoring' : 'are scoring'} on level alone — the 91-day change is unavailable.` : ''}`}</p> : null}{macroRegime?.proximity ? <p className="regime-proximity">{macroRegime.score}/100 · {macroRegime.proximity.higher ? `${macroRegime.proximity.higher.distance} up to ${macroRegime.proximity.higher.regime}` : 'top of the scale'} · {macroRegime.proximity.lower ? `${macroRegime.proximity.lower.distance} down to ${macroRegime.proximity.lower.regime}` : 'bottom of the scale'}.{macroRegime.proximity.borderline ? ' The call is one step from flipping.' : ''}</p> : macroRegime?.panicConfirmed ? <p className="regime-proximity">Panic confirmation overrides the score bands, so distance to a neighbouring regime is not published while it holds.</p> : null}{macroRegime?.settings ? <div className="regime-settings"><div><span>Risk budget</span><b>{macroRegime.settings.riskBudget}</b></div><div><span>Alert threshold</span><b>{macroRegime.settings.alertThreshold}/100</b></div><div><span>Holding period</span><b>{macroRegime.settings.holdingPeriod}</b></div><div><span>Factor emphasis</span><b>{macroRegime.settings.emphasis}</b></div></div> : <div className="calculation-empty">No dynamic settings are published without a regime.</div>}<p className="model-footnote">Stress requires simultaneous VIX, high-yield spread, and financial-condition confirmation. No panic probability is fabricated.</p></article>
+      <RegimeHistoryPanel history={data.liquidity?.regimeHistory} />
+    </section> : activeModel === 'Rates' ? <section className="risk-detail-grid">
+      <YieldCurvePanel curve={data.liquidity?.yieldCurve} />
+      <RatePathPanel ratePath={data.liquidity?.ratePath} />
+      <InflationPanel inflation={data.liquidity?.inflation} />
+      <GrowthNowcastPanel nowcast={data.liquidity?.growthNowcast} />
     </section> : activeModel === 'Correlations' ? <section className="correlation-detail-grid">
       <article className={`correlation-map-panel panel ${regimeCorrelations?.status === 'calculated' ? '' : 'preview-section'}`}><div className="panel-title"><div><p className="section-kicker">{correlationWindow} ROLLING CORRELATION</p><h3>Cross-market relationship map</h3></div><span className="data-pill">{regimeCorrelations?.status === 'calculated' ? `${regimeCorrelations.calculatedCount} of ${rcPairs.length} calculated` : 'Awaiting inputs'}</span></div><div className="correlation-legend"><span><i className="correlation-negative"></i>Inverse</span><span><i className="correlation-neutral"></i>Mixed</span><span><i className="correlation-positive"></i>Positive</span><small>r = Pearson correlation of daily changes</small></div><div className="correlation-rows">{rcPairs.map((pair) => { const value = rcValue(pair); const tone = pair.status !== 'calculated' || !Number.isFinite(value) ? 'correlation-neutral' : correlationTone(value); return <div className="correlation-row" key={pair.key}><b>{pair.left}</b><div className="correlation-link"><i className={tone}></i><span></span><i className={tone}></i></div><b>{pair.right}</b><strong className={tone}>{Number.isFinite(value) ? `${value > 0 ? '+' : ''}${value.toFixed(2)}` : '—'}</strong><small>{pair.status === 'calculated' ? `${pair.observations} obs` : 'Unavailable'}</small><em className={pair.leadLag?.leader ? 'lead-flag' : 'lead-flag lead-flat'} title={pair.leadLag ? `Peak correlation ${pair.leadLag.corrAtBest.toFixed(2)} at a lag of ${pair.leadLag.bestLagBars} observations versus ${Number.isFinite(pair.leadLag.synchronousCorr) ? pair.leadLag.synchronousCorr.toFixed(2) : '—'} synchronous` : 'Lead-lag needs at least 40 aligned observations'}>{pair.leadLag ? pair.leadLag.leader ? `${pair.leadLag.leader} leads ${pair.leadLag.leadDays}d` : 'Moves together' : 'Lead pending'}</em></div>; })}</div><p className="model-footnote"><code>regime-correlation-v1</code> aligns stored FRED and market histories by date and correlates daily changes over 20-day, 60-day, and one-year windows. Pairs without both inputs stay explicitly unavailable. {regimeCorrelations?.leadLagMethodology}</p></article>
       <article className={`correlation-insight-panel panel ${regimeCorrelations?.status === 'calculated' ? '' : 'preview-section'}`}>{regimeCorrelations?.status === 'calculated' && strongestPair ? <>
