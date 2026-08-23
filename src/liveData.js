@@ -190,11 +190,14 @@ export function useEquityResearch(symbol) {
 
 export function formatUsd(value) {
   if (!Number.isFinite(value)) return 'Unavailable';
+  // Magnitude, not sign, decides whether cents are worth showing: keying off
+  // the raw value gave -1234.5 two decimals and +1234.5 one.
+  const small = Math.abs(value) < 100;
   return new Intl.NumberFormat('en-US', {
     style: 'currency',
     currency: 'USD',
-    minimumFractionDigits: value < 100 ? 2 : 0,
-    maximumFractionDigits: value < 100 ? 2 : 2,
+    minimumFractionDigits: small ? 2 : 0,
+    maximumFractionDigits: 2,
   }).format(value);
 }
 
@@ -205,9 +208,13 @@ export function formatPercent(value) {
 
 export function formatTimestamp(timestamp) {
   if (!timestamp) return 'Awaiting provider timestamp';
+  // Intl throws RangeError on an unparseable date, which would take down the
+  // whole panel over one malformed provider field.
+  const parsed = new Date(timestamp);
+  if (Number.isNaN(parsed.getTime())) return 'Provider timestamp unreadable';
   return new Intl.DateTimeFormat('en-US', {
     hour: 'numeric',
     minute: '2-digit',
     timeZoneName: 'short',
-  }).format(new Date(timestamp));
+  }).format(parsed);
 }
