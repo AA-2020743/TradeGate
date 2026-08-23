@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { calculateBasketRotation, calculateBottomSignal, calculateBreadth, calculateBreadthDivergence, calculateDrawdownProfile, calculateEquityRegime, calculateMacroSensitivities, calculateSectorBreadthProxy, calculateSectorDispersion, calculateSectorRotation, calculateTopRisk, rrgQuadrant } from './equityAnalytics.js';
+import { calculateBasketRotation, calculateBottomSignal, calculateBreadth, calculateBreadthDivergence, calculateCaptureProfile, calculateDrawdownProfile, calculateEquityRegime, calculateMacroSensitivities, calculateRevisionBreadth, calculateSectorBreadthProxy, calculateSectorDispersion, calculateSectorRotation, calculateTopRisk, calculateVolatilityTermStructure, rrgQuadrant } from './equityAnalytics.js';
 
 function technicalFixture(overrides = {}) {
   return {
@@ -809,4 +809,274 @@ test('the drawdown profile refuses a history too short to rank', () => {
   const result = calculateDrawdownProfile(dailySeries(100, (index) => 100 + index));
   assert.equal(result.status, 'unavailable');
   assert.match(result.reason, /Needs 250 sessions/);
+});
+
+test('capture separates a sector that defends from one that only lags', () => {
+  const benchmarkMoves = Array.from({ length: 400 }, (_, index) => (index % 2 ? 1 : -1) * (1 + (Math.sin(index / 9) * 0.4)));
+  const build = (up, down) => {
+    let level = 100;
+    return benchmarkMoves.map((move, index) => {
+      level *= 1 + ((move * (move > 0 ? up : down)) / 100);
+      return { timestamp: new Date(Date.UTC(2023, 0, index + 1)).toISOString(), value: level };
+    });
+  };
+  let benchmarkLevel = 100;
+  const benchmark = benchmarkMoves.map((move, index) => {
+    benchmarkLevel *= 1 + (move / 100);
+    return { timestamp: new Date(Date.UTC(2023, 0, index + 1)).toISOString(), value: benchmarkLevel };
+  });
+
+  const defensive = calculateCaptureProfile(build(0.9, 0.5), benchmark);
+  const highBeta = calculateCaptureProfile(build(1.4, 1.4), benchmark);
+  assert.equal(defensive.downCapture < 85, true, `down capture was ${defensive.downCapture}`);
+  assert.equal(highBeta.behaviour, 'High beta');
+  assert.equal(defensive.behaviour === 'Defensive' || defensive.behaviour === 'Defends and participates', true);
+  assert.equal(defensive.captureSpread > highBeta.captureSpread, true);
+});
+
+test('capture refuses a side of the tape it has too few days for', () => {
+  // A benchmark that only ever rises: there are no down days to measure.
+  const rising = Array.from({ length: 300 }, (_, index) => ({
+    timestamp: new Date(Date.UTC(2023, 0, index + 1)).toISOString(),
+    value: 100 * (1.002 ** index),
+  }));
+  const result = calculateCaptureProfile(rising.map((point) => ({ ...point, value: point.value * 1.1 })), rising);
+  assert.equal(result.downCapture, null);
+  assert.equal(result.behaviour, null);
+  assert.equal(result.status, 'provisional');
+  assert.match(result.read, /Fewer than 20 days on one side/);
+});
+
+test('capture reports beta split by direction and the spread of its rolling estimates', () => {
+  const moves = Array.from({ length: 400 }, (_, index) => (index % 2 ? 1.2 : -1.1) + (Math.sin(index / 7) * 0.5));
+  let benchmarkLevel = 100;
+  const benchmark = moves.map((move, index) => {
+    benchmarkLevel *= 1 + (move / 100);
+    return { timestamp: new Date(Date.UTC(2023, 0, index + 1)).toISOString(), value: benchmarkLevel };
+  });
+  // Beta shifts halfway through: a single full-window number would hide it.
+  let level = 100;
+  const shifting = moves.map((move, index) => {
+    level *= 1 + ((move * (index < 200 ? 0.6 : 1.6)) / 100);
+    return { timestamp: new Date(Date.UTC(2023, 0, index + 1)).toISOString(), value: level };
+  });
+  const result = calculateCaptureProfile(shifting, benchmark);
+  assert.equal(Number.isFinite(result.upBeta) && Number.isFinite(result.downBeta), true);
+  assert.equal(result.betaRange.high > result.betaRange.low, true);
+  assert.equal(result.rollingWindows > 0, true);
+  assert.equal(['Drifting', 'Unstable'].includes(result.stability), true, `stability was ${result.stability}`);
+});
+
+test('capture refuses a history that barely overlaps the benchmark', () => {
+  const short = Array.from({ length: 30 }, (_, index) => ({
+    timestamp: new Date(Date.UTC(2024, 0, index + 1)).toISOString(),
+    value: 100 + index,
+  }));
+  assert.equal(calculateCaptureProfile(short, short).status, 'unavailable');
+});
+
+test('the volatility term structure reads a shock as inverted, not as a high-volatility regime', () => {
+  const calm = Array.from({ length: 800 }, (_, index) => 100 * (1.0002 ** index) * (1 + (0.002 * Math.sin(index / 3))));
+  const shocked = [...calm, ...Array.from({ length: 25 }, (_, index) => calm.at(-1) * (1 + (0.05 * Math.sin(index))))];
+  const toPoints = (values) => values.map((value, index) => ({ timestamp: new Date(Date.UTC(2021, 0, index + 1)).toISOString(), value }));
+
+  const quiet = calculateVolatilityTermStructure(toPoints(calm));
+  const shock = calculateVolatilityTermStructure(toPoints(shocked));
+  assert.equal(shock.slope, 'inverted');
+  assert.equal(shock.state, 'Shock in progress');
+  assert.equal(quiet.slope !== 'inverted', true, `quiet slope was ${quiet.slope}`);
+  assert.equal(shock.ratio > quiet.ratio, true);
+});
+
+test('each volatility window is ranked against its own history, not against the others', () => {
+  const points = Array.from({ length: 900 }, (_, index) => ({
+    timestamp: new Date(Date.UTC(2021, 0, index + 1)).toISOString(),
+    value: 100 * (1.0003 ** index) * (1 + (0.01 * Math.sin(index / 11)) + (0.004 * Math.cos(index / 3))),
+  }));
+  const result = calculateVolatilityTermStructure(points);
+  assert.equal(result.terms.length, 3);
+  result.terms.forEach((term) => {
+    assert.equal(Number.isFinite(term.annualizedPercent), true);
+    assert.equal(term.percentile >= 0 && term.percentile <= 100, true);
+    assert.equal(term.rankedAgainst > 0, true);
+  });
+  assert.equal(result.status, 'calculated');
+});
+
+test('the volatility term structure refuses a history shorter than its longest window', () => {
+  const result = calculateVolatilityTermStructure(Array.from({ length: 200 }, (_, index) => ({
+    timestamp: new Date(Date.UTC(2024, 0, index + 1)).toISOString(),
+    value: 100 + index,
+  })));
+  assert.equal(result.status, 'unavailable');
+  assert.match(result.reason, /Needs 254 sessions/);
+  assert.deepEqual(result.terms, []);
+});
+
+test('sector rotation carries a trail of prior quadrant positions, oldest first', () => {
+  const points = (step) => Array.from({ length: 400 }, (_, index) => ({
+    timestamp: new Date(Date.UTC(2023, 0, index + 1)).toISOString(),
+    value: 100 + (index * step) + (Math.sin(index / 9) * 4),
+  }));
+  const rotation = calculateSectorRotation([{ symbol: 'XLK', name: 'Technology', points: points(0.5) }], points(0.25));
+  const trail = rotation.sectors[0].rotation.trail;
+  assert.equal(trail.length, 5);
+  assert.deepEqual(trail.map((point) => point.sessionsAgo), [80, 60, 40, 20, 0]);
+  assert.equal(trail.at(-1).quadrant, rotation.sectors[0].quadrant);
+  assert.equal(rotation.sectors[0].rotation.trailSpansSessions, 80);
+  assert.equal(rotation.sectors[0].rotation.quadrantsVisited >= 1, true);
+});
+
+test('a trail point the history cannot reach is dropped rather than repeated', () => {
+  const points = (step) => Array.from({ length: 130 }, (_, index) => ({
+    timestamp: new Date(Date.UTC(2023, 0, index + 1)).toISOString(),
+    value: 100 + (index * step) + (Math.sin(index / 9) * 3),
+  }));
+  const rotation = calculateSectorRotation([{ symbol: 'XLK', name: 'Technology', points: points(0.5) }], points(0.25));
+  const trail = rotation.sectors[0].rotation.trail;
+  assert.equal(trail.length < 5, true, `trail had ${trail.length} points on 130 sessions`);
+  assert.equal(new Set(trail.map((point) => point.date)).size, trail.length, 'no trail point may be repeated');
+  assert.equal(trail.at(-1).sessionsAgo, 0);
+});
+
+test('the thrust log records each episode once and what the benchmark did next', () => {
+  const endingAt = Date.UTC(2024, 0, 1);
+  const dates = Array.from({ length: 300 }, (_, index) => new Date(endingAt + (index * 86_400_000)).toISOString());
+  // 30 constituents. Sessions 60-110 are broadly negative, then a sharp,
+  // sustained thrust: nearly every name advances for 40 sessions.
+  const advancingOn = (index) => (index >= 60 && index < 110 ? 4 : index >= 110 && index < 150 ? 29 : 15);
+  const constituents = Array.from({ length: 30 }, (_, constituentIndex) => ({
+    symbol: `T${constituentIndex}`,
+    points: dates.map((timestamp, index) => ({ timestamp, value: 100 + (index * 0.05) + (constituentIndex / 1000) })),
+  }));
+  constituents.forEach((constituent, constituentIndex) => {
+    let level = 100;
+    constituent.points = dates.map((timestamp, index) => {
+      level *= 1 + ((constituentIndex < advancingOn(index) ? 0.4 : -0.4) / 100);
+      return { timestamp, value: level };
+    });
+  });
+  const benchmark = dates.map((timestamp, index) => ({ timestamp, value: 100 + (index * 0.2) }));
+
+  const breadth = calculateBreadth(constituents, { benchmark });
+  assert.equal(Array.isArray(breadth.thrustEvents), true);
+  assert.equal(breadth.thrustEvents.length >= 1, true, 'the sustained advance should log at least one thrust');
+  assert.equal(breadth.thrustEvents.length <= 3, true, `one advance logged ${breadth.thrustEvents.length} events`);
+  const event = breadth.thrustEvents[0];
+  assert.equal(event.priorRatio < 40, true);
+  assert.equal(event.triggerRatio >= 61.5, true);
+  assert.equal(event.benchmarkCovered, true);
+  assert.equal(Number.isFinite(event.forward20), true);
+});
+
+test('a thrust with no benchmark history reports a pending outcome, not a zero', () => {
+  const endingAt = Date.UTC(2024, 0, 1);
+  const dates = Array.from({ length: 300 }, (_, index) => new Date(endingAt + (index * 86_400_000)).toISOString());
+  const advancingOn = (index) => (index >= 60 && index < 110 ? 4 : index >= 110 && index < 150 ? 29 : 15);
+  const constituents = Array.from({ length: 30 }, (_, constituentIndex) => {
+    let level = 100;
+    return {
+      symbol: `N${constituentIndex}`,
+      points: dates.map((timestamp, index) => {
+        level *= 1 + ((constituentIndex < advancingOn(index) ? 0.4 : -0.4) / 100);
+        return { timestamp, value: level };
+      }),
+    };
+  });
+  const breadth = calculateBreadth(constituents);
+  assert.equal(breadth.thrustEvents.length >= 1, true);
+  breadth.thrustEvents.forEach((event) => {
+    assert.equal(event.benchmarkCovered, false);
+    assert.equal(event.forward20, null);
+    assert.equal(event.forward60, null);
+  });
+});
+
+test('a tape that never washes out logs no thrust at all', () => {
+  const constituents = Array.from({ length: 30 }, (_, constituentIndex) => ({
+    symbol: `S${constituentIndex}`,
+    points: Array.from({ length: 200 }, (_, index) => ({
+      timestamp: new Date(Date.UTC(2024, 0, index + 1)).toISOString(),
+      value: 100 + (index * 0.2) + (constituentIndex / 100),
+    })),
+  }));
+  assert.deepEqual(calculateBreadth(constituents).thrustEvents, []);
+});
+
+test('revision breadth separates a broad upgrade from a narrow one', () => {
+  const broad = Array.from({ length: 30 }, (_, index) => ({ symbol: `B${index}`, up: 4, down: 1 }));
+  const narrow = [
+    { symbol: 'MEGA1', up: 40, down: 2 },
+    { symbol: 'MEGA2', up: 35, down: 3 },
+    ...Array.from({ length: 28 }, (_, index) => ({ symbol: `S${index}`, up: 1, down: 2 })),
+  ];
+  const broadResult = calculateRevisionBreadth(broad);
+  const narrowResult = calculateRevisionBreadth(narrow);
+  assert.equal(broadResult.state, 'Broad upgrades');
+  assert.equal(broadResult.narrow, false);
+  assert.equal(narrowResult.aggregate > 0, true, 'the pooled revisions lean up');
+  assert.equal(narrowResult.diffusion < 40, true, 'but most names are being cut');
+  assert.equal(narrowResult.narrow, true);
+  assert.match(narrowResult.read, /a few heavily covered names/);
+});
+
+test('a name with no revisions at all is excluded rather than counted as unchanged', () => {
+  const rows = [
+    ...Array.from({ length: 25 }, (_, index) => ({ symbol: `C${index}`, up: 3, down: 1 })),
+    ...Array.from({ length: 10 }, (_, index) => ({ symbol: `U${index}`, up: 0, down: 0 })),
+  ];
+  const result = calculateRevisionBreadth(rows);
+  assert.equal(result.covered, 25);
+  assert.equal(result.universe, 35);
+  assert.equal(result.coverage, 71);
+  assert.equal(result.status, 'provisional');
+  assert.equal(result.diffusion, 100);
+});
+
+test('revision breadth refuses a universe too thinly covered to read', () => {
+  const result = calculateRevisionBreadth(Array.from({ length: 5 }, (_, index) => ({ symbol: `T${index}`, up: 2, down: 1 })));
+  assert.equal(result.status, 'unavailable');
+  assert.match(result.reason, /Needs 20 names/);
+  assert.equal(result.covered, 5);
+});
+
+test('revision breadth scores on the same 0-100 axis as the other equity drivers', () => {
+  const up = calculateRevisionBreadth(Array.from({ length: 30 }, (_, index) => ({ symbol: `U${index}`, up: 9, down: 1 })));
+  const down = calculateRevisionBreadth(Array.from({ length: 30 }, (_, index) => ({ symbol: `D${index}`, up: 1, down: 9 })));
+  assert.equal(up.score > 70, true);
+  assert.equal(down.score < 30, true);
+  assert.equal(up.state, 'Broad upgrades');
+  assert.equal(down.state, 'Broad downgrades');
+});
+
+test('a sector that rallies as the benchmark falls is inverse, not defensive', () => {
+  const moves = Array.from({ length: 400 }, (_, index) => ((index % 2 ? 1 : -1) * 1.2) + (Math.sin(index / 8) * 0.3));
+  let benchmarkLevel = 100;
+  const benchmark = moves.map((move, index) => {
+    benchmarkLevel *= 1 + (move / 100);
+    return { timestamp: new Date(Date.UTC(2023, 0, index + 1)).toISOString(), value: benchmarkLevel };
+  });
+  let level = 100;
+  const opposed = moves.map((move, index) => {
+    level *= 1 - ((move * 1.3) / 100);
+    return { timestamp: new Date(Date.UTC(2023, 0, index + 1)).toISOString(), value: level };
+  });
+  const result = calculateCaptureProfile(opposed, benchmark);
+  assert.equal(result.downCapture < 0, true, `down capture was ${result.downCapture}`);
+  assert.equal(result.inverse, true);
+  assert.equal(result.behaviour, 'Inverse to the benchmark');
+  assert.match(result.read, /moves against the benchmark/);
+});
+
+test('the volatility ratio survives a long window that rounds to zero', () => {
+  // A market so quiet every window rounds to 0.0% for display. The term
+  // structure must still come from the measured values.
+  const points = Array.from({ length: 800 }, (_, index) => ({
+    timestamp: new Date(Date.UTC(2021, 0, index + 1)).toISOString(),
+    value: 100 * (1 + (0.0000004 * Math.sin(index / 3))),
+  }));
+  const result = calculateVolatilityTermStructure(points);
+  assert.equal(result.terms.every((term) => term.annualizedPercent === 0), true, 'every displayed window should round to zero');
+  assert.equal(Number.isFinite(result.ratio), true, 'the ratio must not be lost to the rounding');
+  assert.equal(result.slope !== null, true);
 });

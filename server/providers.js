@@ -3,6 +3,7 @@ import { withCache } from './cache.js';
 import { settle, unwrap } from './settled.js';
 import { calculateBreadthDivergence } from './equityAnalytics.js';
 import { calculateBitcoinTechnicals, calculateMovingAverageStack } from './bitcoinTechnicals.js';
+import { calculateRevisionBreadth, calculateThrustLog } from './equityAnalytics.js';
 import { calculateBitcoinRangeModels } from './bitcoinOhlc.js';
 import { buildCoingeckoRequest, buildHeatmapRow, buildSocrataRequest, buildLiquidityNarrative, buildLiquidityTransmission, buildWorkspaceNarrative, calculateBitcoinCyclePhase, calculateChangeCorrelations, calculateCryptoRotation, calculateDollarScenarios, calculateDollarTransmissionRead, calculateLeadLag, calculateLiquidityRunway, calculateOpenInterestQuadrant, calculatePositioningModel, calculateCrossMarketRelationship, calculateGlobalLiquidityModel, calculateHeatmapRisk, calculateMacroRegimeModel, calculateMetalsCostStructure, calculateRsi, calculateScreenerScores, calculateTechnicalSnapshot, calculateTrendQuality, classifyHeadlineSentiment, calculateUsdStrengthModel, calculateUsLiquidityModel } from './analytics.js';
 import { getStoredFredSeries, getStoredMarketHistory, getStoredMarketSnapshot, getRecentModelOutputs, isDatabaseConfigured, reserveProviderCredits } from './database.js';
@@ -907,6 +908,75 @@ export function alignedRatioSeries(left, right) {
 // Sessions of advance/decline history compared against the index when asking
 // whether participation confirms the tape.
 const BREADTH_DIVERGENCE_WINDOW = 60;
+// A thrust needs 20 sessions of setup and up to 60 more before its outcome is
+// known, so the log runs on a full year of spark closes rather than the
+// 60-session window the divergence read uses.
+const BREADTH_THRUST_WINDOW = 250;
+
+// A bounded universe: the whole S&P 500 would be 500 single-symbol requests,
+// which is neither polite nor fast enough to sit behind a dashboard. The
+// published model reports how much of the index this actually covers.
+const REVISION_UNIVERSE_SIZE = 60;
+const REVISION_CONCURRENCY = 6;
+
+async function mapWithConcurrency(items, limit, worker) {
+  const results = new Array(items.length);
+  let cursor = 0;
+  const runners = Array.from({ length: Math.min(limit, items.length) }, async () => {
+    while (cursor < items.length) {
+      const index = cursor;
+      cursor += 1;
+      results[index] = await worker(items[index]).catch(() => null);
+    }
+  });
+  await Promise.all(runners);
+  return results;
+}
+
+/**
+ * Analyst EPS-revision counts per name, from Yahoo's earningsTrend module.
+ *
+ * This endpoint is frequently gated behind a crumb/cookie handshake that this
+ * deployment cannot complete. When it is, the loader returns no rows and the
+ * model above it reports unavailable naming the reason - it does not fall back
+ * to price momentum dressed up as a fundamental reading.
+ */
+export async function getEarningsRevisionBreadth() {
+  return withCache('analytics:revision-breadth', 12 * 3_600_000, async () => {
+    let universe = [];
+    try {
+      universe = (await getSpxConstituents()).slice(0, REVISION_UNIVERSE_SIZE);
+    } catch (error) {
+      return {
+        model: calculateRevisionBreadth([], { requested: 0 }),
+        universeRequested: 0,
+        reason: `The S&P 500 constituent list is required before revisions can be counted: ${error.message}`,
+        source: null,
+      };
+    }
+
+    const rows = await mapWithConcurrency(universe, REVISION_CONCURRENCY, async (symbol) => {
+      const url = `https://query1.finance.yahoo.com/v10/finance/quoteSummary/${encodeURIComponent(symbol)}?modules=earningsTrend`;
+      const payload = await fetchJson(url, 0, 1, BROWSER_HEADERS);
+      const trends = payload?.quoteSummary?.result?.[0]?.earningsTrend?.trend ?? [];
+      // The current-year estimate is the one with a meaningful revision count;
+      // the next-quarter row is too thinly covered to read across a universe.
+      const currentYear = trends.find((trend) => trend?.period === '0y') ?? trends[0];
+      const revisions = currentYear?.epsRevisions ?? {};
+      const up = asNumber(revisions.upLast30days?.raw ?? revisions.upLast30days);
+      const down = asNumber(revisions.downLast30days?.raw ?? revisions.downLast30days);
+      return up === null && down === null ? null : { symbol, up: up ?? 0, down: down ?? 0 };
+    });
+
+    const covered = rows.filter(Boolean);
+    return {
+      model: calculateRevisionBreadth(covered, { requested: universe.length }),
+      universeRequested: universe.length,
+      reason: covered.length ? null : 'Yahoo\'s earningsTrend module returned no revision counts, which is what a crumb-gated response looks like from this deployment.',
+      source: covered.length ? 'Yahoo Finance earningsTrend, current-year EPS revisions over 30 days' : null,
+    };
+  });
+}
 
 export async function getEquityRiskAppetite() {
   return withCache('analytics:equity-risk', 6 * 3_600_000, async () => {
@@ -959,6 +1029,10 @@ export async function getEquityRiskAppetite() {
         // below into an advance/decline line. The closes are already loaded,
         // so this costs one pass rather than another provider round trip.
         const netAdvances = new Array(BREADTH_DIVERGENCE_WINDOW).fill(0);
+        // Advances and observed names per session over the longer thrust window,
+        // accumulated in the same pass as everything else.
+        const thrustAdvances = new Array(BREADTH_THRUST_WINDOW).fill(0);
+        const thrustObserved = new Array(BREADTH_THRUST_WINDOW).fill(0);
         for (const symbol of symbols) {
           const closes = closesBySymbol.get(symbol);
           if (!closes || closes.length < 200) continue;
@@ -967,6 +1041,13 @@ export async function getEquityRiskAppetite() {
           for (let index = 1; index < window.length; index += 1) {
             const slot = BREADTH_DIVERGENCE_WINDOW - (window.length - index);
             if (slot >= 0 && window[index - 1] > 0) netAdvances[slot] += window[index] > window[index - 1] ? 1 : -1;
+          }
+          const thrustWindow = closes.slice(-(BREADTH_THRUST_WINDOW + 1));
+          for (let index = 1; index < thrustWindow.length; index += 1) {
+            const slot = BREADTH_THRUST_WINDOW - (thrustWindow.length - index);
+            if (slot < 0 || !(thrustWindow[index - 1] > 0)) continue;
+            thrustObserved[slot] += 1;
+            if (thrustWindow[index] > thrustWindow[index - 1]) thrustAdvances[slot] += 1;
           }
           const latest = closes.at(-1);
           if (latest > smaOf(closes, 200)) above200 += 1;
@@ -985,6 +1066,8 @@ export async function getEquityRiskAppetite() {
           const advanceDeclineLine = netAdvances.map((net) => (runningLine += net));
           const benchmarkCloses = closesBySymbol.get('SPY') ?? [];
           const divergence = calculateBreadthDivergence(advanceDeclineLine, benchmarkCloses.slice(-BREADTH_DIVERGENCE_WINDOW), { lookback: BREADTH_DIVERGENCE_WINDOW });
+          const advanceRatios = thrustObserved.map((observed, index) => (observed ? thrustAdvances[index] / observed : null));
+          const thrustEvents = calculateThrustLog(advanceRatios, benchmarkCloses.slice(-BREADTH_THRUST_WINDOW));
           const pctAbove200 = Math.round((above200 / counted) * 100);
           const pctAbove50 = Math.round((above50 / counted) * 100);
           const participation = (pctAbove50 * 0.6) + (pctAbove200 * 0.4);
@@ -1005,6 +1088,8 @@ export async function getEquityRiskAppetite() {
             bottomScore: Math.round(((100 - participation) * 0.7) + (Math.max(thrust20 ?? 0, 0) * 3)),
             read: pctAbove200 >= 60 ? 'Broad participation' : pctAbove200 <= 40 ? 'Narrow market' : 'Mixed breadth',
             divergence,
+            thrustEvents,
+            thrustWindowSessions: BREADTH_THRUST_WINDOW,
           };
         } else {
           spxBreadth = { status: 'unavailable', reason: `Only ${counted} of ${symbols.length} constituents returned usable history.` };

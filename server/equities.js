@@ -1,6 +1,6 @@
 import { getStoredMarketHistories, getStoredSeriesCoverage, isDatabaseConfigured } from './database.js';
 import { calculateTechnicalSnapshot } from './analytics.js';
-import { calculateBottomSignal, calculateBasketRotation, calculateDrawdownProfile, calculateEquityRegime, calculateMacroSensitivities, calculateSectorBreadthProxy, calculateSectorDispersion, calculateSectorRotation, calculateTopRisk } from './equityAnalytics.js';
+import { calculateBottomSignal, calculateBasketRotation, calculateCaptureProfile, calculateDrawdownProfile, calculateEquityRegime, calculateMacroSensitivities, calculateSectorBreadthProxy, calculateSectorDispersion, calculateSectorRotation, calculateTopRisk, calculateVolatilityTermStructure } from './equityAnalytics.js';
 import {
   attachSeriesCoverage,
   breadthRequirements,
@@ -10,7 +10,7 @@ import {
   sentimentRequirements,
   subsectorCatalog,
 } from './equityCatalog.js';
-import { getEquityLongHistory, getEquityRiskAppetite, getLiquiditySnapshot, getMarketHistory, getTechnicalSnapshot } from './providers.js';
+import { getEarningsRevisionBreadth, getEquityLongHistory, getEquityRiskAppetite, getLiquiditySnapshot, getMarketHistory, getTechnicalSnapshot } from './providers.js';
 import { isDailyCloseStale } from './freshness.js';
 
 const unavailableBreadth = {
@@ -58,12 +58,13 @@ export async function getEquityDashboard(requestedSymbol = 'SPY') {
   const index = indexCatalog.find((item) => item.symbol === symbol);
   if (!index) throw new Error(`Unsupported equity index proxy: ${symbol}`);
 
-  const [technicalResult, liquidityResult, riskAppetiteResult, liveTechnicalResult, longHistoryResult] = await Promise.allSettled([
+  const [technicalResult, liquidityResult, riskAppetiteResult, liveTechnicalResult, longHistoryResult, revisionsResult] = await Promise.allSettled([
     getStoredTechnicalSnapshot(symbol),
     getLiquiditySnapshot(),
     getEquityRiskAppetite(),
     getMarketHistory(symbol, '1Y', { preferStored: false }),
     getEquityLongHistory(symbol),
+    getEarningsRevisionBreadth(),
   ]);
   const technical = technicalResult.status === 'fulfilled' ? technicalResult.value : null;
   const liquidity = liquidityResult.status === 'fulfilled' ? liquidityResult.value : null;
@@ -91,6 +92,12 @@ export async function getEquityDashboard(requestedSymbol = 'SPY') {
   const drawdown = drawdownHistory.length
     ? { ...calculateDrawdownProfile(drawdownHistory), source: drawdownSource }
     : { version: 'equity-drawdown-profile-v1', status: 'unavailable', reason: `A ${symbol} daily close history is required to place the current drawdown against its own past: ${longHistoryResult.reason?.message ?? 'no history responded'}`, observations: 0, source: null };
+  const volatility = drawdownHistory.length
+    ? calculateVolatilityTermStructure(drawdownHistory)
+    : { version: 'equity-volatility-term-v1', status: 'unavailable', reason: `A ${symbol} daily close history is required for the volatility term structure.`, observations: 0, terms: [] };
+  const revisions = revisionsResult.status === 'fulfilled'
+    ? { ...revisionsResult.value.model, source: revisionsResult.value.source, universeRequested: revisionsResult.value.universeRequested, reason: revisionsResult.value.model.reason ?? revisionsResult.value.reason }
+    : { version: 'equity-revision-breadth-v1', status: 'unavailable', reason: `Analyst revision counts are unreachable: ${revisionsResult.reason?.message ?? revisionsResult.reason}`, source: null };
   const regime = calculateEquityRegime({ technical: usableTechnical, liquidity: liquidity?.model, breadth: constituentBreadth });
   const topRisk = calculateTopRisk({ technical: usableTechnical, breadth: constituentBreadth, liquidity: liquidity?.model });
   const bottomSignal = calculateBottomSignal({ technical: usableTechnical, breadth: constituentBreadth, liquidity: liquidity?.model });
@@ -102,6 +109,8 @@ export async function getEquityDashboard(requestedSymbol = 'SPY') {
     technical,
     regime,
     drawdown,
+    volatility,
+    revisions,
     topRisk,
     bottomSignal,
     breadth: constituentBreadth,
@@ -125,6 +134,13 @@ export async function getEquityDashboard(requestedSymbol = 'SPY') {
         status: liquidity?.model ? 'available' : 'unavailable',
         source: liquidity?.model?.version ?? null,
         asOf: liquidity?.model?.asOf ?? null,
+      },
+      {
+        name: 'Analyst EPS revisions',
+        status: revisions.status === 'calculated' ? 'available' : revisions.status === 'provisional' ? 'partial' : 'unavailable',
+        source: revisions.source ?? null,
+        asOf: null,
+        disclosure: revisions.status === 'unavailable' ? revisions.reason : `${revisions.covered} of ${revisions.universeRequested ?? revisions.universe} sampled S&P 500 names carried a revision count.`,
       },
       {
         name: 'Constituent breadth',
@@ -217,6 +233,14 @@ export async function getSectorDashboard() {
       .filter((sector) => historyIsFresh(histories.get(sector.symbol) ?? [])),
     normalizeStoredPoints(usableBenchmarkHistory),
   );
+
+  // Capture is measured against the same fresh benchmark rotation uses, so a
+  // sector's defensive claim is checked on the days the benchmark actually fell.
+  const captureBenchmark = normalizeStoredPoints(usableBenchmarkHistory);
+  const captureProfiles = sectorCatalog.map((sector) => {
+    const points = historyIsFresh(histories.get(sector.symbol) ?? []) ? normalizeStoredPoints(histories.get(sector.symbol)) : [];
+    return { symbol: sector.symbol, name: sector.name, ...calculateCaptureProfile(points, captureBenchmark) };
+  });
 
   const stylePairs = [
     { key: 'growthValue', leftName: 'Growth (QQQ)', rightName: 'Value tilt (DIA)', leftSymbols: ['QQQ'], rightSymbols: ['DIA'], leftLeader: 'Growth', rightLeader: 'Value' },

@@ -488,9 +488,17 @@ function RotationCell({ rotation }) {
   const label = rotation.moved
     ? `${SHORT_QUADRANT[rotation.previousQuadrant] ?? rotation.previousQuadrant} → ${SHORT_QUADRANT[rotation.quadrant] ?? rotation.quadrant}`
     : rotation.direction;
+  // The trail is the arc the sector travelled, oldest first. A single prior
+  // reading cannot separate a sector arriving in leadership from one that has
+  // been circling its edge for a quarter, so the whole path is in the tooltip.
+  const trail = rotation.trail ?? [];
+  const path = trail.length > 1
+    ? trail.map((point) => SHORT_QUADRANT[point.quadrant] ?? point.quadrant).join(' → ')
+    : rotation.path;
+  const span = trail.length > 1 ? ` over ${rotation.trailSpansSessions} sessions (${trail.length} points, oldest first)` : ` over ${rotation.lookbackSessions} sessions`;
   return <em
     className={`rotation-cell ${rotation.direction === 'Strengthening' ? 'rotation-up' : rotation.direction === 'Fading' ? 'rotation-down' : 'rotation-flat'}`}
-    title={`${rotation.path} over ${rotation.lookbackSessions} sessions · 20-session excess return ${shift}`}
+    title={`${path}${span} · 20-session excess return ${shift}${rotation.quadrantsVisited > 1 ? ` · ${rotation.quadrantsVisited} quadrants visited` : ' · held one quadrant throughout'}`}
   >{label}</em>;
 }
 
@@ -529,12 +537,109 @@ function DrawdownProfilePanel({ drawdown }) {
     <div className="panel-title"><div><p className="section-kicker">DRAWDOWN PROFILE · {status.toUpperCase()}</p><h3>{published ? drawdown.state : 'Awaiting a multi-year close history'}</h3></div>{published ? <span className="data-pill">{drawdown.observations} sessions</span> : null}</div>
     {published ? <>
       <div className="detail-score"><span>Below the running peak</span><b>{drawdown.drawdownPercent}%</b><small>{drawdown.inDrawdown ? `${drawdown.sessionsSincePeak} sessions since the ${drawdown.peakDate} peak of ${drawdown.peak}` : `New high — this history spent ${drawdown.underwaterSharePercent}% of its sessions below a prior peak`}</small></div>
-      <div className="equity-rotation-row styles-row"><span><strong>Depth percentile</strong><small>Against every session in this history</small></span><b>{drawdown.depthPercentile}%</b></div>
-      <div className="equity-rotation-row styles-row"><span><strong>Completed episodes</strong><small>{Number.isFinite(drawdown.medianCompletedTrough) ? `Median trough ${drawdown.medianCompletedTrough}%` : 'None completed inside this window'}</small></span><b>{drawdown.completedEpisodes}</b></div>
-      <div className="equity-rotation-row styles-row"><span><strong>Worst completed episode</strong><small>{drawdown.deepest ? `From the ${drawdown.deepest.peakDate} peak · ${drawdown.deepest.recoverySessions} sessions to recover` : 'No episode has completed inside this window'}</small></span><b>{drawdown.deepest ? `${drawdown.deepest.trough}%` : '—'}</b></div>
+      <div className="stat-row"><span><strong>Depth percentile</strong><small>Against every session in this history</small></span><b>{ordinal(drawdown.depthPercentile)}</b></div>
+      <div className="stat-row"><span><strong>Completed episodes</strong><small>{Number.isFinite(drawdown.medianCompletedTrough) ? `Median trough ${drawdown.medianCompletedTrough}%` : 'None completed inside this window'}</small></span><b>{drawdown.completedEpisodes}</b></div>
+      <div className="stat-row"><span><strong>Worst completed episode</strong><small>{drawdown.deepest ? `From the ${drawdown.deepest.peakDate} peak · ${drawdown.deepest.recoverySessions} sessions to recover` : 'No episode has completed inside this window'}</small></span><b>{drawdown.deepest ? `${drawdown.deepest.trough}%` : '—'}</b></div>
     </> : <div className="equity-empty">{drawdown?.reason ?? 'A multi-year daily close history is required.'}</div>}
     <p className="model-footnote">{published ? `${drawdown.read} Measured on ${drawdown.source ?? 'the available close history'}.` : ''} {drawdown?.methodology ?? ''}</p>
   </article>;
+}
+
+/**
+ * Realized volatility at three horizons, each against its own past. A short
+ * window above a long one is a shock in progress, which is a different tape
+ * from a market that has simply been volatile all year.
+ */
+/** 1st, 2nd, 3rd, 4th — "43th" is the giveaway that a suffix was hardcoded. */
+function ordinal(value) {
+  if (!Number.isFinite(value)) return '—';
+  const lastTwo = Math.abs(value) % 100;
+  if (lastTwo >= 11 && lastTwo <= 13) return `${value}th`;
+  return `${value}${{ 1: 'st', 2: 'nd', 3: 'rd' }[Math.abs(value) % 10] ?? 'th'}`;
+}
+
+function VolatilityTermPanel({ volatility }) {
+  const status = volatility?.status ?? 'unavailable';
+  const published = status !== 'unavailable';
+  return <article className={`panel ${published ? '' : 'preview-section'}`}>
+    <div className="panel-title"><div><p className="section-kicker">VOLATILITY TERM STRUCTURE · {status.toUpperCase()}</p><h3>{published ? volatility.state ?? 'Term structure incomplete' : 'Awaiting a multi-year close history'}</h3></div>{published && Number.isFinite(volatility.ratio) ? <span className="data-pill">{volatility.ratio} short/long</span> : null}</div>
+    {published ? (volatility.terms ?? []).map((term) => <div className="stat-row" key={term.window}>
+      <span><strong>{`${term.window}-session realized`}</strong><small>{Number.isFinite(term.percentile) ? `${ordinal(term.percentile)} percentile of ${term.rankedAgainst} readings` : `Ranked against only ${term.rankedAgainst} readings`}</small></span>
+      <b>{Number.isFinite(term.annualizedPercent) ? `${term.annualizedPercent}%` : '—'}</b>
+    </div>) : <div className="equity-empty">{volatility?.reason ?? 'A multi-year daily close history is required.'}</div>}
+    <p className="model-footnote">{published ? volatility.read : ''} {volatility?.methodology ?? ''}</p>
+  </article>;
+}
+
+/**
+ * Analyst EPS revisions — the one leg here that can disagree with price for a
+ * fundamental reason. Diffusion is how broad the revision is, the aggregate how
+ * large; when they part company a few heavily covered names are carrying it.
+ */
+function RevisionBreadthPanel({ revisions }) {
+  const status = revisions?.status ?? 'unavailable';
+  const published = status !== 'unavailable';
+  return <article className={`panel ${published ? '' : 'preview-section'}`}>
+    <div className="panel-title"><div><p className="section-kicker">EARNINGS REVISION BREADTH · {status.toUpperCase()}</p><h3>{published ? revisions.state : 'Awaiting analyst revision counts'}</h3></div>{published ? <span className="data-pill">{revisions.coverage}% of {revisions.universeRequested ?? revisions.universe} sampled</span> : null}</div>
+    {published ? <>
+      <div className="detail-score"><span>Aggregate revision balance</span><b>{revisions.aggregate > 0 ? '+' : ''}{revisions.aggregate}%</b><small>{`${revisions.totalUp} raises against ${revisions.totalDown} cuts across ${revisions.covered} names`}</small></div>
+      <div className="stat-row"><span><strong>Diffusion</strong><small>{`${revisions.raised} raised · ${revisions.cut} cut · ${revisions.unchangedNames} balanced`}</small></span><b>{revisions.diffusion}%</b></div>
+      <div className="stat-row"><span><strong>Most raised</strong><small>{(revisions.mostRaised ?? []).map((row) => `${row.symbol} ${row.net > 0 ? '+' : ''}${row.net}%`).join(' · ') || '—'}</small></span><b>{revisions.mostRaised?.[0]?.symbol ?? '—'}</b></div>
+      <div className="stat-row"><span><strong>Most cut</strong><small>{(revisions.mostCut ?? []).map((row) => `${row.symbol} ${row.net > 0 ? '+' : ''}${row.net}%`).join(' · ') || '—'}</small></span><b>{revisions.mostCut?.[0]?.symbol ?? '—'}</b></div>
+    </> : <div className="equity-empty">{revisions?.reason ?? 'Analyst revision counts are required.'}</div>}
+    <p className="model-footnote">{published ? `${revisions.read} Source: ${revisions.source ?? 'unnamed'}.` : ''} {revisions?.methodology ?? ''}</p>
+  </article>;
+}
+
+/**
+ * Past breadth thrusts and what the benchmark did next. A live boolean says one
+ * fired today; the log says whether they have meant anything here.
+ */
+function ThrustLogPanel({ breadth }) {
+  const events = breadth?.thrustEvents ?? null;
+  const published = Array.isArray(events);
+  return <article className={`panel ${published ? '' : 'preview-section'}`}>
+    <div className="panel-title"><div><p className="section-kicker">BREADTH THRUST LOG · {published ? 'CALCULATED' : 'UNAVAILABLE'}</p><h3>{!published ? 'Awaiting constituent breadth' : events.length ? `${events.length} thrust${events.length === 1 ? '' : 's'} in the last ${breadth.thrustWindowSessions ?? '250'} sessions` : `No thrust in the last ${breadth.thrustWindowSessions ?? '250'} sessions`}</h3></div>{breadth?.thrustTriggered ? <span className="data-pill">Firing now</span> : null}</div>
+    {published && events.length ? <>
+      <div className="stat-head"><span>Episode</span><span>Benchmark after</span></div>
+      {events.map((event) => <div className="stat-row" key={event.index}>
+        <span><strong>{event.date ?? `${event.sessionsAgo} sessions ago`}</strong><small>{`${event.priorRatio}% advancing into it, ${event.triggerRatio}% out of it`}</small></span>
+        <b className={Number.isFinite(event.forward60) ? (event.forward60 >= 0 ? 'positive' : 'negative') : ''}>{Number.isFinite(event.forward20) ? `${event.forward20 > 0 ? '+' : ''}${event.forward20}% / ` : 'pending / '}{Number.isFinite(event.forward60) ? `${event.forward60 > 0 ? '+' : ''}${event.forward60}%` : 'pending'}</b>
+      </div>)}
+    </> : <div className="equity-empty">{published ? 'A thrust needs the ten-session advance ratio to cross from below 40% to at or above 61.5%; that has not happened inside the window.' : 'Constituent breadth is required before past thrusts can be logged.'}</div>}
+    <p className="model-footnote">Forward figures are the benchmark's return 20 and 60 sessions after the trigger; an episode too recent for its window to have closed reports pending rather than a truncated number. One sustained advance is logged once — the scan re-arms only after the tape washes out again.</p>
+  </article>;
+}
+
+/**
+ * Whether a sector labelled defensive actually defends. Capture is measured on
+ * the days the benchmark rose and fell, and beta is reported with the spread of
+ * its own rolling estimates, so a relationship that changed inside the window
+ * cannot hide behind one number.
+ */
+function CaptureProfileSection({ capture }) {
+  const status = capture?.status ?? 'unavailable';
+  const rows = (capture?.sectors ?? []).filter((row) => row.status !== 'unavailable');
+  return <>
+    <section className="equity-section-heading"><div><p className="section-kicker">UP / DOWN CAPTURE · {status.toUpperCase()}</p><h2>Which sectors actually defend</h2></div><span className="data-pill">vs {capture?.benchmark ?? 'SPY'}</span></section>
+    <section className="equity-macro-matrix">
+      <article className="equity-rotation-panel panel wide">
+        {rows.length ? <>
+          <div className="equity-rotation-head capture-head"><span>Sector</span><span>Up capture</span><span>Down capture</span><span>Spread</span><span>Beta</span><span>Rolling beta</span><span>Behaviour</span></div>
+          {rows.map((row) => <div className="equity-rotation-row capture-row" key={row.symbol}>
+            <span><strong>{row.name}</strong><small>{`${row.symbol} · ${row.upDays}↑ / ${row.downDays}↓ days`}</small></span>
+            <b>{Number.isFinite(row.upCapture) ? `${row.upCapture}%` : '—'}</b>
+            <b className={!Number.isFinite(row.downCapture) || row.inverse ? '' : row.downCapture < 85 ? 'positive' : row.downCapture > 110 ? 'negative' : ''}>{Number.isFinite(row.downCapture) ? `${row.downCapture}%` : '—'}</b>
+            <span className={Number.isFinite(row.captureSpread) ? (row.captureSpread >= 0 ? 'positive' : 'negative') : 'neutral'}>{Number.isFinite(row.captureSpread) ? `${row.captureSpread > 0 ? '+' : ''}${row.captureSpread}` : '—'}</span>
+            <span>{Number.isFinite(row.beta) ? row.beta : '—'}</span>
+            <small>{row.betaRange ? `${row.stability} · ${row.betaRange.low}–${row.betaRange.high}` : 'not yet rankable'}</small>
+            <i>{row.behaviour ?? 'insufficient days'}</i>
+          </div>)}
+        </> : <div className="equity-empty">{capture?.sectors?.[0]?.reason ?? 'Fresh sector histories aligned with the benchmark are required before capture can be measured.'}</div>}
+        <p className="equity-source-line">{rows[0]?.methodology ?? ''}</p>
+      </article>
+    </section>
+  </>;
 }
 
 function EquitiesDashboard({ platformData }) {
@@ -581,6 +686,9 @@ function EquitiesDashboard({ platformData }) {
       <EquitySignalCard kicker="BOTTOM / RALLY DETECTION" title="Bottom signal unavailable" model={dashboard?.bottomSignal} empty="Bottom detection requires a breadth washout/thrust plus technical and macro confirmation." />
       <EquitySignalCard kicker="CONSTITUENT BREADTH" title={dashboard?.breadth?.status === 'calculated' ? 'Calculated breadth' : dashboard?.breadth?.status === 'partial' ? 'Partial breadth' : 'Breadth unavailable'} model={dashboard?.breadth} empty={dashboard?.breadth?.reason ?? 'Constituent histories are not connected.'} coverageLabel="constituent coverage" />
       <DrawdownProfilePanel drawdown={dashboard?.drawdown} />
+      <VolatilityTermPanel volatility={dashboard?.volatility} />
+      <RevisionBreadthPanel revisions={dashboard?.revisions} />
+      <ThrustLogPanel breadth={dashboard?.breadth} />
     </section>
 
     <section className="equity-regime-layout">
@@ -599,6 +707,7 @@ function EquitiesDashboard({ platformData }) {
     {rotation?.subsectors?.length ? <section className="equity-subsector-rotation"><article className="equity-rotation-panel panel wide"><div className="equity-rotation-head subsector-head"><span>Rank</span><span>Subsector</span><span>Group</span><span>Quadrant</span><span>Rotation 20D</span><span>20D vs SPY</span><span>60D vs SPY</span><span>Score</span></div>{rotation.subsectors.map((row) => <div className="equity-rotation-row subsector-row" key={row.symbol}><b>{row.rank}</b><span><strong>{row.name}</strong><small>{row.symbol}</small></span><small>{row.group}</small><i className={row.quadrant ? row.quadrant.toLowerCase() : 'neutral'}>{row.quadrant ?? '—'}</i><RotationCell rotation={row.rotation} /><span className={row.relative20 >= 0 ? 'positive' : 'negative'}>{formatPercent(row.relative20)}</span><span className={row.relative60 >= 0 ? 'positive' : 'negative'}>{formatPercent(row.relative60)}</span><b>{row.score}</b></div>)}<p className="equity-source-line">Ranks are global across all {rotation.sectors.length + rotation.subsectors.length} tracked ETF proxies. Quadrants use 20- and 60-session relative performance versus SPY.</p></article></section> : null}
 
     <SectorDispersionSection dispersion={sectorData?.dispersion} />
+    <CaptureProfileSection capture={sectorData?.capture} />
 
     <section className="equity-section-heading"><div><p className="section-kicker">MACRO SENSITIVITY MATRIX · CALCULATED</p><h2>How each ETF trades against macro drivers</h2></div><span className="data-pill">{sectorData?.macroSensitivity?.window ?? '60 aligned changes'}</span></section>
     <section className="equity-macro-matrix">

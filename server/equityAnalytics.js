@@ -328,6 +328,67 @@ export function calculateBottomSignal({ technical, breadth, sentiment, positioni
   };
 }
 
+const THRUST_OVERSOLD = 0.4;
+const THRUST_TRIGGER = 0.615;
+const THRUST_FORWARD_WINDOWS = [20, 60];
+const THRUST_SETUP_SESSIONS = 10;
+
+/**
+ * Every point in a run of sessions where the ten-session advance ratio crossed
+ * from below 40% to at or above 61.5%, with what the benchmark did next. A live
+ * boolean says a thrust fired today and nothing about whether thrusts here have
+ * meant anything; the log answers the second question, on however few episodes
+ * the window happens to contain.
+ *
+ * `advanceRatios` and `benchmarkValues` are index-aligned session series. A
+ * forward return is only measured where the benchmark extends past the event,
+ * so a recent trigger reports a pending outcome rather than a truncated one.
+ */
+export function calculateThrustLog(advanceRatios, benchmarkValues = [], { dates = [] } = {}) {
+  const ratios = advanceRatios ?? [];
+  const events = [];
+  const total = ratios.length;
+  if (total < THRUST_SETUP_SESSIONS * 2) return events;
+  const windowMean = (start, end) => {
+    const slice = ratios.slice(start, end).filter(Number.isFinite);
+    return slice.length === end - start ? mean(slice) : null;
+  };
+
+  let armed = true;
+  for (let end = THRUST_SETUP_SESSIONS * 2; end <= total; end += 1) {
+    const recent = windowMean(end - THRUST_SETUP_SESSIONS, end);
+    const prior = windowMean(end - (THRUST_SETUP_SESSIONS * 2), end - THRUST_SETUP_SESSIONS);
+    if (recent === null || prior === null) continue;
+    if (prior >= THRUST_OVERSOLD) {
+      // Re-arm only once the tape washes out again, so one sustained advance is
+      // logged as a single episode rather than as ten consecutive ones.
+      if (recent < THRUST_OVERSOLD) armed = true;
+      continue;
+    }
+    if (!armed) continue;
+    if (recent < THRUST_TRIGGER) continue;
+    const index = end - 1;
+    const start = benchmarkValues[index];
+    const forward = Object.fromEntries(THRUST_FORWARD_WINDOWS.map((horizon) => {
+      const finish = benchmarkValues[index + horizon];
+      return [`forward${horizon}`, Number.isFinite(start) && start > 0 && Number.isFinite(finish)
+        ? Math.round(((finish / start) - 1) * 1000) / 10
+        : null];
+    }));
+    events.push({
+      index,
+      sessionsAgo: total - 1 - index,
+      date: dates[index] ?? null,
+      priorRatio: Math.round(prior * 1000) / 10,
+      triggerRatio: Math.round(recent * 1000) / 10,
+      ...forward,
+      benchmarkCovered: Number.isFinite(start),
+    });
+    armed = false;
+  }
+  return events;
+}
+
 export function calculateBreadth(constituents, options = {}) {
   const histories = constituents.map((constituent) => {
     const points = normalizeHistory(constituent.points ?? []);
@@ -439,6 +500,14 @@ export function calculateBreadth(constituents, options = {}) {
   const meanAdvanceRatio = (days) => days.every((day) => Number.isFinite(day.advanceRatio)) ? mean(days.map((day) => day.advanceRatio)) : null;
   const breadthThrust = daily.length >= 10 ? meanAdvanceRatio(daily.slice(-10)) : null;
   const previousThrust = daily.length >= 20 ? meanAdvanceRatio(daily.slice(-20, -10)) : null;
+  // The benchmark is mapped onto the same session index the advance ratios use,
+  // so a forward return is never read off a session the breadth series skipped.
+  const benchmarkByDate = new Map(normalizeHistory(options.benchmark ?? []).map((point) => [point.date, point.value]));
+  const thrustEvents = calculateThrustLog(
+    daily.map((day) => day.advanceRatio),
+    daily.map((day) => benchmarkByDate.get(day.date) ?? null),
+    { dates: daily.map((day) => day.date) },
+  );
   const participation = (value, denominator) => denominator >= minimumConstituents ? (value / denominator) * 100 : null;
   const percentAbove20 = participation(latestMetrics.above20, latestMetrics.eligible20);
   const percentAbove50 = participation(latestMetrics.above50, latestMetrics.eligible50);
@@ -515,6 +584,7 @@ export function calculateBreadth(constituents, options = {}) {
     ratioBasis: 'advances / all observed constituents (unchanged closes included in the denominator)',
     unchanged: daily.at(-1).unchanged,
     thrustTriggered: previousThrust !== null && previousThrust < 0.4 && breadthThrust >= 0.615,
+    thrustEvents,
     history,
     unavailable,
     missing: unavailable,
@@ -734,6 +804,8 @@ export function calculateBasketRotation(pairs, historiesBySymbol) {
 }
 
 const ROTATION_LOOKBACK_SESSIONS = 20;
+// Five points spaced a lookback apart: the current position and four behind it.
+const ROTATION_TRAIL_POINTS = 5;
 
 /**
  * Relative-rotation quadrant. The 60-session excess return stands for how
@@ -766,17 +838,36 @@ export function calculateSectorRotation(sectors, benchmarkPoints) {
     const relativeScore = clamp(50 + (relative20 * 6) + (relative60 * 2));
     const score = Math.round((technical.score * 0.55) + (relativeScore * 0.45));
     const quadrant = rrgQuadrant(relative20, relative60);
-    // Where the sector sat one lookback ago, so the tape can distinguish a
-    // sector rotating into leadership from one rolling out of it.
-    const previous = (() => {
-      if (aligned.length <= 60 + ROTATION_LOOKBACK_SESSIONS) return null;
-      const sectorPast = alignedSectorValues.slice(0, -ROTATION_LOOKBACK_SESSIONS);
-      const benchmarkPast = alignedBenchmarkValues.slice(0, -ROTATION_LOOKBACK_SESSIONS);
-      const past20 = percentChange(sectorPast, 20) - percentChange(benchmarkPast, 20);
-      const past60 = percentChange(sectorPast, 60) - percentChange(benchmarkPast, 60);
-      const pastQuadrant = rrgQuadrant(past20, past60);
-      return pastQuadrant ? { relative20: past20, relative60: past60, quadrant: pastQuadrant } : null;
-    })();
+    // Where the sector sat at each earlier step, so the tape shows the arc a
+    // sector travelled rather than only the point it currently occupies. One
+    // prior reading cannot separate a sector arriving in leadership from one
+    // that has been circling its edge for a quarter.
+    const positionAt = (sessionsAgo) => {
+      if (sessionsAgo && aligned.length <= 60 + sessionsAgo) return null;
+      const sectorPast = sessionsAgo ? alignedSectorValues.slice(0, -sessionsAgo) : alignedSectorValues;
+      const benchmarkPast = sessionsAgo ? alignedBenchmarkValues.slice(0, -sessionsAgo) : alignedBenchmarkValues;
+      const past20 = percentChange(sectorPast, 20);
+      const past60 = percentChange(sectorPast, 60);
+      const base20 = percentChange(benchmarkPast, 20);
+      const base60 = percentChange(benchmarkPast, 60);
+      if (![past20, past60, base20, base60].every(Number.isFinite)) return null;
+      const excess20 = past20 - base20;
+      const excess60 = past60 - base60;
+      const pastQuadrant = rrgQuadrant(excess20, excess60);
+      return pastQuadrant
+        ? {
+          sessionsAgo,
+          date: aligned.at(sessionsAgo ? -(sessionsAgo + 1) : -1).date,
+          relative20: Math.round(excess20 * 100) / 100,
+          relative60: Math.round(excess60 * 100) / 100,
+          quadrant: pastQuadrant,
+        }
+        : null;
+    };
+    // Oldest first, so the trail reads left to right the way it happened.
+    const trail = Array.from({ length: ROTATION_TRAIL_POINTS }, (_, step) => positionAt((ROTATION_TRAIL_POINTS - 1 - step) * ROTATION_LOOKBACK_SESSIONS))
+      .filter(Boolean);
+    const previous = positionAt(ROTATION_LOOKBACK_SESSIONS);
     const relativeShift = previous ? relative20 - previous.relative20 : null;
     const rotation = previous ? {
       lookbackSessions: ROTATION_LOOKBACK_SESSIONS,
@@ -786,6 +877,9 @@ export function calculateSectorRotation(sectors, benchmarkPoints) {
       path: previous.quadrant === quadrant ? `Holding ${quadrant}` : `${previous.quadrant} → ${quadrant}`,
       relativeShift: Math.round(relativeShift * 100) / 100,
       direction: Math.abs(relativeShift) < 0.5 ? 'Flat' : relativeShift > 0 ? 'Strengthening' : 'Fading',
+      trail,
+      trailSpansSessions: trail.length > 1 ? (trail.length - 1) * ROTATION_LOOKBACK_SESSIONS : 0,
+      quadrantsVisited: [...new Set(trail.map((point) => point.quadrant))].length,
     } : null;
     return [{
       symbol: sector.symbol,
@@ -810,7 +904,7 @@ export function calculateSectorRotation(sectors, benchmarkPoints) {
     status: calculated.length >= Math.ceil(sectors.length * 0.7) ? 'calculated' : calculated.length ? 'partial' : 'unavailable',
     asOf: calculated.map((sector) => sector.asOf).sort().at(-1) ?? null,
     benchmark: 'SPY',
-    methodology: `20- and 60-session total-price momentum relative to SPY, combined with technical-v1. The relative-rotation quadrant reads the 60-session excess return as how strong a sector already is and the 20-session one as whether that strength is building. Each sector is also placed where it sat ${ROTATION_LOOKBACK_SESSIONS} sessions ago, so a sector rotating into leadership is distinguishable from one rolling out of it; the shift is the change in 20-session excess return over that window.`,
+    methodology: `20- and 60-session total-price momentum relative to SPY, combined with technical-v1. The relative-rotation quadrant reads the 60-session excess return as how strong a sector already is and the 20-session one as whether that strength is building. Each sector is also placed where it sat ${ROTATION_LOOKBACK_SESSIONS} sessions ago, so a sector rotating into leadership is distinguishable from one rolling out of it; the shift is the change in 20-session excess return over that window. A trail of up to ${ROTATION_TRAIL_POINTS} points spaced ${ROTATION_LOOKBACK_SESSIONS} sessions apart carries the arc it travelled, oldest first; points the history cannot reach back far enough to place are dropped rather than repeated.`,
     rotationLookbackSessions: ROTATION_LOOKBACK_SESSIONS,
     enteringLeadership: calculated.filter((sector) => sector.rotation?.moved && sector.quadrant === 'Leading').map((sector) => sector.symbol),
     leavingLeadership: calculated.filter((sector) => sector.rotation?.moved && sector.rotation.previousQuadrant === 'Leading').map((sector) => sector.symbol),
@@ -1009,5 +1103,272 @@ export function calculateDrawdownProfile(points, { minimumObservations = 250 } =
       ? `The index closed at a new high for this ${history.length}-session window, which has spent ${underwaterShare}% of its sessions below a prior peak.`
       : `${state}: ${Math.abs(current.drawdown).toFixed(1)}% below the ${current.peakDate} peak after ${sessionsSincePeak} sessions, deeper than ${depthPercentile}% of the sessions in this history.${deepest ? ` The worst completed episode here fell ${Math.abs(deepest.trough).toFixed(1)}% and took ${deepest.recoverySessions} sessions to recover.` : ''}`,
     methodology: 'Drawdown is measured against the running peak of the available history, so it is window-dependent and states its window. A completed episode runs from the session the index left a peak to the session it regained it; an episode still open is reported as the current drawdown rather than counted among the completed ones. The depth percentile ranks today against every session in the history, not against the handful of completed episodes, which are too few to rank against.',
+  };
+}
+
+/**
+ * Up and down capture against the benchmark, plus how stable the relationship
+ * is. A sector labelled defensive in a catalog is a claim; capture measured on
+ * the days the benchmark actually fell is evidence. Beta is reported split by
+ * direction and with the dispersion of its own rolling estimates, because a
+ * single full-window beta hides a relationship that changed halfway through.
+ */
+export function calculateCaptureProfile(sectorPoints, benchmarkPoints, { window = 252, rollingWindow = 60, minimumDays = 20 } = {}) {
+  const version = 'equity-capture-profile-v1';
+  const sector = normalizeHistory(sectorPoints ?? []);
+  const benchmark = normalizeHistory(benchmarkPoints ?? []);
+  const benchmarkByDate = new Map(benchmark.map((point) => [point.date, point.value]));
+  const aligned = sector.filter((point) => benchmarkByDate.has(point.date));
+  if (aligned.length < minimumDays * 3) {
+    return { version, status: 'unavailable', reason: `Needs ${minimumDays * 3} sessions shared with the benchmark; ${aligned.length} available.`, observations: aligned.length };
+  }
+
+  const slice = aligned.slice(-(window + 1));
+  const returns = slice.slice(1).map((point, index) => {
+    const previous = slice[index];
+    const sectorReturn = previous.value > 0 ? ((point.value / previous.value) - 1) * 100 : null;
+    const benchmarkPrevious = benchmarkByDate.get(previous.date);
+    const benchmarkCurrent = benchmarkByDate.get(point.date);
+    const benchmarkReturn = benchmarkPrevious > 0 ? ((benchmarkCurrent / benchmarkPrevious) - 1) * 100 : null;
+    return Number.isFinite(sectorReturn) && Number.isFinite(benchmarkReturn) ? { sector: sectorReturn, benchmark: benchmarkReturn } : null;
+  }).filter(Boolean);
+
+  const upDays = returns.filter((entry) => entry.benchmark > 0);
+  const downDays = returns.filter((entry) => entry.benchmark < 0);
+  // Capture is only meaningful with enough days on that side of the tape; a
+  // capture ratio built on four down days is arithmetic, not evidence.
+  const capture = (days) => {
+    if (days.length < minimumDays) return null;
+    const benchmarkAverage = mean(days.map((entry) => entry.benchmark));
+    return benchmarkAverage === 0 ? null : (mean(days.map((entry) => entry.sector)) / benchmarkAverage) * 100;
+  };
+  const upCapture = capture(upDays);
+  const downCapture = capture(downDays);
+
+  const betaOf = (days) => {
+    if (days.length < minimumDays) return null;
+    const benchmarkMean = mean(days.map((entry) => entry.benchmark));
+    const sectorMean = mean(days.map((entry) => entry.sector));
+    let covariance = 0;
+    let variance = 0;
+    days.forEach((entry) => {
+      covariance += (entry.benchmark - benchmarkMean) * (entry.sector - sectorMean);
+      variance += (entry.benchmark - benchmarkMean) ** 2;
+    });
+    return variance ? covariance / variance : null;
+  };
+  const beta = betaOf(returns);
+  const upBeta = betaOf(upDays);
+  const downBeta = betaOf(downDays);
+
+  const rollingBetas = [];
+  for (let end = rollingWindow; end <= returns.length; end += 1) {
+    const value = betaOf(returns.slice(end - rollingWindow, end));
+    if (Number.isFinite(value)) rollingBetas.push(value);
+  }
+  const betaDispersion = rollingBetas.length >= 5 ? deviation(rollingBetas) : null;
+  const betaRange = rollingBetas.length >= 5 ? { low: Math.min(...rollingBetas), high: Math.max(...rollingBetas) } : null;
+
+  // A negative capture means the sector moves against the benchmark, not that
+  // it defends. Reading "down capture below 85" without checking the sign
+  // labelled an inverse relationship - one that rallies hard as the benchmark
+  // falls - as Defensive, which is the opposite of what it is.
+  const inverse = (upCapture !== null && upCapture < 0) || (downCapture !== null && downCapture < 0);
+  const behaviour = upCapture === null || downCapture === null ? null
+    : inverse ? 'Inverse to the benchmark'
+      : downCapture < 85 && upCapture >= 85 ? 'Defends and participates'
+        : downCapture < 85 ? 'Defensive'
+          : upCapture > 110 && downCapture > 110 ? 'High beta'
+            : upCapture < 85 && downCapture > 110 ? 'Worst of both'
+              : 'Tracks the benchmark';
+
+  const stability = betaDispersion === null ? null
+    : betaDispersion <= 0.1 ? 'Stable'
+      : betaDispersion <= 0.25 ? 'Drifting'
+        : 'Unstable';
+
+  return {
+    version,
+    status: upCapture === null || downCapture === null ? 'provisional' : betaDispersion === null ? 'provisional' : 'calculated',
+    asOf: slice.at(-1).date,
+    observations: returns.length,
+    upDays: upDays.length,
+    downDays: downDays.length,
+    upCapture: upCapture === null ? null : Math.round(upCapture),
+    downCapture: downCapture === null ? null : Math.round(downCapture),
+    captureSpread: upCapture === null || downCapture === null ? null : Math.round(upCapture - downCapture),
+    beta: beta === null ? null : Math.round(beta * 100) / 100,
+    upBeta: upBeta === null ? null : Math.round(upBeta * 100) / 100,
+    downBeta: downBeta === null ? null : Math.round(downBeta * 100) / 100,
+    betaDispersion: betaDispersion === null ? null : Math.round(betaDispersion * 1000) / 1000,
+    betaRange: betaRange ? { low: Math.round(betaRange.low * 100) / 100, high: Math.round(betaRange.high * 100) / 100 } : null,
+    rollingWindows: rollingBetas.length,
+    behaviour,
+    inverse,
+    stability,
+    read: behaviour === null
+      ? `Fewer than ${minimumDays} days on one side of the benchmark, so capture cannot be measured yet.`
+      : `${behaviour}: ${Math.round(upCapture)}% of the benchmark's average up day across ${upDays.length} of them, ${Math.round(downCapture)}% of its average down day across ${downDays.length}.${inverse ? ' A negative ratio means it moves against the benchmark rather than defending inside it.' : ''}${stability ? ` Rolling ${rollingWindow}-session beta is ${stability.toLowerCase()}, ranging ${betaRange.low} to ${betaRange.high}.` : ''}`,
+    methodology: `Up capture is the sector's average return on days the benchmark rose, divided by the benchmark's average return on those same days; down capture is the mirror. Each side needs ${minimumDays} days of its own before it publishes, so a quiet window reports nothing rather than a ratio built on a handful of sessions. Beta is reported for the whole window and separately for up and down days, alongside the standard deviation and range of rolling ${rollingWindow}-session estimates - a single number hides a relationship that changed inside the window. A negative capture ratio is an inverse relationship, reported as such rather than folded into the defensive band.`,
+  };
+}
+
+const VOLATILITY_WINDOWS = [20, 60, 252];
+
+/**
+ * Realized volatility across three horizons, each ranked against its own past.
+ * One 20-day number cannot say whether a market is calm or merely between
+ * shocks; the term structure can, because a short window above a long one is a
+ * different regime from the reverse.
+ */
+export function calculateVolatilityTermStructure(points, { windows = VOLATILITY_WINDOWS, rankWindow = 756, annualizationDays = 252 } = {}) {
+  const version = 'equity-volatility-term-v1';
+  const history = normalizeHistory(points ?? []);
+  const longest = Math.max(...windows);
+  if (history.length < longest + 2) {
+    return { version, status: 'unavailable', reason: `Needs ${longest + 2} sessions for a ${longest}-session window; ${history.length} available.`, observations: history.length, terms: [] };
+  }
+  const values = history.map((point) => point.value);
+  const logReturns = values.slice(1).map((value, index) => (values[index] > 0 && value > 0 ? Math.log(value / values[index]) : null));
+
+  const annualized = (endExclusive, size) => {
+    const slice = logReturns.slice(endExclusive - size, endExclusive).filter(Number.isFinite);
+    if (slice.length < size) return null;
+    const sigma = deviation(slice);
+    return sigma === null ? null : sigma * Math.sqrt(annualizationDays) * 100;
+  };
+
+  const rawByWindow = new Map();
+  const terms = windows.map((size) => {
+    const current = annualized(logReturns.length, size);
+    rawByWindow.set(size, current);
+    const rolling = [];
+    for (let end = size; end <= logReturns.length; end += 1) {
+      if (end < logReturns.length - rankWindow) continue;
+      const value = annualized(end, size);
+      if (Number.isFinite(value)) rolling.push(value);
+    }
+    return {
+      window: size,
+      annualizedPercent: current === null ? null : Math.round(current * 10) / 10,
+      percentile: rolling.length >= 60 ? percentileRank(rolling, current) : null,
+      rankedAgainst: rolling.length,
+      status: current === null ? 'unavailable' : rolling.length >= 60 ? 'calculated' : 'provisional',
+    };
+  });
+
+  const published = terms.filter((term) => Number.isFinite(term.annualizedPercent));
+  if (!published.length) {
+    return { version, status: 'unavailable', reason: 'No volatility window could be filled from the available history.', observations: history.length, terms };
+  }
+  const short = terms.find((term) => term.window === Math.min(...windows));
+  const long = terms.find((term) => term.window === Math.max(...windows));
+  // Built from the measured volatilities, not the values rounded for display: a
+  // genuinely quiet market whose long window rounds to 0.0% would otherwise
+  // lose its term structure entirely to a divide-by-zero guard.
+  const rawShort = rawByWindow.get(short?.window);
+  const rawLong = rawByWindow.get(long?.window);
+  const ratio = Number.isFinite(rawShort) && Number.isFinite(rawLong) && rawLong > 0
+    ? rawShort / rawLong
+    : null;
+  const slope = ratio === null ? null : ratio >= 1.2 ? 'inverted' : ratio <= 0.8 ? 'upward' : 'flat';
+  const state = slope === null ? null
+    : slope === 'inverted' ? 'Shock in progress'
+      : slope === 'upward' ? 'Calm relative to its own year'
+        : 'Volatility in line with its own year';
+
+  return {
+    version,
+    status: terms.every((term) => term.status === 'calculated') ? 'calculated' : published.length ? 'provisional' : 'unavailable',
+    asOf: history.at(-1).date,
+    observations: history.length,
+    terms,
+    ratio: ratio === null ? null : Math.round(ratio * 100) / 100,
+    slope,
+    state,
+    read: state === null
+      ? `Realized volatility publishes at ${published.map((term) => `${term.window}-session ${term.annualizedPercent}%`).join(', ')}, but the term structure needs both ends of the curve.`
+      : `${state}: ${short.annualizedPercent}% over ${short.window} sessions against ${long.annualizedPercent}% over ${long.window}, a ${ratio.toFixed(2)} ratio.${Number.isFinite(short.percentile) ? ` The short window sits at the ${ordinal(short.percentile)} percentile of its own last ${short.rankedAgainst} readings.` : ''}`,
+    methodology: `Annualized standard deviation of daily log returns over each window, each ranked against its own last ${rankWindow} rolling readings rather than against the other windows or a fixed level. The short-over-long ratio is the term structure: above 1.2 the near tape is more violent than its year, which is a shock in progress rather than a high-volatility regime; below 0.8 it is genuinely calmer than its own recent history.`,
+  };
+}
+
+/**
+ * Earnings-revision breadth: are analysts raising or cutting estimates, and
+ * across how much of the universe. Nothing else in the equity section knows
+ * anything about fundamentals, so this is the one leg that can disagree with
+ * price for a reason other than positioning.
+ *
+ * Two readings, because they answer different questions. The diffusion index
+ * is the share of names with more raises than cuts - how broad the revision is.
+ * The aggregate ratio pools every revision - how large. A handful of megacaps
+ * being raised hard while everything else is cut moves the second and not the
+ * first, and that gap is the signal.
+ */
+export function calculateRevisionBreadth(rows, { requested = null, minimumCovered = 20 } = {}) {
+  const version = 'equity-revision-breadth-v1';
+  const covered = (rows ?? []).filter((row) => Number.isFinite(row?.up) && Number.isFinite(row?.down) && (row.up + row.down) > 0);
+  const universe = requested ?? (rows ?? []).length;
+  if (covered.length < minimumCovered) {
+    return {
+      version,
+      status: 'unavailable',
+      reason: `Needs ${minimumCovered} names carrying an analyst revision count; ${covered.length} of ${universe} available.`,
+      covered: covered.length,
+      universe,
+      coverage: universe ? Math.round((covered.length / universe) * 100) : 0,
+    };
+  }
+
+  const scored = covered.map((row) => ({
+    symbol: row.symbol,
+    name: row.name ?? row.symbol,
+    up: row.up,
+    down: row.down,
+    net: Math.round((((row.up - row.down) / (row.up + row.down)) * 100) * 10) / 10,
+  }));
+  const raised = scored.filter((row) => row.net > 0).length;
+  const cut = scored.filter((row) => row.net < 0).length;
+  const diffusion = Math.round((raised / scored.length) * 100);
+  const totalUp = scored.reduce((total, row) => total + row.up, 0);
+  const totalDown = scored.reduce((total, row) => total + row.down, 0);
+  const aggregate = Math.round((((totalUp - totalDown) / (totalUp + totalDown)) * 100) * 10) / 10;
+  const coverage = universe ? Math.round((covered.length / universe) * 100) : 100;
+  const ranked = [...scored].sort((left, right) => right.net - left.net);
+  // Diffusion is a share of names, the aggregate a share of revisions, so the
+  // two are not on one scale and cannot be differenced. What is meaningful is
+  // whether they point opposite ways with real force behind the pooled number:
+  // that is a few heavily covered names carrying the direction alone.
+  const diffusionTilt = diffusion - 50;
+  const narrow = Math.abs(aggregate) >= 10 && diffusionTilt !== 0 && (diffusionTilt > 0) !== (aggregate > 0);
+
+  const state = diffusion >= 60 && aggregate > 0 ? 'Broad upgrades'
+    : diffusion <= 40 && aggregate < 0 ? 'Broad downgrades'
+      : aggregate > 10 ? 'Upgrades concentrated in a few names'
+        : aggregate < -10 ? 'Downgrades concentrated in a few names'
+          : 'Balanced';
+
+  return {
+    version,
+    status: coverage >= 85 ? 'calculated' : 'provisional',
+    covered: covered.length,
+    universe,
+    coverage,
+    diffusion,
+    aggregate,
+    raised,
+    cut,
+    unchangedNames: scored.length - raised - cut,
+    totalUp,
+    totalDown,
+    narrow,
+    state,
+    mostRaised: ranked.slice(0, 3),
+    mostCut: ranked.slice(-3).reverse(),
+    // Scored 0-100 on the same axis the other equity drivers use, so it can
+    // join a weighted model without rescaling at the call site.
+    score: Math.round(clamp(50 + (aggregate / 2))),
+    read: `${state}: ${raised} of ${scored.length} names carry more raises than cuts (${diffusion}% diffusion) against a ${aggregate > 0 ? '+' : ''}${aggregate}% aggregate revision balance across ${totalUp + totalDown} revisions.${narrow ? ' The two disagree, which means a few heavily covered names are carrying the direction rather than the universe.' : ''}`,
+    methodology: `Per name, revisions are netted as (raises - cuts) / (raises + cuts) over the provider's trailing revision window. Diffusion is the share of names with a positive net - how broad. The aggregate pools every revision across the universe - how large. A name with no revisions at all is excluded from both rather than counted as unchanged, because no coverage is not the same as no opinion. The model reports provisional below 85% universe coverage.`,
   };
 }
