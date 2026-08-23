@@ -165,9 +165,36 @@ export function collectMacroSignals(models = {}) {
     },
   ];
 
+  // Each signal carries the vintage of the model behind it. A reading built on
+  // a six-week-old NFCI sitting unmarked beside one built on today's VIX makes
+  // the two look equally current, which is the same misrepresentation the
+  // regime model's own asOf was corrected for.
+  const modelByKey = {
+    macroRegime, liquidity, globalLiquidity, growth: growthNowcast, dataSurprise,
+    curve: yieldCurve, termPremium, reserves: reserveScarcity, dollar: usdStrength,
+    inflation, regimeDwell: regimeHistory,
+  };
+  const nowMs = Date.now();
+  const withVintage = (signal) => {
+    const source = modelByKey[signal.key] ?? null;
+    // A model that publishes its own oldest binding input is more honest about
+    // its age than its headline asOf, so that is preferred where it exists.
+    const asOf = source?.vintage?.oldestInput?.date ?? source?.asOf ?? null;
+    const ageDays = asOf ? Math.max(0, Math.round((nowMs - new Date(asOf).getTime()) / 86_400_000)) : null;
+    return {
+      ...signal,
+      available: Number.isFinite(signal.score),
+      asOf,
+      ageDays,
+      // Not a data-quality judgement: some of these series are monthly by
+      // nature. It marks which readings are describing a different moment.
+      lagging: Number.isFinite(ageDays) && ageDays > 21,
+    };
+  };
+
   return {
-    directional: signals.map((signal) => ({ ...signal, directional: true, available: Number.isFinite(signal.score) })),
-    cautions: cautions.map((signal) => ({ ...signal, directional: false, available: Number.isFinite(signal.score) })),
+    directional: signals.map((signal) => withVintage({ ...signal, directional: true })),
+    cautions: cautions.map((signal) => withVintage({ ...signal, directional: false })),
   };
 }
 
@@ -254,6 +281,13 @@ export function calculateModelConsensus(models = {}, { gap = CONTRADICTION_GAP }
     .filter(Boolean)
     .sort((left, right) => Math.abs(right.distance) - Math.abs(left.distance));
 
+  const dated = available.filter((signal) => Number.isFinite(signal.ageDays));
+  const vintage = dated.length ? {
+    oldest: dated.reduce((worst, signal) => (signal.ageDays > worst.ageDays ? signal : worst)),
+    freshest: dated.reduce((best, signal) => (signal.ageDays < best.ageDays ? signal : best)),
+    laggingCount: dated.filter((signal) => signal.lagging).length,
+  } : null;
+
   const state = spread >= 60 ? 'Models sharply divided'
     : spread >= gap ? 'Models partly divided'
       : 'Models broadly agree';
@@ -271,10 +305,16 @@ export function calculateModelConsensus(models = {}, { gap = CONTRADICTION_GAP }
     mostNegative: { key: ranked.at(-1).key, name: ranked.at(-1).name, score: ranked.at(-1).score },
     contradictions,
     outliers,
+    vintage: vintage ? {
+      oldest: { key: vintage.oldest.key, name: vintage.oldest.name, asOf: vintage.oldest.asOf, ageDays: vintage.oldest.ageDays },
+      freshest: { key: vintage.freshest.key, name: vintage.freshest.name, asOf: vintage.freshest.asOf, ageDays: vintage.freshest.ageDays },
+      spreadDays: vintage.oldest.ageDays - vintage.freshest.ageDays,
+      laggingCount: vintage.laggingCount,
+    } : null,
     sameFamilyContradictions: contradictions.filter((entry) => entry.sameFamily).length,
     state,
-    read: `${state}: ${available.length} of ${signals.length} models publish, averaging ${Math.round(average)}/100 across a ${Math.round(spread)}-point spread from ${ranked.at(-1).name} at ${ranked.at(-1).score} to ${ranked[0].name} at ${ranked[0].score}.${outliers.length ? ` ${outliers.map((entry) => entry.name).join(' and ')} ${outliers.length === 1 ? 'stands' : 'stand'} apart from the rest.` : contradictions.length ? ` ${contradictions.length} ${contradictions.length === 1 ? 'pair disagrees' : 'pairs disagree'} by ${gap} points or more.` : ''}`,
-    methodology: `Each model is placed on one axis where 0 is maximally risk-negative and 100 maximally risk-positive; the dollar, term premium and reserve-scarcity readings are inverted onto it because a stronger dollar, a richer term premium and scarcer reserves all tighten conditions. Readings derived from a percentile are compressed to a 20-80 band before joining it, because a percentile is uniform by construction and reaches its extremes far more often than a driver composite does — untreated, those two would pin to 0 and 100 and contradict every other model at once purely from the shape of their own distribution. Models that carry no direction on that axis are absent from it: the rate path is ambiguous by construction and the liquidity calendar is a schedule, while inflation balance and regime maturity are cautions that peak when nothing is wrong and are published separately so a calm reading cannot masquerade as a risk-positive one. The average is published alongside the spread and the disagreeing pairs, never instead of them, because an average across contradicting models hides exactly what is worth knowing. Every disagreeing pair is published, but a model sitting far from the rest contradicts all of them and would fill that list with itself restated, so each model is also measured once against the median of the others and the ones that stand apart are named.`,
+    read: `${state}: ${available.length} of ${signals.length} models publish, averaging ${Math.round(average)}/100 across a ${Math.round(spread)}-point spread from ${ranked.at(-1).name} at ${ranked.at(-1).score} to ${ranked[0].name} at ${ranked[0].score}.${vintage?.laggingCount ? ` ${vintage.laggingCount} of them describe a moment more than three weeks old, the oldest being ${vintage.oldest.name} at ${vintage.oldest.ageDays} days.` : ''}${outliers.length ? ` ${outliers.map((entry) => entry.name).join(' and ')} ${outliers.length === 1 ? 'stands' : 'stand'} apart from the rest.` : contradictions.length ? ` ${contradictions.length} ${contradictions.length === 1 ? 'pair disagrees' : 'pairs disagree'} by ${gap} points or more.` : ''}`,
+    methodology: `Each model is placed on one axis where 0 is maximally risk-negative and 100 maximally risk-positive; the dollar, term premium and reserve-scarcity readings are inverted onto it because a stronger dollar, a richer term premium and scarcer reserves all tighten conditions. Readings derived from a percentile are compressed to a 20-80 band before joining it, because a percentile is uniform by construction and reaches its extremes far more often than a driver composite does — untreated, those two would pin to 0 and 100 and contradict every other model at once purely from the shape of their own distribution. Models that carry no direction on that axis are absent from it: the rate path is ambiguous by construction and the liquidity calendar is a schedule, while inflation balance and regime maturity are cautions that peak when nothing is wrong and are published separately so a calm reading cannot masquerade as a risk-positive one. The average is published alongside the spread and the disagreeing pairs, never instead of them, because an average across contradicting models hides exactly what is worth knowing. Each signal carries the vintage of the model behind it, preferring that model's own oldest binding input over its headline date, so a reading describing a moment weeks ago is not shown as though it were current — that is a note about which moment a reading describes, not a judgement about the feed, since several of these series are monthly by nature. Every disagreeing pair is published, but a model sitting far from the rest contradicts all of them and would fill that list with itself restated, so each model is also measured once against the median of the others and the ones that stand apart are named.`,
   };
 }
 
@@ -446,10 +486,18 @@ const ALERT_RULES = [
  * A rule fires only from a model that published. Nothing here invents a
  * condition from a model that could not answer.
  */
-export function evaluateMacroAlerts(models = {}, { rules = ALERT_RULES } = {}) {
-  const version = 'macro-alerts-v1';
+export function evaluateMacroAlerts(models = {}, { rules = ALERT_RULES, previous = null } = {}) {
+  const version = 'macro-alerts-v2';
   const entries = [];
   const skipped = [];
+  // The set of conditions that were live at the last evaluation. A condition
+  // that is still live is not news: without this the feed fills with the same
+  // alert repeated once per ingestion run, and the database's own uniqueness
+  // constraint cannot stop it because the timestamp differs each time.
+  const previousKeys = new Set(Array.isArray(previous?.entries)
+    ? previous.entries.map((entry) => entry.key)
+    : Array.isArray(previous) ? previous : []);
+  const previouslySkipped = new Set(Array.isArray(previous?.skipped) ? previous.skipped.map((entry) => entry.key) : []);
   for (const rule of rules) {
     const model = models[rule.model];
     if (!published(model)) {
@@ -466,14 +514,42 @@ export function evaluateMacroAlerts(models = {}, { rules = ALERT_RULES } = {}) {
       continue;
     }
     if (!fired) continue;
-    entries.push({ key: rule.key, severity: rule.severity, model: rule.model, text: rule.text(model) });
+    entries.push({
+      key: rule.key,
+      severity: rule.severity,
+      model: rule.model,
+      text: rule.text(model),
+      // New means it crossed into this state since the last evaluation. A
+      // condition that could not be evaluated last time is treated as new when
+      // it fires, because "was it live before" genuinely has no answer.
+      isNew: !previousKeys.has(rule.key),
+      unknownBefore: previouslySkipped.has(rule.key),
+    });
   }
+
+  // Conditions that were live and no longer are. A curve that un-inverted and
+  // then settled is as much news as the un-inversion, and dropping it silently
+  // leaves the last thing a reader saw standing after it stopped being true.
+  const liveKeys = new Set(entries.map((entry) => entry.key));
+  const resolved = [...previousKeys]
+    .filter((key) => !liveKeys.has(key))
+    .filter((key) => !skipped.some((entry) => entry.key === key))
+    .map((key) => ({
+      key,
+      severity: rules.find((rule) => rule.key === key)?.severity ?? 'low',
+      text: `The ${key.replace(/-/g, ' ')} condition is no longer live.`,
+      clearedFrom: key,
+    }));
   const order = { high: 0, medium: 1, low: 2 };
-  entries.sort((left, right) => order[left.severity] - order[right.severity]);
+  entries.sort((left, right) => order[left.severity] - order[right.severity] || Number(right.isNew) - Number(left.isNew));
+  const raised = entries.filter((entry) => entry.isNew);
   return {
     version,
     status: entries.length ? 'calculated' : 'quiet',
     entries,
+    raised,
+    resolved,
+    hasPreviousState: previousKeys.size > 0 || previous !== null,
     skipped,
     counts: {
       high: entries.filter((entry) => entry.severity === 'high').length,
@@ -481,8 +557,149 @@ export function evaluateMacroAlerts(models = {}, { rules = ALERT_RULES } = {}) {
       low: entries.filter((entry) => entry.severity === 'low').length,
     },
     read: entries.length
-      ? `${entries.length} macro ${entries.length === 1 ? 'condition is' : 'conditions are'} live${entries.filter((entry) => entry.severity === 'high').length ? `, ${entries.filter((entry) => entry.severity === 'high').length} of them high severity` : ''}.`
-      : `No macro alert condition is live${skipped.length ? `; ${skipped.length} of ${rules.length} rules could not be evaluated because their model did not publish` : ''}.`,
-    methodology: 'Each rule reads one published model. A rule whose model did not publish is skipped and listed rather than being treated as not firing, because "we cannot tell" and "it is not happening" are different answers and only one of them is safe to act on.',
+      ? `${entries.length} macro ${entries.length === 1 ? 'condition is' : 'conditions are'} live${raised.length ? `, ${raised.length} newly` : ''}${entries.filter((entry) => entry.severity === 'high').length ? `, ${entries.filter((entry) => entry.severity === 'high').length} of them high severity` : ''}.${resolved.length ? ` ${resolved.length} ${resolved.length === 1 ? 'condition has' : 'conditions have'} cleared.` : ''}`
+      : `No macro alert condition is live${resolved.length ? `; ${resolved.length} cleared since the last evaluation` : ''}${skipped.length ? `; ${skipped.length} of ${rules.length} rules could not be evaluated because their model did not publish` : ''}.`,
+    methodology: 'Each rule reads one published model. A rule whose model did not publish is skipped and listed rather than being treated as not firing, because "we cannot tell" and "it is not happening" are different answers and only one of them is safe to act on. Alerts are raised on the transition into a condition rather than for every evaluation while it holds, and a condition that clears is published as resolved — a still-live alert is not news, and one that quietly disappears leaves the last thing a reader saw standing after it stopped being true.',
+  };
+}
+
+/**
+ * Which drivers inside a composite are near-duplicates of each other, and what
+ * the composite would score without the double-counting.
+ *
+ * The macro regime carries both the US and global liquidity impulses, and the
+ * global pool contains the US one by construction — so two of its six drivers
+ * are largely the same reading given two weights. That is not a bug in either
+ * model; it is a weighting question that only becomes visible once the overlap
+ * matrix has measured it, and the honest treatment is to publish the adjusted
+ * score beside the headline rather than silently changing one of them.
+ */
+export function calculateWeightOverlap(model, correlationMatrix, { driverToModelId = {}, threshold = 0.9 } = {}) {
+  const version = 'weight-overlap-v1';
+  if (!published(model) || !Array.isArray(model.drivers)) {
+    return { version, status: 'unavailable', reason: 'A composite publishing its drivers is required.', pairs: [] };
+  }
+  const scored = model.drivers.filter((driver) => Number.isFinite(driver.score) && Number.isFinite(driver.weight));
+  if (scored.length < 2) {
+    return { version, status: 'unavailable', reason: `The composite has ${scored.length} scored drivers; two are needed to overlap.`, pairs: [] };
+  }
+  const correlations = new Map((correlationMatrix?.pairs ?? [])
+    .filter((pair) => pair.status === 'calculated')
+    .flatMap((pair) => [[`${pair.left}|${pair.right}`, pair.correlation], [`${pair.right}|${pair.left}`, pair.correlation]]));
+  if (!correlations.size) {
+    return {
+      version,
+      status: 'unavailable',
+      reason: 'No measured model correlations are available yet, so overlap cannot be distinguished from agreement.',
+      pairs: [],
+    };
+  }
+
+  // Two drivers moving together carry one factor under two weights, which the
+  // composite adds twice. Two moving exactly opposite are not that: their
+  // contributions offset, so dropping one would change the composite rather
+  // than remove a duplication. Both are worth seeing and only the first is
+  // double-counting, so they are separated and only the first is adjusted for.
+  const pairs = [];
+  const offsetting = [];
+  for (let left = 0; left < scored.length; left += 1) {
+    for (let right = left + 1; right < scored.length; right += 1) {
+      const leftId = driverToModelId[scored[left].key];
+      const rightId = driverToModelId[scored[right].key];
+      if (!leftId || !rightId) continue;
+      const correlation = correlations.get(`${leftId}|${rightId}`);
+      if (!Number.isFinite(correlation) || Math.abs(correlation) < threshold) continue;
+      const entry = {
+        key: `${scored[left].key}|${scored[right].key}`,
+        drivers: [scored[left].name, scored[right].name],
+        correlation,
+        combinedWeight: round(scored[left].weight + scored[right].weight, 3),
+      };
+      if (correlation > 0) {
+        pairs.push({
+          ...entry,
+          // The lighter of the two is the one whose weight is redundant.
+          redundantDriver: scored[left].weight <= scored[right].weight ? scored[left].key : scored[right].key,
+          redundantWeight: Math.min(scored[left].weight, scored[right].weight),
+        });
+      } else {
+        offsetting.push({
+          ...entry,
+          read: `${entry.drivers.join(' and ')} move almost exactly opposite at ${correlation}, so their contributions largely cancel inside the composite. That is one factor expressed twice with opposite signs, not the same factor counted twice, and the score is left alone.`,
+        });
+      }
+    }
+  }
+  if (!pairs.length) {
+    return {
+      version,
+      status: 'calculated',
+      pairs: [],
+      offsetting,
+      headlineScore: model.score ?? null,
+      adjustedScore: model.score ?? null,
+      difference: 0,
+      read: `No two drivers in ${model.version ?? 'this composite'} move together at ${threshold} or above, so nothing is being counted twice.${offsetting.length ? ` ${offsetting.length} ${offsetting.length === 1 ? 'pair moves' : 'pairs move'} almost exactly opposite instead, which offsets rather than duplicates.` : ''}`,
+      methodology: `Driver pairs are checked against measured model-to-model correlations rather than assumed relationships. Only a positive pair at or above ${threshold} is treated as duplication: two drivers moving opposite carry one factor with opposite signs and their contributions cancel, which is a different problem and is reported separately rather than adjusted for.`,
+    };
+  }
+
+  const redundantKeys = new Set(pairs.map((pair) => pair.redundantDriver));
+  const kept = scored.filter((driver) => !redundantKeys.has(driver.key));
+  const keptWeight = kept.reduce((total, driver) => total + driver.weight, 0);
+  const adjusted = keptWeight > 0
+    ? Math.round(kept.reduce((total, driver) => total + (driver.score * driver.weight), 0) / keptWeight)
+    : null;
+
+  return {
+    version,
+    status: 'calculated',
+    pairs,
+    offsetting,
+    headlineScore: model.score ?? null,
+    adjustedScore: adjusted,
+    difference: Number.isFinite(adjusted) && Number.isFinite(model.score) ? adjusted - model.score : null,
+    droppedDrivers: [...redundantKeys],
+    read: `${pairs.length} driver ${pairs.length === 1 ? 'pair moves' : 'pairs move'} together at ${threshold} or above: ${pairs.map((pair) => pair.drivers.join(' and ')).join('; ')}. Dropping the lighter of each pair and reweighting gives ${adjusted}/100 against the published ${model.score}/100.${offsetting.length ? ` A further ${offsetting.length} ${offsetting.length === 1 ? 'pair moves' : 'pairs move'} almost exactly opposite, which offsets rather than duplicates and is left alone.` : ''}`,
+    methodology: `Driver pairs are checked against measured model-to-model correlations rather than assumed relationships, so nothing is called duplication until it has been observed to be. Only a positive pair counts: two drivers moving opposite carry one factor with opposite signs and their contributions cancel inside the composite, which is a different problem and is reported separately rather than adjusted for. The adjusted score drops the lighter driver of each duplicating pair and renormalises the remaining weights. It is published beside the headline rather than replacing it: which of two correlated drivers deserves the weight is a modelling decision, not something the correlation can settle.`,
+  };
+}
+
+/**
+ * Recomputes a model's score at past dates and returns rows ready to store, so
+ * the overlap matrix has something to correlate before three months of weekly
+ * runs have accumulated.
+ *
+ * These rows are explicitly marked as backfilled and carry the current vintage
+ * of their inputs. They are for measuring how two models move against each
+ * other, which a consistent vintage serves fine; they are not evidence about
+ * what either model would have said at the time, and nothing should read them
+ * that way.
+ */
+export function buildBackfillRows(modelId, scoreAt, dates, { source = 'backfill' } = {}) {
+  const rows = (dates ?? [])
+    .map((date) => {
+      let score = null;
+      try {
+        score = scoreAt(date);
+      } catch {
+        // A score function that throws on an early date has no answer there,
+        // which is not the same as a score of zero.
+        return null;
+      }
+      return Number.isFinite(score) ? { date, score: Math.round(score) } : null;
+    })
+    .filter(Boolean);
+  return {
+    modelId,
+    source,
+    backfilled: true,
+    rows: rows.map((row) => ({
+      asOf: row.date,
+      output: { version: `${modelId}-backfill`, asOf: row.date, score: row.score, backfilled: true, source },
+    })),
+    read: rows.length
+      ? `${rows.length} backfilled readings for ${modelId} between ${rows[0].date} and ${rows.at(-1).date}.`
+      : `No date could be scored for ${modelId}.`,
   };
 }

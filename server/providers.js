@@ -8,7 +8,7 @@ import { calculateBitcoinRangeModels } from './bitcoinOhlc.js';
 import { buildCoingeckoRequest, buildHeatmapRow, buildSocrataRequest, buildLiquidityNarrative, buildLiquidityTransmission, buildWorkspaceNarrative, calculateBitcoinCyclePhase, calculateChangeCorrelations, calculateCryptoRotation, calculateDollarScenarios, calculateDollarTransmissionRead, calculateLeadLag, calculateLiquidityRunway, calculateOpenInterestQuadrant, calculatePositioningModel, calculateCrossMarketRelationship, calculateGlobalLiquidityModel, calculateHeatmapRisk, calculateMacroRegimeModel, calculateMetalsCostStructure, calculateRsi, calculateScreenerScores, calculateTechnicalSnapshot, calculateTrendQuality, classifyHeadlineSentiment, isPublished, calculateUsdStrengthModel, calculateUsLiquidityModel } from './analytics.js';
 import { getStoredFredSeries, getStoredMarketHistory, getStoredMarketSnapshot, getRecentModelOutputs, isDatabaseConfigured, reserveProviderCredits } from './database.js';
 import { getAllEquityHistorySymbols, getCoreEquityHistorySymbols } from './equityCatalog.js';
-import { calculateModelConsensus, calculateModelCorrelationMatrix, evaluateMacroAlerts } from './macroConsensus.js';
+import { buildBackfillRows, calculateModelConsensus, calculateModelCorrelationMatrix, calculateWeightOverlap, evaluateMacroAlerts } from './macroConsensus.js';
 import { calculateDataSurprise, calculateLiquidityPayoff, calculateNominalDecomposition, calculateRateDivergence, calculateReserveScarcity, calculateTermPremium } from './macroRates.js';
 import { calculateGrowthNowcast, calculateInflationNowcast, calculateLiquidityCalendar, calculateRatePath, calculateRegimeTransitions, calculateYieldCurveModel, seriesPoints } from './macroModels.js';
 import { describeSeriesFreshness, isCryptoHistoryStale, isCotReportStale, isDailyCloseStale, isFredSeriesStale, isPbocObservationStale, monthsBetween } from './freshness.js';
@@ -2280,6 +2280,49 @@ async function getGrowthProxyHistories() {
   }).catch(() => new Map());
 }
 
+// Weekly vintage dates back over the study window. ALFRED answers "what did
+// this series look like on each of these dates", which is the only way to score
+// a past date without using revisions that did not exist then.
+function weeklyVintageDates(years = 6, now = new Date()) {
+  const dates = [];
+  const start = new Date(now.getTime() - (years * 365 * 86_400_000));
+  for (let time = start.getTime(); time <= now.getTime(); time += 7 * 86_400_000) {
+    dates.push(new Date(time).toISOString().slice(0, 10));
+  }
+  return dates;
+}
+
+const REGIME_VINTAGE_SERIES = [
+  { id: 'NFCI', key: 'financialConditions' },
+  { id: 'BAMLH0A0HYM2', key: 'highYieldSpread' },
+  { id: 'VIXCLS', key: 'vix' },
+];
+
+/**
+ * Point-in-time observations for the regime study's own inputs. Without a FRED
+ * API key this returns nothing and the study stays the hindsight version it
+ * already labels itself as; with one it becomes a genuine backtest.
+ */
+async function getRegimeVintages() {
+  if (!config.fredApiKey) return { vintages: null, reason: 'A FRED API key is required for point-in-time observations.' };
+  return withCache('analytics:regime-vintages', 24 * 3_600_000, async () => {
+    const vintageDates = weeklyVintageDates();
+    const observationStart = vintageDates[0];
+    const results = await Promise.allSettled(REGIME_VINTAGE_SERIES.map((series) => getFredVintageSeries(series, { observationStart, vintageDates })));
+    const vintages = {};
+    const failed = [];
+    results.forEach((result, index) => {
+      const series = REGIME_VINTAGE_SERIES[index];
+      if (result.status === 'fulfilled' && result.value.status === 'calculated') vintages[series.key] = result.value.history;
+      else failed.push(series.id);
+    });
+    return {
+      vintages: Object.keys(vintages).length ? vintages : null,
+      reason: Object.keys(vintages).length ? null : `ALFRED returned no vintages for ${failed.join(', ')}.`,
+    };
+  }).catch((error) => ({ vintages: null, reason: `Point-in-time vintages are unreachable: ${error.message}` }));
+}
+
 export async function getLiquiditySnapshot(options = {}) {
   return withCache('liquidity-snapshot', 15 * 60_000, async () => {
     const storedSeries = await getStoredFredSeries().catch(() => []);
@@ -2325,13 +2368,36 @@ export async function getLiquiditySnapshot(options = {}) {
       curveSpread: Number.isFinite(tenTwo?.spread) ? tenTwo.spread : null,
       breakeven: breakevenMomentum,
     });
-    const regimeHistory = calculateRegimeTransitions(modelSeries, benchmarkHistory);
+    const regimeVintages = await getRegimeVintages();
+    const regimeHistory = {
+      ...calculateRegimeTransitions(modelSeries, benchmarkHistory, { vintages: regimeVintages.vintages }),
+      vintageReason: regimeVintages.reason,
+    };
     const nominalDecomposition = calculateNominalDecomposition(modelSeries);
     const termPremium = calculateTermPremium(modelSeries);
     const rateDivergence = calculateRateDivergence(modelSeries);
     const dataSurprise = calculateDataSurprise(modelSeries, { indicators: SURPRISE_INDICATORS });
     const reserveScarcity = calculateReserveScarcity(modelSeries);
     const liquidityPayoff = calculateLiquidityPayoff(model?.history ?? [], benchmarkHistory);
+
+    // Historical scores for the models the overlap matrix tracks, so it has
+    // something to correlate before three months of weekly runs accumulate.
+    // These carry the current vintage of their inputs, which is fine for asking
+    // how two models move together and is not evidence about what either would
+    // have said at the time.
+    const backfillDates = weeklyVintageDates(2);
+    const scoreSeriesAt = (points, scorer) => (date) => {
+      const sliced = points.filter((point) => point.date <= date);
+      return sliced.length ? scorer(sliced) : null;
+    };
+    const liquidityPoints = model?.history ?? [];
+    const macroBackfill = [
+      buildBackfillRows('us-liquidity', scoreSeriesAt(liquidityPoints, (points) => {
+        const latest = points.at(-1);
+        const prior = points.find((point) => new Date(point.date) >= new Date(new Date(latest.date).getTime() - (91 * 86_400_000)));
+        return prior && prior.value > 0 ? Math.round(Math.min(100, Math.max(0, 50 + ((((latest.value / prior.value) - 1) * 100) * 16)))) : null;
+      }), backfillDates),
+    ].filter((entry) => entry.rows.length >= 12);
 
     const macroModels = {
       macroRegime,
@@ -2348,15 +2414,33 @@ export async function getLiquiditySnapshot(options = {}) {
       liquidityCalendar,
     };
     const consensus = calculateModelConsensus(macroModels);
-    const macroAlerts = evaluateMacroAlerts({ ...macroModels, consensus });
+    // The previous evaluation, so an alert is raised on the transition into a
+    // condition rather than every run while it holds. Without stored state
+    // every condition reads as new, which is correct on a first run and is
+    // published as such.
+    let previousAlerts = null;
+    if (isDatabaseConfigured()) {
+      previousAlerts = await getRecentModelOutputs('macro-alerts', 1).then((rows) => rows[0]?.output ?? null).catch(() => null);
+    }
+    const macroAlerts = evaluateMacroAlerts({ ...macroModels, consensus }, { previous: previousAlerts });
+    // Which driver of the regime composite is a near-duplicate of another. The
+    // regime carries both liquidity impulses and the global pool contains the
+    // US one by construction, so this is the pair most likely to double-count.
+    const REGIME_DRIVER_MODELS = {
+      liquidity: 'us-liquidity',
+      globalLiquidity: 'global-liquidity',
+      dollar: 'usd-strength',
+    };
     // The matrix reads stored output history, so it only has anything to say
     // once PostgreSQL is configured and ingestion has run more than once.
     let modelCorrelation = calculateModelCorrelationMatrix({});
+    let weightOverlap = calculateWeightOverlap(macroRegime, modelCorrelation, { driverToModelId: REGIME_DRIVER_MODELS });
     if (isDatabaseConfigured()) {
       try {
         const tracked = ['us-liquidity', 'global-liquidity', 'usd-strength', 'macro-regime', 'growth-nowcast', 'yield-curve', 'data-surprise', 'reserve-scarcity'];
         const stored = await Promise.all(tracked.map((modelId) => getRecentModelOutputs(modelId, 120).catch(() => [])));
         modelCorrelation = calculateModelCorrelationMatrix(Object.fromEntries(tracked.map((modelId, index) => [modelId, stored[index]])));
+        weightOverlap = calculateWeightOverlap(macroRegime, modelCorrelation, { driverToModelId: REGIME_DRIVER_MODELS });
       } catch (error) {
         modelCorrelation = { version: 'macro-model-correlation-v1', status: 'unavailable', reason: `Stored model outputs could not be read: ${error.message}`, pairs: [], models: [] };
       }
@@ -2438,6 +2522,8 @@ export async function getLiquiditySnapshot(options = {}) {
       consensus,
       macroAlerts,
       modelCorrelation,
+      weightOverlap,
+      macroBackfill,
       dollarScenarios,
       stablecoins,
       narrative,

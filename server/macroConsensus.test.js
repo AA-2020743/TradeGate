@@ -1,8 +1,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
+  buildBackfillRows,
   calculateModelConsensus,
   calculateModelCorrelationMatrix,
+  calculateWeightOverlap,
   collectMacroSignals,
   evaluateMacroAlerts,
 } from './macroConsensus.js';
@@ -234,4 +236,215 @@ test('a model standing apart is reported once, not restated against every other'
 test('no outlier is reported when every model sits together', () => {
   const consensus = calculateModelConsensus(strongModels);
   assert.deepEqual(consensus.outliers, []);
+});
+
+const scarceModels = {
+  reserveScarcity: { status: 'calculated', state: 'Reserves scarce', spreadBasisPoints: 14, daysAboveThreshold: 9, thresholdBasisPoints: 5 },
+  liquidityCalendar: { status: 'calculated', quarterEnd: { daysAway: 40 }, monthsOfCushion: 3.2 },
+};
+
+test('an alert is news on the transition, not on every evaluation while it holds', () => {
+  const first = evaluateMacroAlerts(scarceModels);
+  assert.equal(first.entries.length, 2);
+  assert.equal(first.raised.length, 2, 'with no prior state every live condition is new');
+
+  // The same conditions, evaluated again. Nothing has changed, so nothing is
+  // news — the feed used to gain two more rows here every single run.
+  const second = evaluateMacroAlerts(scarceModels, { previous: first });
+  assert.equal(second.entries.length, 2, 'both conditions are still live');
+  assert.deepEqual(second.raised, [], 'and neither is news');
+  assert.deepEqual(second.resolved, []);
+});
+
+test('a condition that clears is published as resolved', () => {
+  const live = evaluateMacroAlerts(scarceModels);
+  const cleared = evaluateMacroAlerts({
+    reserveScarcity: { status: 'calculated', state: 'Reserves ample', spreadBasisPoints: 1, daysAboveThreshold: 0, thresholdBasisPoints: 5 },
+    liquidityCalendar: { status: 'calculated', quarterEnd: { daysAway: 40 }, monthsOfCushion: 30 },
+  }, { previous: live });
+  assert.deepEqual(cleared.entries, []);
+  assert.equal(cleared.resolved.length, 2);
+  assert.equal(cleared.resolved.every((entry) => entry.text.includes('no longer live')), true);
+  assert.match(cleared.read, /2 cleared since the last evaluation/);
+});
+
+test('a condition whose model stopped publishing is not reported as resolved', () => {
+  const live = evaluateMacroAlerts(scarceModels);
+  // The model went unavailable. Whether the condition still holds is unknown,
+  // and "unknown" must not be published as "it cleared".
+  const blind = evaluateMacroAlerts({
+    reserveScarcity: { status: 'unavailable', reason: 'SOFR feed down' },
+    liquidityCalendar: { status: 'calculated', quarterEnd: { daysAway: 40 }, monthsOfCushion: 3.2 },
+  }, { previous: live });
+  assert.equal(blind.resolved.some((entry) => entry.key === 'reserves-tightening'), false);
+  assert.equal(blind.skipped.some((entry) => entry.key === 'reserves-tightening'), true);
+});
+
+test('a condition that could not be evaluated last time is flagged when it fires', () => {
+  const blind = evaluateMacroAlerts({ reserveScarcity: { status: 'unavailable', reason: 'down' } });
+  const back = evaluateMacroAlerts(scarceModels, { previous: blind });
+  const entry = back.entries.find((item) => item.key === 'reserves-tightening');
+  assert.equal(entry.isNew, true);
+  assert.equal(entry.unknownBefore, true, 'we genuinely cannot say whether it was live before');
+});
+
+test('each signal carries the vintage of the model behind it', () => {
+  const today = new Date().toISOString().slice(0, 10);
+  const sixWeeksAgo = new Date(Date.now() - (42 * 86_400_000)).toISOString().slice(0, 10);
+  const { directional } = collectMacroSignals({
+    ...strongModels,
+    macroRegime: { status: 'calculated', score: 72, regime: 'Expansion / risk-on', asOf: today, vintage: { oldestInput: { key: 'financialConditions', name: 'FRED NFCI', date: sixWeeksAgo } } },
+    liquidity: { status: 'calculated', score: 78, regime: 'Expansion', asOf: today },
+  });
+  const regime = directional.find((signal) => signal.key === 'macroRegime');
+  const liquidity = directional.find((signal) => signal.key === 'liquidity');
+  // The regime's headline date is today; its oldest binding input is six weeks
+  // old, and that is the moment the reading actually describes.
+  assert.equal(regime.asOf, sixWeeksAgo);
+  assert.equal(regime.ageDays >= 40, true, `age was ${regime.ageDays}`);
+  assert.equal(regime.lagging, true);
+  assert.equal(liquidity.ageDays <= 1, true);
+  assert.equal(liquidity.lagging, false);
+});
+
+test('the consensus names its oldest and freshest signal', () => {
+  const today = new Date().toISOString().slice(0, 10);
+  const stale = new Date(Date.now() - (50 * 86_400_000)).toISOString().slice(0, 10);
+  const consensus = calculateModelConsensus({
+    ...strongModels,
+    growthNowcast: { status: 'calculated', score: 74, state: 'Accelerating', asOf: stale },
+    liquidity: { status: 'calculated', score: 78, regime: 'Expansion', asOf: today },
+  });
+  assert.equal(consensus.vintage.oldest.key, 'growth');
+  assert.equal(consensus.vintage.freshest.key, 'liquidity');
+  assert.equal(consensus.vintage.spreadDays >= 45, true);
+  assert.equal(consensus.vintage.laggingCount >= 1, true);
+  assert.match(consensus.read, /more than three weeks old/);
+});
+
+test('a model with no date at all is not counted as fresh', () => {
+  const { directional } = collectMacroSignals({ liquidity: { status: 'calculated', score: 60 } });
+  const signal = directional.find((entry) => entry.key === 'liquidity');
+  assert.equal(signal.asOf, null);
+  assert.equal(signal.ageDays, null);
+  assert.equal(signal.lagging, false);
+});
+
+const overlapModel = {
+  status: 'calculated',
+  version: 'macro-regime-v1',
+  score: 60,
+  drivers: [
+    { key: 'liquidity', name: 'US liquidity impulse', score: 80, weight: 0.25 },
+    { key: 'globalLiquidity', name: 'Global liquidity impulse', score: 78, weight: 0.15 },
+    { key: 'credit', name: 'High-yield credit', score: 40, weight: 0.18 },
+  ],
+};
+const overlapMatrix = {
+  pairs: [
+    { status: 'calculated', left: 'us-liquidity', right: 'global-liquidity', correlation: 0.97 },
+    { status: 'calculated', left: 'us-liquidity', right: 'credit-model', correlation: 0.2 },
+  ],
+};
+const driverToModelId = { liquidity: 'us-liquidity', globalLiquidity: 'global-liquidity', credit: 'credit-model' };
+
+test('weight overlap finds a driver pair counted twice and reweights without it', () => {
+  const overlap = calculateWeightOverlap(overlapModel, overlapMatrix, { driverToModelId });
+  assert.equal(overlap.status, 'calculated');
+  assert.equal(overlap.pairs.length, 1);
+  assert.equal(overlap.pairs[0].redundantDriver, 'globalLiquidity', 'the lighter of the two carries the redundant weight');
+  assert.equal(overlap.adjustedScore !== overlap.headlineScore, true);
+  assert.match(overlap.methodology, /published beside the headline rather than replacing it/);
+});
+
+test('weight overlap calls nothing duplication until it has been measured', () => {
+  const withoutMatrix = calculateWeightOverlap(overlapModel, { pairs: [] }, { driverToModelId });
+  assert.equal(withoutMatrix.status, 'unavailable');
+  assert.match(withoutMatrix.reason, /overlap cannot be distinguished from agreement/);
+
+  const uncorrelated = calculateWeightOverlap(overlapModel, {
+    pairs: [{ status: 'calculated', left: 'us-liquidity', right: 'global-liquidity', correlation: 0.4 }],
+  }, { driverToModelId });
+  assert.equal(uncorrelated.status, 'calculated');
+  assert.deepEqual(uncorrelated.pairs, []);
+  assert.equal(uncorrelated.adjustedScore, uncorrelated.headlineScore);
+});
+
+test('weight overlap refuses a composite that publishes no drivers', () => {
+  assert.equal(calculateWeightOverlap({ status: 'calculated', score: 60 }, overlapMatrix).status, 'unavailable');
+  assert.equal(calculateWeightOverlap({ status: 'unavailable' }, overlapMatrix).status, 'unavailable');
+});
+
+test('backfill rows are produced per date and flagged as backfilled', () => {
+  const dates = ['2025-01-06', '2025-01-13', '2025-01-20'];
+  const backfill = buildBackfillRows('us-liquidity', (date) => 50 + dates.indexOf(date), dates);
+  assert.equal(backfill.rows.length, 3);
+  assert.equal(backfill.rows[0].output.backfilled, true);
+  assert.equal(backfill.rows[0].output.asOf, '2025-01-06');
+  assert.equal(backfill.rows.at(-1).output.score, 52);
+  assert.match(backfill.read, /3 backfilled readings/);
+});
+
+test('a date the score function cannot answer is dropped, not scored zero', () => {
+  const backfill = buildBackfillRows('m', (date) => {
+    if (date === '2025-01-13') throw new Error('no history that far back');
+    return date === '2025-01-20' ? null : 60;
+  }, ['2025-01-06', '2025-01-13', '2025-01-20']);
+  assert.equal(backfill.rows.length, 1);
+  assert.equal(backfill.rows[0].output.asOf, '2025-01-06');
+});
+
+test('backfilled rows feed the overlap matrix like any other stored vintage', () => {
+  const dates = Array.from({ length: 20 }, (_, index) => new Date(Date.UTC(2025, 0, 6 + (index * 7))).toISOString().slice(0, 10));
+  const left = buildBackfillRows('a', (date) => 50 + (Math.sin(dates.indexOf(date) / 3) * 20), dates);
+  const right = buildBackfillRows('b', (date) => 50 - (Math.sin(dates.indexOf(date) / 3) * 20), dates);
+  const matrix = calculateModelCorrelationMatrix({
+    a: left.rows.map((row) => ({ effective_at: row.asOf, output: row.output })),
+    b: right.rows.map((row) => ({ effective_at: row.asOf, output: row.output })),
+  });
+  assert.equal(matrix.status, 'calculated');
+  assert.equal(matrix.pairs[0].correlation < -0.95, true);
+});
+
+test('anti-correlated drivers offset rather than duplicate, and the score is left alone', () => {
+  const overlap = calculateWeightOverlap({
+    status: 'calculated',
+    version: 'macro-regime-v1',
+    score: 60,
+    drivers: [
+      { key: 'liquidity', name: 'US liquidity impulse', score: 80, weight: 0.25 },
+      { key: 'dollar', name: 'Inverse dollar pressure', score: 20, weight: 0.1 },
+    ],
+  }, {
+    pairs: [{ status: 'calculated', left: 'us-liquidity', right: 'usd-strength', correlation: -1 }],
+  }, { driverToModelId: { liquidity: 'us-liquidity', dollar: 'usd-strength' } });
+
+  assert.deepEqual(overlap.pairs, [], 'a mirror-image pair is not the same factor counted twice');
+  assert.equal(overlap.offsetting.length, 1);
+  assert.equal(overlap.adjustedScore, overlap.headlineScore, 'the score must not be adjusted for an offsetting pair');
+  assert.match(overlap.offsetting[0].read, /largely cancel/);
+  assert.match(overlap.read, /offsets rather than duplicates/);
+});
+
+test('a positive duplicate still adjusts the score even alongside an offsetting pair', () => {
+  const overlap = calculateWeightOverlap({
+    status: 'calculated',
+    version: 'macro-regime-v1',
+    score: 60,
+    drivers: [
+      { key: 'liquidity', name: 'US liquidity impulse', score: 80, weight: 0.25 },
+      { key: 'globalLiquidity', name: 'Global liquidity impulse', score: 78, weight: 0.15 },
+      { key: 'dollar', name: 'Inverse dollar pressure', score: 20, weight: 0.1 },
+    ],
+  }, {
+    pairs: [
+      { status: 'calculated', left: 'us-liquidity', right: 'global-liquidity', correlation: 0.97 },
+      { status: 'calculated', left: 'us-liquidity', right: 'usd-strength', correlation: -0.98 },
+    ],
+  }, { driverToModelId: { liquidity: 'us-liquidity', globalLiquidity: 'global-liquidity', dollar: 'usd-strength' } });
+
+  assert.equal(overlap.pairs.length, 1);
+  assert.equal(overlap.pairs[0].redundantDriver, 'globalLiquidity');
+  assert.equal(overlap.offsetting.length, 1);
+  assert.equal(Number.isFinite(overlap.adjustedScore), true);
 });

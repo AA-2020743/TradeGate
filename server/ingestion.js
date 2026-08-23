@@ -194,12 +194,32 @@ export async function ingestLiquiditySnapshot() {
       persistedMacroModels.push(entry.modelId);
     }
 
+    // Only transitions reach the feed. The alerts table's uniqueness constraint
+    // includes detected_at, which defaults to now(), so a still-live condition
+    // inserted every run conflicts with nothing and duplicates forever.
     let macroAlertsRaised = 0;
-    if (snapshot.macroAlerts?.entries?.length) {
-      macroAlertsRaised = await insertModelAlerts('macro-alerts-v1', snapshot.macroAlerts.entries.map((entry) => ({
-        key: entry.key,
-        text: `[${entry.severity}] ${entry.text}`,
-      })), runId);
+    const alertRows = [
+      ...(snapshot.macroAlerts?.raised ?? []).map((entry) => ({ key: entry.key, text: `[${entry.severity}] ${entry.text}` })),
+      ...(snapshot.macroAlerts?.resolved ?? []).map((entry) => ({ key: `${entry.key}:resolved`, text: `[cleared] ${entry.text}` })),
+    ];
+    if (alertRows.length) {
+      macroAlertsRaised = await insertModelAlerts('macro-alerts-v1', alertRows, runId);
+    }
+    if (snapshot.macroAlerts) {
+      // Stored so the next run knows what was live at this one.
+      await persistModelOutput('macro-alerts', { ...snapshot.macroAlerts, asOf: new Date().toISOString() }, lineageFor(macroKeys), runId);
+    }
+
+    // Backfilled readings are stored once, keyed by their own vintage, so a
+    // model that has only ever run a handful of times still has a history to be
+    // correlated against. They are flagged in the stored output so nothing
+    // reads them as live runs.
+    let backfilledRows = 0;
+    for (const entry of snapshot.macroBackfill ?? []) {
+      for (const row of entry.rows) {
+        await persistModelOutput(`${entry.modelId}-backfill`, row.output, [{ provider: entry.source, asOf: row.asOf }], runId);
+        backfilledRows += 1;
+      }
     }
 
     let regimeCorrelationVersion = null;
@@ -220,7 +240,7 @@ export async function ingestLiquiditySnapshot() {
 
     return {
       status: snapshot.errors.length || !snapshot.model ? 'partial' : 'completed',
-      details: { seriesReceived: snapshot.series.length, modelVersion: snapshot.model?.version ?? null, usdStrengthVersion: snapshot.usdStrength?.version ?? null, macroRegimeVersion: snapshot.macroRegime?.version ?? null, regimeCorrelationVersion, persistedMacroModels, macroAlertsRaised, providerErrors: [...snapshot.errors, ...persistenceErrors] },
+      details: { seriesReceived: snapshot.series.length, modelVersion: snapshot.model?.version ?? null, usdStrengthVersion: snapshot.usdStrength?.version ?? null, macroRegimeVersion: snapshot.macroRegime?.version ?? null, regimeCorrelationVersion, persistedMacroModels, macroAlertsRaised, backfilledRows, providerErrors: [...snapshot.errors, ...persistenceErrors] },
     };
   });
 }
