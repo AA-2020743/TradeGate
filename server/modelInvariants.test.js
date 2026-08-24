@@ -172,3 +172,81 @@ test('no two-series model publishes a non-finite number, whichever leg is degene
   }
   assert.deepEqual(failures, []);
 });
+
+/**
+ * The collection-shaped and composite equity models, which the generic sweeps
+ * above cannot reach: they take sector collections, symbol maps, or a bag of
+ * other models rather than a series, so calibration never finds a shape for
+ * them and they are skipped.
+ */
+test('equity collection and composite models survive degenerate members', async () => {
+  const equity = await import('./equityAnalytics.js');
+  const day = (index) => new Date(Date.UTC(2021, 0, 1) + (index * 86_400_000)).toISOString().slice(0, 10);
+  const points = (count, valueAt) => Array.from({ length: count }, (_, index) => ({ date: day(index), value: valueAt(index) }));
+
+  const shapes = {
+    healthy: () => points(400, (index) => 100 + (index * 0.1) + (Math.sin(index / 9) * 3)),
+    flat: () => points(400, () => 100),
+    zeros: () => points(400, () => 0),
+    negatives: () => points(400, (index) => -50 + Math.sin(index / 7)),
+    tiny: () => points(400, () => 1e-12),
+    short: () => points(3, (index) => 100 + index),
+    empty: () => [],
+  };
+  const benchmark = shapes.healthy();
+  const sector = (make, symbol) => ({ symbol, name: `Sector ${symbol}`, points: make() });
+
+  const failures = [];
+  const check = (label, run) => {
+    let result;
+    try {
+      result = run();
+    } catch (error) {
+      failures.push(`${label} threw ${error.constructor.name}: ${error.message}`);
+      return;
+    }
+    for (const finding of collect(result, '', [])) failures.push(`${label} :: ${finding}`);
+  };
+
+  for (const [name, make] of Object.entries(shapes)) {
+    const uniform = ['XLK', 'XLF', 'XLE'].map((symbol) => sector(make, symbol));
+    // A degenerate sector sitting among healthy ones is the realistic case: one
+    // constituent feed stalls while the rest keep printing.
+    const mixed = [sector(shapes.healthy, 'XLK'), sector(make, 'XLF'), sector(shapes.healthy, 'XLE')];
+    check(`calculateSectorRotation(${name})`, () => equity.calculateSectorRotation(uniform, benchmark));
+    check(`calculateSectorRotation(mixed/${name})`, () => equity.calculateSectorRotation(mixed, benchmark));
+    check(`calculateSectorDispersion(${name})`, () => equity.calculateSectorDispersion(uniform, benchmark));
+    check(`calculateSectorDispersion(mixed/${name})`, () => equity.calculateSectorDispersion(mixed, benchmark));
+    check(`calculateCaptureProfile(${name})`, () => equity.calculateCaptureProfile(make(), benchmark));
+    check(`calculateBasketRotation(${name})`, () => equity.calculateBasketRotation(
+      [{ key: 'cyc', leftName: 'Cyclicals', rightName: 'Defensives', leftSymbols: ['XLY', 'XLI'], rightSymbols: ['XLP', 'XLU'], leftLeader: 'Cyc', rightLeader: 'Def' }],
+      new Map([['XLY', make()], ['XLI', shapes.healthy()], ['XLP', shapes.healthy()], ['XLU', make()]]),
+    ));
+  }
+
+  check('calculateSectorRotation(no sectors)', () => equity.calculateSectorRotation([], benchmark));
+  check('calculateSectorDispersion(no sectors)', () => equity.calculateSectorDispersion([], benchmark));
+
+  // Composites fed nothing but unavailable legs must still describe themselves.
+  const unavailable = { status: 'unavailable', reason: 'stub' };
+  const legs = { technical: unavailable, breadth: unavailable, sentiment: unavailable, positioning: unavailable, credit: unavailable, liquidity: unavailable, flows: unavailable };
+  for (const [name, build] of Object.entries({
+    calculateEquityRegime: equity.calculateEquityRegime,
+    calculateTopRisk: equity.calculateTopRisk,
+    calculateBottomSignal: equity.calculateBottomSignal,
+  })) {
+    check(`${name}(all unavailable)`, () => build(legs));
+    check(`${name}({})`, () => build({}));
+    check(`${name}(undefined)`, () => build());
+  }
+
+  check('calculateBreadth([])', () => equity.calculateBreadth([]));
+  check('calculateBreadth(flat constituents)', () => equity.calculateBreadth(['A', 'B', 'C'].map((symbol) => ({ symbol, points: shapes.flat() }))));
+  check('calculateThrustLog(empty)', () => equity.calculateThrustLog([], []));
+  check('calculateThrustLog(flat)', () => equity.calculateThrustLog(Array(300).fill(0.5), Array(300).fill(100)));
+  check('calculateRevisionBreadth([])', () => equity.calculateRevisionBreadth([]));
+  check('calculateRevisionBreadth(no revisions)', () => equity.calculateRevisionBreadth(Array.from({ length: 40 }, (_, index) => ({ symbol: `N${index}`, up: 0, down: 0 }))));
+  check('calculateMacroSensitivities(flat)', () => equity.calculateMacroSensitivities(shapes.flat(), [{ key: 'vix', name: 'VIX', points: shapes.flat() }]));
+
+  assert.deepEqual(failures, []);
+});

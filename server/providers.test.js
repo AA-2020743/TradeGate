@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { alignedRatioSeries, calculateTwelveCreditSlot, mergeFredSeries, mergeMarketSnapshot, parseRssItems, percentileOf, smaOf } from './providers.js';
+import { buildSocrataRequest } from './analytics.js';
 
 test('simple moving average requires the full window', () => {
   assert.equal(smaOf([1, 2, 3], 3), 2);
@@ -83,4 +84,23 @@ test('stale live FRED response does not replace a fresh stored series', () => {
   const stored = { id: 'VIXCLS', key: 'vix', date: '2026-08-20', value: 15, stored: true, stale: false };
   const live = { id: 'VIXCLS', key: 'vix', date: '2026-08-01', value: 30, stored: false, stale: true };
   assert.equal(mergeFredSeries([live], [stored])[0], stored);
+});
+
+test('a Socrata request carries the app token, and stays usable without one', () => {
+  // The token buys a private rate budget on a dataset Socrata already serves
+  // anonymously. That is why a rejected token must fall back rather than fail:
+  // pasting the Secret Token instead of the App Token turned a working keyless
+  // feed into a 403 and took positioning down platform-wide.
+  const withToken = buildSocrataRequest('publicreporting.cftc.gov', 'abcd-1234', { appToken: 'tok', params: { $limit: '5' } });
+  assert.equal(withToken.authenticated, true);
+  assert.deepEqual(withToken.headers, { 'X-App-Token': 'tok' });
+
+  const anonymous = buildSocrataRequest('publicreporting.cftc.gov', 'abcd-1234', { params: { $limit: '5' } });
+  assert.equal(anonymous.authenticated, false);
+  assert.equal(anonymous.headers, null);
+  // Same URL either way: the credential never changes what is asked for.
+  assert.equal(anonymous.url, withToken.url);
+
+  // Whitespace around a pasted token must not make it look configured.
+  assert.equal(buildSocrataRequest('h', 'd', { appToken: '   ' }).authenticated, false);
 });

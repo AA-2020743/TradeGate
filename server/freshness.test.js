@@ -90,3 +90,42 @@ test('a future-dated observation is reported as zero days rather than negative',
   assert.equal(result.ageDays, 0);
   assert.equal(result.state, 'current');
 });
+
+test('the H.10 FX series survive their own weekly release cycle', () => {
+  // These are daily-frequency but weekly-released: FRED publishes the prior
+  // week's daily rates in one batch. The newest observation therefore ages
+  // from 3 days just after a release to 10 the day before the next one.
+  // A 10-day tolerance was the exact worst case of the normal cycle, so these
+  // went stale every week and took the dollar leg out of the liquidity models
+  // with them - reported live as four stale series on a Monday, with a Friday
+  // observation ten days behind.
+  const monday = Date.parse('2026-08-24T12:00:00.000Z');
+  for (const id of ['DTWEXBGS', 'DEXUSEU', 'DEXJPUS', 'DEXCHUS']) {
+    assert.equal(isFredSeriesStale(id, '2026-08-14', monday), false, `${id} at the top of its normal cycle`);
+    assert.equal(describeSeriesFreshness(id, '2026-08-14', monday).state, 'current', `${id} is between prints, not late`);
+
+    // A release delayed to Tuesday by a holiday is still not a fault.
+    assert.equal(isFredSeriesStale(id, '2026-08-13', monday), false, `${id} after a holiday-delayed release`);
+
+    // A genuine outage must still be caught.
+    assert.equal(isFredSeriesStale(id, '2026-07-10', monday), true, `${id} six weeks behind is an outage`);
+  }
+});
+
+test('every FRED tolerance leaves room above its own expected publication gap', () => {
+  // The H.10 bug was a tolerance set to the exact top of the normal cycle, so
+  // the series tripped it routinely. No series should be configured that way:
+  // the hard tolerance has to sit meaningfully above the gap the series is
+  // expected to keep, or "stale" means "between prints".
+  const ids = ['WALCL', 'WTREGEN', 'RRPONTSYD', 'M2SL', 'DGS2', 'DFII10', 'NFCI', 'BAMLH0A0HYM2',
+    'VIXCLS', 'ECBASSETSW', 'JPNASSETS', 'DEXUSEU', 'DEXJPUS', 'DEXCHUS', 'DTWEXBGS', 'DGS10',
+    'DGS3MO', 'T5YIFR', 'T5YIE', 'T10YIE', 'CPIAUCSL', 'THREEFYTP10', 'SOFR', 'IORB', 'PAYEMS',
+    'ICSA', 'INDPRO', 'RSAFS'];
+  const now = Date.parse('2026-08-24T12:00:00.000Z');
+  const tooTight = [];
+  for (const id of ids) {
+    const { expectedWithinDays, maxAgeDays } = describeSeriesFreshness(id, '2026-08-24', now);
+    if (maxAgeDays < expectedWithinDays + 3) tooTight.push(`${id}: tolerance ${maxAgeDays} against an expected gap of ${expectedWithinDays}`);
+  }
+  assert.deepEqual(tooTight, []);
+});

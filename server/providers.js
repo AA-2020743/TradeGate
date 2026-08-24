@@ -648,7 +648,7 @@ async function getCotDisaggregatedGold() {
     $order: 'report_date_as_yyyy_mm_dd DESC',
     $limit: '160',
   });
-  const rows = await fetchJson(request.url, 0, 2, request.headers);
+  const rows = await fetchCftc(request);
   const history = (Array.isArray(rows) ? rows : []).map((row) => {
     const long = asNumber(row.m_money_positions_long_all);
     const short = asNumber(row.m_money_positions_short_all);
@@ -1789,6 +1789,34 @@ function cftcRequest(dataset, params) {
   return buildSocrataRequest('publicreporting.cftc.gov', dataset, { appToken: config.cftcAppToken, params });
 }
 
+// Whether the configured app token was accepted, so the platform can say so
+// rather than leaving a misconfiguration to look like an upstream outage.
+let cftcTokenState = 'unknown';
+
+export function getCftcTokenState() {
+  return config.cftcAppToken ? cftcTokenState : 'not-configured';
+}
+
+/**
+ * A rejected app token is worse than no app token at all. Socrata serves this
+ * dataset anonymously - the token only buys a private rate budget - so pasting
+ * the wrong credential (the Secret Token instead of the App Token, say) turns
+ * a working keyless feed into a 403 and takes positioning down platform-wide.
+ * Retry once without it and record that the token is being rejected.
+ */
+async function fetchCftc(request) {
+  try {
+    const rows = await fetchJson(request.url, 0, 2, request.headers);
+    if (request.authenticated) cftcTokenState = 'accepted';
+    return rows;
+  } catch (error) {
+    const rejectedCredential = request.authenticated && /\b(401|403)\b/.test(error?.message ?? '');
+    if (!rejectedCredential) throw error;
+    cftcTokenState = 'rejected';
+    return fetchJson(request.url, 0, 2, null);
+  }
+}
+
 
 async function getCotContract(contract) {
   const request = cftcRequest(COT_DATASET, {
@@ -1797,7 +1825,7 @@ async function getCotContract(contract) {
     $order: 'report_date_as_yyyy_mm_dd DESC',
     $limit: '160',
   });
-  const rows = await fetchJson(request.url, 0, 2, request.headers);
+  const rows = await fetchCftc(request);
   const history = (Array.isArray(rows) ? rows : []).map((row) => {
     const long = Number(row.noncomm_positions_long_all);
     const short = Number(row.noncomm_positions_short_all);
@@ -1822,7 +1850,16 @@ export async function getMarketPositioning() {
     const model = calculatePositioningModel(reports);
     return {
       asOf: new Date().toISOString(),
-      provider: { name: 'CFTC public reporting (Socrata)', configured: true },
+      provider: {
+        name: 'CFTC public reporting (Socrata)',
+        configured: true,
+        appToken: getCftcTokenState(),
+        // A rejected token is a configuration fault, not an upstream one, and
+        // the two need different fixes.
+        note: getCftcTokenState() === 'rejected'
+          ? 'CFTC_APP_TOKEN was rejected by Socrata and the request fell back to the shared anonymous pool. Check that the App Token was used rather than the Secret Token.'
+          : null,
+      },
       model,
       staleContracts: reports.filter((report) => report.stale).map((report) => report.name),
       errors,
@@ -1965,6 +2002,11 @@ export async function getFxWorkspace() {
       version: 'fx-workspace-v1',
       status: pairs.length ? 'calculated' : 'unavailable',
       calculatedCount: pairs.length + links.length + rotationSignals.filter((signal) => signal.status !== 'Unavailable').length,
+      // Why positioning is absent, carried through so the panel can say it.
+      positioningProvider: positioningResult[0].status === 'fulfilled' ? positioningResult[0].value.provider ?? null : null,
+      positioningErrors: positioningResult[0].status === 'fulfilled'
+        ? positioningResult[0].value.errors ?? []
+        : [positioningResult[0].reason?.message ?? 'The CFTC request failed.'],
       usdCot: usdContract ? { name: 'US Dollar Index', venue: 'ICE Futures U.S.', netNoncomm: usdContract.netNoncomm, weeklyChange: usdContract.weeklyChange, percentile: usdContract.percentile, crowd: usdContract.crowd, stance: usdContract.stance, asOf: usdContract.asOf } : null,
       pairs,
       links,

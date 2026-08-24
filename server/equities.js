@@ -105,9 +105,32 @@ export async function getEquityDashboard(requestedSymbol = 'SPY') {
   const topRisk = calculateTopRisk({ technical: usableTechnical, breadth: constituentBreadth, liquidity: liquidity?.model });
   const bottomSignal = calculateBottomSignal({ technical: usableTechnical, breadth: constituentBreadth, liquidity: liquidity?.model });
 
+  // A composite is only as current as its stalest binding input. Taking the
+  // newest let one fresh leg mask another that had stopped updating, which is
+  // the same fault the macro regime had. The two inputs also arrive in
+  // different formats - an ISO timestamp and a plain date - so they are
+  // compared as instants rather than as strings.
+  const vintageInputs = [
+    { name: 'technical snapshot', asOf: technical?.asOf ?? null },
+    { name: 'liquidity model', asOf: liquidity?.model?.asOf ?? null },
+  ].flatMap((entry) => {
+    const at = entry.asOf ? Date.parse(entry.asOf.length === 10 ? `${entry.asOf}T00:00:00.000Z` : entry.asOf) : Number.NaN;
+    return Number.isFinite(at) ? [{ ...entry, at }] : [];
+  }).sort((left, right) => left.at - right.at);
+  const oldestInput = vintageInputs[0] ?? null;
+  const dashboardVintage = {
+    asOf: oldestInput?.asOf ?? null,
+    // Which input is holding the whole dashboard back, and how far apart the
+    // inputs are - a wide spread is itself worth seeing.
+    asOfSource: oldestInput?.name ?? null,
+    asOfSpreadDays: vintageInputs.length > 1
+      ? Math.round((vintageInputs.at(-1).at - vintageInputs[0].at) / 86_400_000)
+      : null,
+  };
+
   return {
     version: 'equity-dashboard-v1',
-    asOf: [technical?.asOf, liquidity?.model?.asOf].filter(Boolean).sort().at(-1) ?? null,
+    ...dashboardVintage,
     index,
     technical,
     regime,

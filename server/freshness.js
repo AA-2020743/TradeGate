@@ -12,10 +12,18 @@ const FRED_MAX_OBSERVATION_AGE_DAYS = {
   VIXCLS: 7,
   ECBASSETSW: 21,
   JPNASSETS: 60,
-  DEXUSEU: 10,
-  DEXJPUS: 10,
-  DEXCHUS: 10,
-  DTWEXBGS: 10,
+  // The H.10 family is daily-frequency but weekly-released: FRED publishes the
+  // prior week's daily rates in one batch, so the newest observation ages from
+  // 3 days just after a release to exactly 10 the day before the next one - and
+  // to 11 when a holiday pushes the release to Tuesday. A 10-day tolerance was
+  // therefore the worst case of the normal cycle, which meant these went stale
+  // every week and silently took the dollar leg out of the liquidity models
+  // with them. 16 leaves room for a holiday-shortened week while still
+  // catching a genuine outage.
+  DEXUSEU: 16,
+  DEXJPUS: 16,
+  DEXCHUS: 16,
+  DTWEXBGS: 16,
   DGS10: 7,
   DGS3MO: 7,
   T5YIFR: 7,
@@ -80,10 +88,12 @@ const FRED_EXPECTED_WITHIN_DAYS = {
   VIXCLS: 4,
   ECBASSETSW: 12,
   JPNASSETS: 45,
-  DEXUSEU: 9,
-  DEXJPUS: 9,
-  DEXCHUS: 9,
-  DTWEXBGS: 9,
+  // Weekly release of daily rates: 10 days between prints is the normal top of
+  // the cycle, not a late print.
+  DEXUSEU: 11,
+  DEXJPUS: 11,
+  DEXCHUS: 11,
+  DTWEXBGS: 11,
   DGS10: 4,
   DGS3MO: 4,
   T5YIFR: 4,
