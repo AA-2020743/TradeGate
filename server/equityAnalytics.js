@@ -1101,7 +1101,7 @@ export function calculateDrawdownProfile(points, { minimumObservations = 250 } =
     inDrawdown: current.drawdown < -1e-9,
     read: current.drawdown >= -1e-9
       ? `The index closed at a new high for this ${history.length}-session window, which has spent ${underwaterShare}% of its sessions below a prior peak.`
-      : `${state}: ${Math.abs(current.drawdown).toFixed(1)}% below the ${current.peakDate} peak after ${sessionsSincePeak} sessions, deeper than ${depthPercentile}% of the sessions in this history.${deepest ? ` The worst completed episode here fell ${Math.abs(deepest.trough).toFixed(1)}% and took ${deepest.recoverySessions} sessions to recover.` : ''}`,
+      : `${state}: ${Math.abs(current.drawdown).toFixed(1)}% below the ${current.peakDate} peak after ${sessionsSincePeak} ${sessionsSincePeak === 1 ? 'session' : 'sessions'}, deeper than ${depthPercentile}% of the sessions in this history.${deepest ? ` The worst completed episode here fell ${Math.abs(deepest.trough).toFixed(1)}% and took ${deepest.sessions} ${deepest.sessions === 1 ? 'session' : 'sessions'} to recover.` : ''}`,
     methodology: 'Drawdown is measured against the running peak of the available history, so it is window-dependent and states its window. A completed episode runs from the session the index left a peak to the session it regained it; an episode still open is reported as the current drawdown rather than counted among the completed ones. The depth percentile ranks today against every session in the history, not against the handful of completed episodes, which are too few to rank against.',
   };
 }

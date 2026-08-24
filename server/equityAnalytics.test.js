@@ -1080,3 +1080,31 @@ test('the volatility ratio survives a long window that rounds to zero', () => {
   assert.equal(Number.isFinite(result.ratio), true, 'the ratio must not be lost to the rounding');
   assert.equal(result.slope !== null, true);
 });
+
+test('the drawdown narrative names the recovery length it published', () => {
+  // A completed episode, then a fresh decline so the narrative takes the
+  // in-drawdown branch that mentions the worst completed episode.
+  const points = dailySeries(700, (index) => {
+    if (index < 200) return 100 + (index * 0.4);           // advance to 180
+    if (index < 300) return 180 - ((index - 200) * 0.5);   // fall to 130
+    if (index < 460) return 130 + ((index - 300) * 0.35);  // recover past 180
+    return 186 - ((index - 460) * 0.2);                    // fresh decline
+  }, 2021);
+  const result = calculateDrawdownProfile(points);
+
+  assert.equal(result.status, 'calculated');
+  assert.ok(result.deepest, 'an episode should have completed');
+  assert.ok(Number.isFinite(result.deepest.recoverySessions));
+  // The episode objects carry the count as `sessions` and only the published
+  // shape renames it to `recoverySessions`; the narrative used to read the
+  // published name off the raw episode and printed "undefined sessions".
+  assert.match(result.read, new RegExp(`took ${result.deepest.recoverySessions} sessions? to recover`));
+  assert.doesNotMatch(result.read, /undefined/);
+});
+
+test('a one-session count reads as a session, not as sessions', () => {
+  const points = dailySeries(400, (index) => (index === 399 ? 240 : 100 + (index * 0.35)), 2022);
+  const result = calculateDrawdownProfile(points);
+  // Whatever the branch, no rendered count should read "1 sessions".
+  assert.doesNotMatch(result.read, /\b1 sessions\b/);
+});
