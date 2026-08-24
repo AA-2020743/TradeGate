@@ -1,3 +1,4 @@
+import { mean, percentileRank } from './statistics.js';
 /**
  * Models that genuinely need the daily high, low and volume.
  *
@@ -10,20 +11,10 @@
 
 const DAY_MS = 86_400_000;
 
-function mean(values) {
-  return values.length ? values.reduce((total, value) => total + value, 0) / values.length : null;
-}
-
 function round(value, digits = 2) {
   if (!Number.isFinite(value)) return null;
   const factor = 10 ** digits;
   return Math.round(value * factor) / factor;
-}
-
-function percentileRank(values, value) {
-  const finite = values.filter(Number.isFinite);
-  if (!finite.length || !Number.isFinite(value)) return null;
-  return (finite.filter((entry) => entry <= value).length / finite.length) * 100;
 }
 
 function unavailable(version, reason, extra = {}) {

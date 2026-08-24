@@ -1,25 +1,9 @@
+import { mean, median, medianSpacingDays, standardDeviation } from './statistics.js';
 const TRADING_DAYS = 252;
 const DAY_MS = 86_400_000;
 
 function clamp(value, minimum = 0, maximum = 100) {
   return Math.min(maximum, Math.max(minimum, value));
-}
-
-function mean(values) {
-  return values.length ? values.reduce((total, value) => total + value, 0) / values.length : null;
-}
-
-function median(values) {
-  if (!values.length) return null;
-  const sorted = [...values].sort((left, right) => left - right);
-  const middle = Math.floor(sorted.length / 2);
-  return sorted.length % 2 ? sorted[middle] : (sorted[middle - 1] + sorted[middle]) / 2;
-}
-
-function standardDeviation(values) {
-  if (values.length < 2) return null;
-  const average = mean(values);
-  return Math.sqrt(values.reduce((total, value) => total + ((value - average) ** 2), 0) / (values.length - 1));
 }
 
 function simpleMovingAverage(values, period) {
@@ -439,16 +423,6 @@ function latestAtOrBefore(points, date) {
     if (points[index].date <= date) return points[index];
   }
   return null;
-}
-
-/** Median gap between observations, which is what "this series' cadence" means. */
-function medianSpacingDays(points) {
-  if (points.length < 3) return null;
-  const gaps = points.slice(1).map((point, index) => (new Date(point.date) - new Date(points[index].date)) / DAY_MS);
-  const sorted = gaps.filter((gap) => gap > 0).sort((left, right) => left - right);
-  if (!sorted.length) return null;
-  const middle = Math.floor(sorted.length / 2);
-  return sorted.length % 2 ? sorted[middle] : (sorted[middle - 1] + sorted[middle]) / 2;
 }
 
 /**

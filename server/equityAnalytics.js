@@ -1,24 +1,8 @@
 import { calculateChangeCorrelations, calculateTechnicalSnapshot, pearsonCorrelation } from './analytics.js';
+import { mean, median, percentileRank, standardDeviation } from './statistics.js';
 
 function clamp(value, minimum = 0, maximum = 100) {
   return Math.min(maximum, Math.max(minimum, value));
-}
-
-function mean(values) {
-  return values.length ? values.reduce((total, value) => total + value, 0) / values.length : null;
-}
-
-function deviation(values) {
-  if (values.length < 2) return null;
-  const average = mean(values);
-  return Math.sqrt(values.reduce((total, value) => total + ((value - average) ** 2), 0) / (values.length - 1));
-}
-
-function median(values) {
-  if (!values.length) return null;
-  const sorted = [...values].sort((left, right) => left - right);
-  const middle = Math.floor(sorted.length / 2);
-  return sorted.length % 2 ? sorted[middle] : (sorted[middle - 1] + sorted[middle]) / 2;
 }
 
 const pearson = pearsonCorrelation;
@@ -598,11 +582,6 @@ function ordinal(value) {
   return `${value}${suffix}`;
 }
 
-function percentileRank(values, value) {
-  if (!values.length) return null;
-  return Math.round((values.filter((item) => item <= value).length / values.length) * 100);
-}
-
 /**
  * Asks whether participation confirms the index. An advance/decline line and a
  * price series are each ranked within the same window: a market pushing to the
@@ -978,7 +957,7 @@ export function calculateSectorDispersion(sectors, benchmarkPoints, { window = 6
     return { symbol: sector.symbol, name: sector.name, return: start > 0 ? ((end / start) - 1) * 100 : null };
   });
   const usableReturns = sectorReturns.map((entry) => entry.return).filter(Number.isFinite);
-  const dispersion = usableReturns.length >= minimumSectors ? deviation(usableReturns) : null;
+  const dispersion = usableReturns.length >= minimumSectors ? standardDeviation(usableReturns) : null;
 
   const benchmark = normalizeHistory(benchmarkPoints ?? []);
   const benchmarkMap = new Map(benchmark.map((point) => [point.date, point.value]));
@@ -1179,7 +1158,7 @@ export function calculateCaptureProfile(sectorPoints, benchmarkPoints, { window 
     const value = betaOf(returns.slice(end - rollingWindow, end));
     if (Number.isFinite(value)) rollingBetas.push(value);
   }
-  const betaDispersion = rollingBetas.length >= 5 ? deviation(rollingBetas) : null;
+  const betaDispersion = rollingBetas.length >= 5 ? standardDeviation(rollingBetas) : null;
   const betaRange = rollingBetas.length >= 5 ? { low: Math.min(...rollingBetas), high: Math.max(...rollingBetas) } : null;
 
   // A negative capture means the sector moves against the benchmark, not that
@@ -1247,7 +1226,7 @@ export function calculateVolatilityTermStructure(points, { windows = VOLATILITY_
   const annualized = (endExclusive, size) => {
     const slice = logReturns.slice(endExclusive - size, endExclusive).filter(Number.isFinite);
     if (slice.length < size) return null;
-    const sigma = deviation(slice);
+    const sigma = standardDeviation(slice);
     return sigma === null ? null : sigma * Math.sqrt(annualizationDays) * 100;
   };
 

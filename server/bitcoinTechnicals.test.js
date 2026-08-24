@@ -12,7 +12,6 @@ import {
   detectRsiDivergences,
   emaSeries,
   normalizeCloses,
-  percentileRank,
   rsiSeries,
   smaSeries,
   toWeeklyCloses,
@@ -44,13 +43,6 @@ function ramp(previous, target, steps) {
 function jitter(values, amplitude = 0.5) {
   return values.map((value, index) => value + (amplitude * Math.sin(index / 1.9)));
 }
-
-test('percentileRank places a value inside its own sample', () => {
-  assert.equal(percentileRank([1, 2, 3, 4], 2), 50);
-  assert.equal(percentileRank([1, 2, 3, 4], 4), 100);
-  assert.equal(percentileRank([], 4), null);
-  assert.equal(percentileRank([1, 2], null), null);
-});
 
 test('smaSeries and emaSeries leave the warm-up period null', () => {
   const values = [1, 2, 3, 4, 5];
@@ -357,10 +349,15 @@ test('volatility-adjusted momentum refuses a window it cannot fill', () => {
   assert.equal(calculateVolatilityAdjustedMomentum(build(120, () => 100)).status, 'unavailable');
 });
 
+// A trend with realistic variation around it. A pure exponential has exactly
+// constant relative Bollinger bandwidth, so the squeeze module correctly
+// refuses to rank it - which says something about the fixture, not the tape.
+const drifting = (index, rate) => 100 * (rate ** index) * (1 + (Math.sin(index / 23) * 0.02) + (Math.sin(index / 7) * 0.008));
+
 test('the composite publishes a score, its legs and what is still missing', () => {
   // A 200-week average needs roughly four years of dailies, so a fully
   // "calculated" composite is only honest on that much history.
-  const result = calculateBitcoinTechnicals(build(1600, (index) => 100 * (1.001 ** index)));
+  const result = calculateBitcoinTechnicals(build(1600, (index) => drifting(index, 1.001)));
   assert.equal(result.status, 'calculated');
   assert.equal(result.unavailableModules.length, 0);
   assert.equal(result.provisionalModules.length, 0);
@@ -374,8 +371,8 @@ test('the composite publishes a score, its legs and what is still missing', () =
 });
 
 test('a falling tape scores below a rising one on the same composite', () => {
-  const up = calculateBitcoinTechnicals(build(1600, (index) => 100 * (1.001 ** index)));
-  const down = calculateBitcoinTechnicals(build(1600, (index) => 100 * (0.999 ** index)));
+  const up = calculateBitcoinTechnicals(build(1600, (index) => drifting(index, 1.001)));
+  const down = calculateBitcoinTechnicals(build(1600, (index) => drifting(index, 0.999)));
   assert.equal(down.score < up.score, true);
   assert.equal(['Weak', 'Guarded'].includes(down.stance), true);
 });

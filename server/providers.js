@@ -12,6 +12,10 @@ import { buildBackfillRows, calculateConsensusHistory, calculateModelConsensus, 
 import { calculateDataSurprise, calculateLiquidityPayoff, calculateNominalDecomposition, calculateRateDivergence, calculateReserveScarcity, calculateTermPremium } from './macroRates.js';
 import { calculateGrowthNowcast, calculateInflationNowcast, calculateLiquidityCalendar, calculateRatePath, calculateRegimeTransitions, calculateYieldCurveModel, seriesPoints } from './macroModels.js';
 import { describeSeriesFreshness, isCryptoHistoryStale, isCotReportStale, isDailyCloseStale, isFredSeriesStale, isPbocObservationStale, monthsBetween } from './freshness.js';
+import { percentileRank } from './statistics.js';
+
+/** The provider layer's spelling of the shared percentile. */
+export const percentileOf = percentileRank;
 
 const TWELVE_SYMBOLS = [
   { symbol: 'SPY', key: 'SPY', name: 'S&P 500 proxy', kind: 'ETF' },
@@ -722,10 +726,6 @@ export function smaOf(values, window) {
   return slice.reduce((sum, value) => sum + value, 0) / window;
 }
 
-export function percentileOf(values, value) {
-  if (!Array.isArray(values) || !values.length || !Number.isFinite(value)) return null;
-  return Math.round((values.filter((item) => item <= value).length / values.length) * 100);
-}
 
 async function getBinanceFundingLeg() {
   const [current, bybit, history] = await Promise.all([

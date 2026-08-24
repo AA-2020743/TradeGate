@@ -1,3 +1,4 @@
+import { mean, percentileRank, standardDeviation } from './statistics.js';
 /**
  * Close-only technical models for the bitcoin predictive workspace.
  *
@@ -10,16 +11,6 @@
 
 const DAY_MS = 86_400_000;
 
-function mean(values) {
-  return values.length ? values.reduce((total, value) => total + value, 0) / values.length : null;
-}
-
-function standardDeviation(values) {
-  if (values.length < 2) return null;
-  const average = mean(values);
-  return Math.sqrt(values.reduce((total, value) => total + ((value - average) ** 2), 0) / (values.length - 1));
-}
-
 function clamp(value, minimum = 0, maximum = 100) {
   return Math.min(maximum, Math.max(minimum, value));
 }
@@ -28,14 +19,6 @@ function round(value, digits = 2) {
   if (!Number.isFinite(value)) return null;
   const factor = 10 ** digits;
   return Math.round(value * factor) / factor;
-}
-
-/** Share of the sample at or below `value`, 0-100. */
-export function percentileRank(values, value) {
-  const finite = values.filter(Number.isFinite);
-  if (!finite.length || !Number.isFinite(value)) return null;
-  const atOrBelow = finite.filter((entry) => entry <= value).length;
-  return (atOrBelow / finite.length) * 100;
 }
 
 export function smaSeries(values, period) {
