@@ -284,12 +284,19 @@ export function calculateCrossMarketRelationship(leftPoints, rightPoints) {
 
   const leftValues = dates.map((date) => leftByDate.get(date));
   const rightValues = dates.map((date) => rightByDate.get(date));
+  // Log returns need positive values at both ends. A session that fails that
+  // is dropped from both legs together, because dropping it from one would
+  // silently pair each return with its neighbour's.
   const leftReturns = [];
   const rightReturns = [];
   for (let index = 1; index < dates.length; index += 1) {
+    const usable = leftValues[index] > 0 && leftValues[index - 1] > 0
+      && rightValues[index] > 0 && rightValues[index - 1] > 0;
+    if (!usable) continue;
     leftReturns.push(Math.log(leftValues[index] / leftValues[index - 1]));
     rightReturns.push(Math.log(rightValues[index] / rightValues[index - 1]));
   }
+  if (leftReturns.length < 21) return null;
 
   const correlations = {};
   for (const window of [20, 60, 252]) {
@@ -299,8 +306,10 @@ export function calculateCrossMarketRelationship(leftPoints, rightPoints) {
   }
   const activeCorrelation = correlations[60] ?? correlations[20];
   const momentumLookback = Math.min(20, leftValues.length - 1);
-  const leftMomentum = ((leftValues.at(-1) / leftValues.at(-(momentumLookback + 1))) - 1) * 100;
-  const rightMomentum = ((rightValues.at(-1) / rightValues.at(-(momentumLookback + 1))) - 1) * 100;
+  const leftBase = leftValues.at(-(momentumLookback + 1));
+  const rightBase = rightValues.at(-(momentumLookback + 1));
+  const leftMomentum = leftBase > 0 ? ((leftValues.at(-1) / leftBase) - 1) * 100 : null;
+  const rightMomentum = rightBase > 0 ? ((rightValues.at(-1) / rightBase) - 1) * 100 : null;
   const previousLeft = leftValues.slice(-(momentumLookback + 1), -1);
   const leftBreakout = leftValues.at(-1) > Math.max(...previousLeft)
     ? 'upside'
@@ -315,7 +324,11 @@ export function calculateCrossMarketRelationship(leftPoints, rightPoints) {
       '60D': correlations[60],
       '1Y': correlations[252],
     },
-    regime: activeCorrelation <= -0.4 ? 'Inverse' : activeCorrelation >= 0.4 ? 'Positive' : 'Unstable',
+    // With no correlation measured there is no regime to name; "Unstable" is a
+    // finding, not a stand-in for a missing one.
+    regime: !Number.isFinite(activeCorrelation) ? 'Unavailable'
+      : activeCorrelation <= -0.4 ? 'Inverse'
+        : activeCorrelation >= 0.4 ? 'Positive' : 'Unstable',
     momentum: { left: leftMomentum, right: rightMomentum },
     divergence: activeCorrelation <= -0.4
       ? Math.sign(leftMomentum) === Math.sign(rightMomentum) ? 'Inverse relationship diverging' : 'Inverse relationship aligned'

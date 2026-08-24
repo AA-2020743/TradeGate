@@ -66,6 +66,15 @@ function collect(node, trail, found) {
   return found;
 }
 
+const healthyPair = (make) => Array.from({ length: 500 }, (_, index) => make(index, 50 + (index * 0.1) + (Math.cos(index / 7) * 3)));
+
+const pairCases = (make) => ({
+  ...hostileCases(make),
+  shorter: Array.from({ length: 40 }, (_, index) => make(index, 100 + index)),
+  // Two series whose dates never meet.
+  disjointDates: Array.from({ length: 500 }, (_, index) => make(index + 5_000, 100 + index)),
+});
+
 async function singleSeriesModels() {
   const models = [];
   for (const name of MODULES) {
@@ -107,6 +116,58 @@ test('no single-series model publishes a non-finite number or an interpolation a
         continue;
       }
       for (const finding of collect(result, '', [])) failures.push(`${id}(${caseName}) :: ${finding}`);
+    }
+  }
+  assert.deepEqual(failures, []);
+});
+
+async function twoSeriesModels() {
+  const models = [];
+  for (const name of MODULES) {
+    const loaded = await import(`./${name}.js`);
+    for (const [fnName, fn] of Object.entries(loaded)) {
+      if (typeof fn !== 'function' || fn.length !== 2) continue;
+      const declared = (fn.toString().match(/^[^(]*\(([^)]*)\)/) ?? [])[1] ?? '';
+      const [first = '', second = ''] = declared.split(',').map((entry) => entry.trim());
+      const seriesLike = /point|value|histor|series|bar|close|price|row/i;
+      if (!seriesLike.test(first) || !seriesLike.test(second)) continue;
+
+      let shape = null;
+      for (const make of Object.values(SHAPES)) {
+        let output;
+        try { output = fn(healthy(make), healthyPair(make)); } catch { continue; }
+        if (output === null || output === undefined) continue;
+        if (collect(output, '', []).length === 0) { shape = make; break; }
+      }
+      if (shape) models.push({ id: `${name}.${fnName}`, fn, shape });
+    }
+  }
+  return models;
+}
+
+test('no two-series model publishes a non-finite number, whichever leg is degenerate', async () => {
+  const models = await twoSeriesModels();
+  assert.ok(models.length >= 6, `expected to calibrate 6+ paired models, calibrated ${models.length}`);
+
+  const failures = [];
+  for (const { id, fn, shape } of models) {
+    for (const [caseName, input] of Object.entries(pairCases(shape))) {
+      // A degenerate leg must be survivable on either side, and on both.
+      const pairings = [
+        ['left', [input, healthyPair(shape)]],
+        ['right', [healthy(shape), input]],
+        ['both', [input, input]],
+      ];
+      for (const [side, args] of pairings) {
+        let result;
+        try {
+          result = fn(...args);
+        } catch (error) {
+          failures.push(`${id}(${caseName}/${side}) threw ${error.constructor.name}: ${error.message}`);
+          continue;
+        }
+        for (const finding of collect(result, '', [])) failures.push(`${id}(${caseName}/${side}) :: ${finding}`);
+      }
     }
   }
   assert.deepEqual(failures, []);
