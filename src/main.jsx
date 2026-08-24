@@ -590,6 +590,77 @@ function DriverChange({ driver }) {
  * FX positioning panel. A label that cannot be wrong is worth less than one
  * that can.
  */
+/**
+ * The conclusion a section is trying to deliver, stated plainly.
+ *
+ * A verdict box is easy to fill with confident-sounding filler, so this one
+ * shows its working: how much of the evidence reported, what carries the call,
+ * what argues against it, and how far the call is from being a different call.
+ * Dissent is given the same visual weight as support - a panel that lists only
+ * agreeing evidence is an advertisement, not research.
+ */
+function VerdictBanner({ verdict }) {
+  if (!verdict) return null;
+  if (verdict.status === 'unavailable') {
+    return <section className="verdict-banner verdict-unavailable panel">
+      <div className="verdict-head">
+        <p className="section-kicker">{(verdict.title ?? 'VERDICT').toUpperCase()} · UNAVAILABLE</p>
+        <h2>Not enough reported to reach a conclusion</h2>
+      </div>
+      <p className="verdict-reason">{verdict.reason}</p>
+      {verdict.missing?.length ? <ul className="verdict-missing">
+        {verdict.missing.map((entry) => <li key={entry.key ?? entry.name}><b>{entry.name}</b>{entry.reason ? <span> — {entry.reason}</span> : null}</li>)}
+      </ul> : null}
+    </section>;
+  }
+
+  const tone = verdict.meaning === 'supportive of risk' || verdict.meaning === 'supportive' ? 'positive'
+    : verdict.meaning === 'restrictive' ? 'negative' : 'neutral';
+
+  return <section className={`verdict-banner panel verdict-${tone}`}>
+    <div className="verdict-head">
+      <div>
+        <p className="section-kicker">{(verdict.title ?? 'VERDICT').toUpperCase()} · {verdict.status.toUpperCase()}</p>
+        <h2>{verdict.headline}</h2>
+      </div>
+      <div className="verdict-score">
+        <b>{verdict.score}</b><small>/100</small>
+        <span className={`verdict-confidence verdict-confidence-${verdict.confidence}`}>{verdict.confidence} confidence</span>
+      </div>
+    </div>
+
+    <div className="verdict-meters">
+      <div><span>Evidence reported</span><i><b style={{ width: `${verdict.coverage}%` }} /></i><strong>{verdict.coverage}%</strong></div>
+      <div><span>Readings agreeing</span><i><b style={{ width: `${verdict.agreement}%` }} /></i><strong>{verdict.agreement}%</strong></div>
+    </div>
+
+    <div className="verdict-columns">
+      <div>
+        <h4>What carries it</h4>
+        {verdict.supporting.length ? verdict.supporting.slice(0, 4).map((item) => <div className="verdict-row" key={item.key}>
+          <span><b>{item.name}</b>{item.detail ? <small>{item.detail}</small> : null}</span>
+          <strong className="positive">{item.score}</strong>
+        </div>) : <p className="verdict-none">Nothing is pushing in this direction.</p>}
+      </div>
+      <div>
+        <h4>What argues against it</h4>
+        {verdict.opposing.length ? verdict.opposing.slice(0, 4).map((item) => <div className="verdict-row" key={item.key}>
+          <span><b>{item.name}</b>{item.detail ? <small>{item.detail}</small> : null}</span>
+          <strong className="negative">{item.score}</strong>
+        </div>) : <p className="verdict-none">Nothing argues the other way.</p>}
+      </div>
+    </div>
+
+    {verdict.margin ? <p className="verdict-margin">
+      <b>What would change it:</b> a {verdict.margin.points}-point move {verdict.margin.direction} makes this <b>{verdict.margin.becomes}</b>.
+    </p> : null}
+    <p className="verdict-reason">{verdict.confidenceReason}</p>
+    {verdict.missing?.length ? <p className="verdict-reason verdict-missing-line">
+      <b>Not counted:</b> {verdict.missing.map((entry) => entry.name).join(', ')}.
+    </p> : null}
+  </section>;
+}
+
 function StatusKicker({ label, published }) {
   return <p className="section-kicker">{label} · {published ? 'CALCULATED' : 'UNAVAILABLE'}</p>;
 }
@@ -802,6 +873,8 @@ function EquitiesDashboard({ platformData }) {
       </article>
     </section>
 
+    <VerdictBanner verdict={dashboard?.verdict} />
+
     <section className="equity-section-heading"><div><p className="section-kicker">INDEX SIGNAL STACK</p><h2>What can be calculated now</h2></div><span className="data-pill">No synthetic fallbacks</span></section>
     <section className="equity-signal-grid">
       <EquitySignalCard kicker="DYNAMIC REGIME" title="Regime unavailable" model={regime} empty="Price trend, momentum, and volatility are mandatory before a regime can be classified." />
@@ -866,8 +939,8 @@ function EquitiesDashboard({ platformData }) {
     <section className="equity-section-heading"><div><p className="section-kicker">POSITIONING · CALCULATED</p><h2>Leveraged-fund exposure from CFTC commitments</h2></div><EquityStatus status={positioning?.status} label="CFTC pending" /></section>
     <section className="equity-macro-matrix">
       <article className="equity-rotation-panel panel wide">
-        <div className="equity-rotation-head cot-head"><span>Contract</span><span>Net spec</span><span>WoW change</span><span>3Y percentile</span><span>Stance</span></div>
-        {(positioning?.contracts ?? []).filter((contract) => contract.key !== 'usdIndex').map((contract) => <div className="equity-rotation-row cot-row" key={contract.key}><span><strong>{contract.name}</strong><small>{contract.asOf}{Number.isFinite(contract.openInterest) ? ` · OI ${contract.openInterest.toLocaleString()}` : ''}</small></span><b>{Number.isFinite(contract.netNoncomm) ? contract.netNoncomm.toLocaleString() : '—'}</b><b className={(contract.weeklyChange ?? 0) >= 0 ? 'positive' : 'negative'}>{Number.isFinite(contract.weeklyChange) ? `${contract.weeklyChange >= 0 ? '+' : ''}${contract.weeklyChange.toLocaleString()}` : '—'}</b><span className={contract.percentile >= 90 || contract.percentile <= 10 ? 'extreme' : ''}>{Number.isFinite(contract.percentile) ? `${contract.percentile}%` : '—'}{contract.crowd && contract.crowd !== 'Unextended' ? <small> · {contract.crowd}</small> : null}</span><i>{contract.stance ?? '—'}</i></div>)}
+        <div className="equity-rotation-head cot-head"><span>Contract</span><span>Net spec</span><span>WoW change</span><span>Percentile</span><span>Stance</span></div>
+        {(positioning?.contracts ?? []).filter((contract) => contract.key !== 'usdIndex').map((contract) => <div className="equity-rotation-row cot-row" key={contract.key}><span><strong>{contract.name}</strong><small>{contract.asOf}{Number.isFinite(contract.openInterest) ? ` · OI ${contract.openInterest.toLocaleString()}` : ''}</small></span><b>{Number.isFinite(contract.netNoncomm) ? contract.netNoncomm.toLocaleString() : '—'}</b><b className={(contract.weeklyChange ?? 0) >= 0 ? 'positive' : 'negative'}>{Number.isFinite(contract.weeklyChange) ? `${contract.weeklyChange >= 0 ? '+' : ''}${contract.weeklyChange.toLocaleString()}` : '—'}</b><span className={contract.percentile >= 90 || contract.percentile <= 10 ? 'extreme' : ''} title={Number.isFinite(contract.observations) ? `Ranked against ${contract.observations} weekly reports` : undefined}>{Number.isFinite(contract.percentile) ? `${contract.percentile}%` : '—'}{contract.crowd && contract.crowd !== 'Unextended' ? <small> · {contract.crowd}</small> : null}</span><i>{contract.stance ?? '—'}</i></div>)}
         {!(positioning?.contracts ?? []).length && <div className="equity-empty">CFTC commitment histories are required before positioning can publish.</div>}
         <p className="equity-source-line">{positioning?.methodology ?? 'Awaiting CFTC feed.'}{platformData?.positioning?.staleContracts?.length ? ` Stale: ${platformData.positioning.staleContracts.join(', ')}.` : ''}</p>
       </article>
@@ -1512,6 +1585,8 @@ function MacroDashboard({ data }) {
         {(data.alerts?.alerts ?? []).length ? <div className="btc-cycle-cell"><small>Model alerts</small><b>{data.alerts.alerts.length} recent</b><span>{data.alerts.alerts[0]?.text ?? ''}</span></div> : null}
       </div>
     </section>
+
+    <VerdictBanner verdict={data.liquidity?.macroVerdict} />
 
     <section className="macro-section-heading"><div><p className="section-kicker">{activeModel === 'Overview' ? 'MACRO OVERVIEW' : activeModel === 'Liquidity' ? 'NET US LIQUIDITY' : activeModel === 'Global' ? 'GLOBAL CENTRAL-BANK LIQUIDITY' : activeModel === 'Risk' ? 'CROSS-ASSET CONFIRMATION' : activeModel === 'Correlations' ? 'RELATIONSHIP INTELLIGENCE' : activeModel === 'Rates' ? 'RATES, INFLATION & GROWTH' : activeModel === 'Consensus' ? 'CROSS-MODEL READ' : 'USD MACRO ENGINE'}</p><h2>{activeModel === 'Overview' ? 'What every model says, and what is live right now' : activeModel === 'Liquidity' ? 'The calculated drivers behind the impulse' : activeModel === 'Global' ? 'World central-bank liquidity in dollars' : activeModel === 'Risk' ? 'What markets are pricing now' : activeModel === 'Correlations' ? 'Correlations through the current regime' : activeModel === 'Rates' ? 'What the curve is pricing, and what growth proxies say' : activeModel === 'Consensus' ? 'Where the models agree, where they do not, and what is live' : 'Where macro points for the dollar'} {activeModel === 'Correlations' && regimeCorrelations?.status !== 'calculated' && <PreviewBadge label="Contains previews" />}</h2></div>{activeModel === 'Liquidity' && <span className="data-pill">13W calculated window</span>}{activeModel === 'Global' && <span className="data-pill">13W calculated window</span>}{activeModel === 'Correlations' && <div className="window-buttons">{[['20D', '20 obs'], ['60D', '60 obs'], ['1Y', '252 obs']].map(([item, label]) => <button className={correlationWindow === item ? 'selected' : ''} key={item} onClick={() => setCorrelationWindow(item)}>{label}</button>)}</div>}{activeModel === 'FX' && <span className="data-pill">FRED driver stack</span>}</section>
 

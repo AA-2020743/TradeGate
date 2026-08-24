@@ -1,4 +1,5 @@
 import { mean, standardDeviation } from './statistics.js';
+import { buildVerdict } from './verdict.js';
 
 function round(value, digits = 2) {
   if (!Number.isFinite(value)) return null;
@@ -747,4 +748,47 @@ export function calculateConsensusHistory(outputs = [], { minimumObservations = 
     read: `Across ${deduped.length} readings since ${earliest.date} the spread between models moved from ${earliest.spread} to ${latest.spread} and is ${trend}${Math.max(widenRun, narrowRun) >= 3 ? ` on ${Math.max(widenRun, narrowRun)} consecutive readings` : ''}. The average moved ${averageChange > 0 ? '+' : ''}${Math.round(averageChange)} points.${stateChanges.length ? ` ${stateChanges.length} state ${stateChanges.length === 1 ? 'change' : 'changes'}, the last from ${stateChanges.at(-1).from} to ${stateChanges.at(-1).to} on ${stateChanges.at(-1).date}.` : ''}`,
     methodology: 'Stored consensus readings, one per vintage so repeated runs over the same data cannot appear as movement. "Widening" means consecutive readings moving the same way rather than simply being wider than the first, because a single jump and a month of drift are different signals with the same endpoints.',
   };
+}
+
+/**
+ * The macro section's conclusion.
+ *
+ * Reuses the same signals the consensus model compares, minus the composite:
+ * macro-regime is itself built from several of these, so counting it beside
+ * its own components would let one view of the world vote twice.
+ *
+ * Weights sit at the family level, so adding a third liquidity reading does
+ * not quietly make liquidity the whole verdict.
+ */
+const MACRO_VERDICT_WEIGHTS = {
+  liquidity: 0.22,
+  globalLiquidity: 0.14,
+  dollar: 0.14,
+  growth: 0.16,
+  dataSurprise: 0.1,
+  curve: 0.12,
+  termPremium: 0.06,
+  reserves: 0.06,
+};
+
+export function calculateMacroVerdict(models = {}) {
+  const { directional } = collectMacroSignals(models);
+  const signals = directional
+    .filter((signal) => signal.family !== 'composite' && MACRO_VERDICT_WEIGHTS[signal.key] !== undefined)
+    .map((signal) => ({
+      key: signal.key,
+      name: signal.name,
+      score: signal.available ? signal.score : null,
+      weight: MACRO_VERDICT_WEIGHTS[signal.key],
+      detail: signal.detail ?? null,
+      ageDays: Number.isFinite(signal.ageDays) ? signal.ageDays : null,
+      reason: signal.reason ?? 'This model did not publish.',
+    }));
+
+  return buildVerdict({
+    title: 'Macro conditions',
+    version: 'macro-verdict-v1',
+    signals,
+    meaning: { high: 'supportive of risk', low: 'restrictive' },
+  });
 }

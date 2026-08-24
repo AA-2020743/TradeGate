@@ -270,6 +270,14 @@ The band alone is arithmetic, so the model also tests it: the same rule is walke
 
 Two results are reported that a band on its own hides. A one-sigma band on equity returns usually holds *more* often than the 68.3% a normal claims, not less — the distribution is peaked as well as fat-tailed, so it is the shoulders that are thin. The band therefore understates risk through the *size* of what escapes it rather than the frequency, which is why the median and worst breach are published as multiples of the band beside the hit rate, along with excess kurtosis. The band also carries no drift term, so a strongly trending market breaks it asymmetrically and the hit rate falls below what volatility alone implies.
 
+### `verdict-v1`
+
+Every workspace publishes a dozen honest readings and used to leave the reader to synthesise them. `server/verdict.js` does that synthesis explicitly and shows its working: the call, how much of the evidence was available to make it, which readings carry it, which argue against it, and what would have to change for the call to change.
+
+Three rules keep it from becoming the confident-sounding filler these boxes usually are. Confidence is **derived**, never asserted — thin coverage, split readings, a wide spread, a call near its boundary, or a stale input each hold it back, and the reasons are listed. Dissent is **always published**; a verdict listing only its supporting evidence is an advertisement. And the **margin is published**, because a call two points from its boundary and one thirty points inside it are different claims that must not read alike.
+
+The score is renormalised by the weight that actually reported, so a missing input cannot pull the verdict toward its own absence, and contributions rank by distance from neutral times weight — how much a reading is moving the verdict, not how extreme it is alone. The macro verdict reuses the consensus model's own signals, excluding the composite (macro-regime is built from several of them, so counting it beside its components would let one view of the world vote twice) and excluding cautions, which are risks at either end rather than directions.
+
 ### Equity calculation engines
 
 `equity-regime-v1` dynamically changes factor weights, alert thresholds, and expected holding periods. It requires price trend, momentum, and volatility, and remains provisional below 75% driver coverage. `equity-top-risk-v1` and `equity-bottom-signal-v1` require both technical and constituent-breadth confirmation and do not publish from price and liquidity alone.

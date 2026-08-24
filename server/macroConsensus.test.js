@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
+  calculateMacroVerdict,
   buildBackfillRows,
   calculateConsensusHistory,
   calculateModelConsensus,
@@ -494,4 +495,33 @@ test('consensus history refuses without enough stored readings', () => {
   assert.equal(result.status, 'unavailable');
   assert.match(result.reason, /PostgreSQL is configured/);
   assert.deepEqual(result.points, []);
+});
+
+test('the macro verdict inherits the dollar inversion and excludes composites', () => {
+  const published = (score, regime) => ({ status: 'calculated', score, regime, asOf: '2026-08-20' });
+  const base = {
+    liquidity: published(60, 'Expansion'),
+    globalLiquidity: published(60, 'Expansion'),
+    growthNowcast: published(60, 'Steady'),
+    dataSurprise: published(60, 'In line'),
+    // A composite built from the others: counting it beside its own
+    // components would let one view of the world vote twice.
+    macroRegime: published(95, 'Expansion / risk-on'),
+  };
+
+  const firmDollar = calculateMacroVerdict({ ...base, usdStrength: published(85, 'Firm') });
+  const softDollar = calculateMacroVerdict({ ...base, usdStrength: published(15, 'Soft') });
+
+  // A strong dollar tightens global conditions, so it must lower the verdict.
+  assert.ok(firmDollar.score < softDollar.score, `firm ${firmDollar.score} should be below soft ${softDollar.score}`);
+  assert.ok(firmDollar.opposing.some((signal) => signal.key === 'dollar'));
+  assert.ok(softDollar.supporting.some((signal) => signal.key === 'dollar'));
+
+  // The composite must not appear as its own contributor.
+  const keys = [...firmDollar.supporting, ...firmDollar.opposing, ...firmDollar.missing].map((entry) => entry.key);
+  assert.ok(!keys.includes('macroRegime'), 'the composite must not vote alongside its own components');
+
+  // Cautions are not directions and must not be averaged into the axis.
+  assert.ok(!keys.includes('inflation'));
+  assert.ok(!keys.includes('regimeDwell'));
 });

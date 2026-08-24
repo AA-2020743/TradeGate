@@ -12,6 +12,7 @@ import {
 } from './equityCatalog.js';
 import { getEarningsRevisionBreadth, getEquityLongHistory, getEquityRiskAppetite, getLiquiditySnapshot, getMarketHistory, getTechnicalSnapshot } from './providers.js';
 import { isDailyCloseStale } from './freshness.js';
+import { buildVerdict } from './verdict.js';
 
 const unavailableBreadth = {
   version: 'equity-breadth-v1',
@@ -129,6 +130,22 @@ export async function getEquityDashboard(requestedSymbol = 'SPY') {
     ? { ...revisionsResult.value.model, source: revisionsResult.value.source, universeRequested: revisionsResult.value.universeRequested, reason: revisionsResult.value.model.reason ?? revisionsResult.value.reason }
     : { version: 'equity-revision-breadth-v1', status: 'unavailable', reason: `Analyst revision counts are unreachable: ${revisionsResult.reason?.message ?? revisionsResult.reason}`, source: null };
   const regime = calculateEquityRegime({ technical: usableTechnical, liquidity: liquidity?.model, breadth: constituentBreadth });
+  // The same readings the regime model weighs, restated as a conclusion: what
+  // the call is, what carries it, what argues against it, and what would
+  // change it.
+  const verdict = buildVerdict({
+    title: `${index.name} regime`,
+    version: 'equity-verdict-v1',
+    signals: [
+      { key: 'trend', name: 'Price trend', score: usableTechnical?.components?.trend, weight: 0.27, detail: usableTechnical?.components?.trendAveragesUsed ? `${usableTechnical.components.trendAveragesUsed} of 3 moving averages` : null, reason: 'No usable close history' },
+      { key: 'momentum', name: 'Price momentum', score: usableTechnical?.components?.momentum, weight: 0.2, detail: Number.isFinite(usableTechnical?.indicators?.momentum20d) ? `${usableTechnical.indicators.momentum20d.toFixed(1)}% over 20 sessions` : null, reason: 'No usable close history' },
+      { key: 'breadth', name: 'Market breadth', score: constituentBreadth?.score, weight: 0.2, detail: Number.isFinite(constituentBreadth?.pctAbove200) ? `${constituentBreadth.pctAbove200}% above the 200-day` : null, reason: constituentBreadth?.reason ?? 'Constituent histories are not connected' },
+      { key: 'liquidity', name: 'Liquidity impulse', score: liquidity?.model?.score, weight: 0.13, detail: liquidity?.model?.regime ?? null, reason: liquidity?.model?.reason ?? 'The liquidity model did not publish' },
+      { key: 'volatility', name: 'Volatility quality', score: usableTechnical?.components?.volatilityQuality, weight: 0.1, detail: Number.isFinite(usableTechnical?.indicators?.annualizedVolatility20d) ? `${usableTechnical.indicators.annualizedVolatility20d.toFixed(1)}% annualized` : null, reason: 'No usable close history' },
+      { key: 'revisions', name: 'Earnings revisions', score: revisions?.score, weight: 0.1, detail: revisions?.state ?? null, reason: revisions?.reason ?? 'No analyst revision counts' },
+    ],
+    meaning: { high: 'supportive of risk', low: 'restrictive' },
+  });
   const topRisk = calculateTopRisk({ technical: usableTechnical, breadth: constituentBreadth, liquidity: liquidity?.model });
   const bottomSignal = calculateBottomSignal({ technical: usableTechnical, breadth: constituentBreadth, liquidity: liquidity?.model });
 
@@ -142,6 +159,7 @@ export async function getEquityDashboard(requestedSymbol = 'SPY') {
     ...dashboardVintage,
     index,
     technical,
+    verdict,
     regime,
     drawdown,
     volatility,
