@@ -352,13 +352,26 @@ export function calculateTechnicalSnapshot(inputPoints, options = {}) {
     return base > 0 && value > 0 ? Math.log(value / base) : null;
   }).filter(Number.isFinite);
   const annualizationDays = options.annualizationDays ?? TRADING_DAYS;
-  const volatility = (standardDeviation(returns) ?? 0) * Math.sqrt(annualizationDays) * 100;
+  // Log returns need positive prices at both ends, so a series that dips to or
+  // below zero yields nothing to measure. Defaulting that to 0 published a
+  // fabricated "0% volatility" and handed the calm score its maximum; unknown
+  // has to stay unknown and score neutral.
+  const returnDeviation = standardDeviation(returns);
+  const volatility = returnDeviation === null ? null : returnDeviation * Math.sqrt(annualizationDays) * 100;
+  const TREND_AVERAGES = 3;
   const movingAverages = [sma20, sma50, sma200].filter(Number.isFinite);
-  const trendScore = mean(movingAverages.map((average) => latest >= average ? 100 : 0)) ?? 50;
+  // A short history has no 50- or 200-day average, and averaging only the
+  // checks that exist let one of them swing the full trend weight: the same
+  // latest bar scored 33 on 30 observations and 53 on 306, a different regime
+  // label off nothing but the depth of history behind it. Shrink toward
+  // neutral by how much of the ladder is actually answerable, and say so.
+  const trendCoverage = movingAverages.length / TREND_AVERAGES;
+  const observedTrend = mean(movingAverages.map((average) => latest >= average ? 100 : 0));
+  const trendScore = observedTrend === null ? 50 : 50 + ((observedTrend - 50) * trendCoverage);
   const macdPercent = macd ? (macd.histogram / latest) * 100 : 0;
   const momentumScore = clamp(50 + (momentumPercent * 2.5) + (macdPercent * 40));
   const rsiScore = rsi === null ? 50 : clamp(((rsi - 30) / 40) * 100);
-  const volatilityScore = clamp(100 - volatility);
+  const volatilityScore = volatility === null ? 50 : clamp(100 - volatility);
   const score = Math.round((trendScore * 0.4) + (momentumScore * 0.35) + (rsiScore * 0.2) + (volatilityScore * 0.05));
   const regime = score >= 65 ? 'Constructive' : score <= 35 ? 'Guarded' : 'Neutral';
   const trailingWindow = values.length > 200 ? values.slice(-252) : values;
@@ -384,6 +397,10 @@ export function calculateTechnicalSnapshot(inputPoints, options = {}) {
     },
     components: {
       trend: Math.round(trendScore),
+      // How many of the 20/50/200 checks the history could answer. A reader
+      // comparing two symbols needs to know one of them was scored on less.
+      trendCoverage: Math.round(trendCoverage * 100),
+      trendAveragesUsed: movingAverages.length,
       momentum: Math.round(momentumScore),
       rsi: Math.round(rsiScore),
       volatilityQuality: Math.round(volatilityScore),

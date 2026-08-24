@@ -1914,7 +1914,13 @@ export async function getFxWorkspace() {
     const commodityFxMomentum = ['cad', 'aud'].map((key) => pairByKey.get(key)?.momentum20d).filter(Number.isFinite);
     const avgCommodityFx = commodityFxMomentum.length ? Number((commodityFxMomentum.reduce((total, value) => total + value, 0) / commodityFxMomentum.length).toFixed(2)) : null;
     const wtiMomentum = momentumPercent(seriesMap.get('CL=F') ?? []);
-    const usdMomentum = pairs.length ? Number((-(pairs.reduce((total, pair) => total + (pair.momentum20d ?? 0), 0) / pairs.length)).toFixed(2)) : null;
+    // A cross with no measurable momentum used to contribute 0 to the sum and
+    // 1 to the divisor, so the dollar read flatter the fewer crosses reported.
+    // Average what was actually measured, as the commodity-FX line above does.
+    const measuredMomentum = pairs.map((pair) => pair.momentum20d).filter(Number.isFinite);
+    const usdMomentum = measuredMomentum.length
+      ? Number((-(measuredMomentum.reduce((total, value) => total + value, 0) / measuredMomentum.length)).toFixed(2))
+      : null;
     const eemMomentum = momentumPercent(eemPoints);
     const jpyPair = pairByKey.get('jpy');
     const spyMomentum = momentumPercent(spyPoints);
@@ -1944,7 +1950,7 @@ export async function getFxWorkspace() {
     const riskRegime = spyMomentum === null ? 'Unavailable' : spyMomentum >= 0 ? 'Risk-on' : 'Risk-off';
     const usdStrong20d = pairs.filter((pair) => Number.isFinite(pair.momentum20d) && pair.momentum20d < 0).length;
     const usdStrong60d = pairs.filter((pair) => Number.isFinite(pair.momentum60d) && pair.momentum60d < 0).length;
-    const usdMomentumPairs = pairs.filter((pair) => Number.isFinite(pair.momentum20d)).length;
+    const usdMomentumPairs = measuredMomentum.length;
     const usdBreadthPct20d = usdMomentumPairs ? Math.round((usdStrong20d / usdMomentumPairs) * 100) : null;
     const usdBreadth = usdMomentumPairs ? {
       total: usdMomentumPairs,

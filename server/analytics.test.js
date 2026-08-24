@@ -1836,3 +1836,53 @@ test('the global pool publishes its effective resolution, not just its print cad
   assert.equal(model.resolution.printCadenceDays < model.resolution.effectiveCadenceDays, true, 'the pool prints faster than its slowest leg moves');
   assert.match(model.resolution.read, /carried forward rather than re-measured/);
 });
+
+test('a shallow history cannot swing the trend weight the way a deep one can', () => {
+  // Same latest bar, same visible price action: a shallow dip under the
+  // 20-day inside a long uptrend. The only difference is how much history
+  // sits behind it, which is not information about the trend.
+  const bars = [];
+  let value = 100;
+  for (let index = 0; index < 300; index += 1) {
+    value *= 1.0025;
+    bars.push({ timestamp: new Date(Date.UTC(2020, 0, 1) + (index * 86_400_000)).toISOString(), value });
+  }
+  for (let index = 0; index < 6; index += 1) {
+    value *= 0.9955;
+    bars.push({ timestamp: new Date(Date.UTC(2020, 0, 1) + ((300 + index) * 86_400_000)).toISOString(), value });
+  }
+
+  const shallow = calculateTechnicalSnapshot(bars.slice(-30));
+  const deep = calculateTechnicalSnapshot(bars);
+
+  assert.equal(shallow.latest, deep.latest);
+  assert.equal(shallow.components.trendAveragesUsed, 1);
+  assert.equal(deep.components.trendAveragesUsed, 3);
+  assert.equal(shallow.components.trendCoverage, 33);
+  assert.equal(deep.components.trendCoverage, 100);
+
+  // Both are below the 20-day, so both lean bearish on trend - but the
+  // shallow one, which can only check the 20-day, must not lean as hard as
+  // the deep one that checked three averages.
+  assert.ok(shallow.components.trend > deep.components.trend - 40);
+  assert.ok(Math.abs(shallow.score - deep.score) < 12, `scores drifted by ${Math.abs(shallow.score - deep.score)}`);
+  assert.equal(shallow.regime, deep.regime);
+});
+
+test('volatility that cannot be measured is withheld rather than published as zero', () => {
+  // A spread series crossing zero: log returns need positive prices at both
+  // ends, so nothing is measurable here.
+  const bars = [];
+  for (let index = 0; index < 40; index += 1) {
+    bars.push({
+      timestamp: new Date(Date.UTC(2020, 0, 1) + (index * 86_400_000)).toISOString(),
+      value: -0.5 + (Math.sin(index / 5) * 0.2),
+    });
+  }
+  const snapshot = calculateTechnicalSnapshot(bars);
+
+  assert.equal(snapshot.indicators.annualizedVolatility20d, null);
+  // Unknown scores neutral. Awarding the calm score its maximum would have
+  // read as the quietest possible tape.
+  assert.equal(snapshot.components.volatilityQuality, 50);
+});
