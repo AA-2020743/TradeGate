@@ -250,3 +250,64 @@ test('equity collection and composite models survive degenerate members', async 
 
   assert.deepEqual(failures, []);
 });
+
+/**
+ * A composite that publishes its drivers must publish drivers that add up to
+ * it. Weighting unrounded scores and rounding only for display left the two
+ * reconstructible to within a point, which is enough for a verdict derived
+ * from the drivers to disagree with the score printed beside it.
+ */
+test('every published composite is reconstructible from the drivers it shows', async () => {
+  const [analytics, equity] = await Promise.all([import('./analytics.js'), import('./equityAnalytics.js')]);
+  const DAY = 86_400_000;
+  const start = Date.now() - (1_400 * DAY);
+  const day = (index) => new Date(start + (index * DAY)).toISOString().slice(0, 10);
+  const daily = (key, base, step, multiplier = 1) => ({ key, multiplier, history: Array.from({ length: 1_390 }, (_, index) => ({ date: day(index), value: base + (index * step) })) });
+  const weekly = (key, base, step, multiplier = 1) => ({ key, multiplier, history: Array.from({ length: 190 }, (_, index) => ({ date: day(index * 7), value: base + (index * step) })) });
+
+  let seed = 3;
+  const random = () => { seed = ((seed * 1_103_515_245) + 12_345) & 0x7fffffff; return seed / 0x7fffffff; };
+  const failures = [];
+
+  const check = (label, model) => {
+    if (!model || model.status === 'unavailable' || !Number.isFinite(model.score) || !Array.isArray(model.drivers)) return;
+    const scored = model.drivers.filter((driver) => Number.isFinite(driver.score));
+    const weight = scored.reduce((total, driver) => total + driver.weight, 0);
+    if (!weight) return;
+    const reconstructed = Math.round(scored.reduce((total, driver) => total + (driver.score * driver.weight), 0) / weight);
+    if (reconstructed !== model.score) failures.push(`${label}: drivers reconstruct ${reconstructed}, score published as ${model.score}`);
+  };
+
+  for (let round = 0; round < 60; round += 1) {
+    const series = [
+      daily('dxy', 110, (random() - 0.5) * 0.04),
+      daily('vix', 16, (random() - 0.5) * 0.01),
+      daily('highYieldSpread', 3.4, (random() - 0.5) * 0.002),
+      daily('financialConditions', -0.2, (random() - 0.5) * 0.001),
+      daily('realYield10y', 1.8, (random() - 0.5) * 0.002),
+      daily('us2yYield', 4.4, (random() - 0.5) * 0.002),
+      weekly('fedBalanceSheet', 7_000_000, (random() - 0.3) * 12_000),
+      daily('treasuryGeneralAccount', 700_000, 20),
+      daily('reverseRepo', 2_000, -0.6, 1_000),
+      daily('usM2', 20_000, 4, 1_000),
+    ];
+    const usLiquidity = analytics.calculateUsLiquidityModel(series);
+    const usdStrength = analytics.calculateUsdStrengthModel(series, usLiquidity, {});
+    const globalLiquidity = { status: 'calculated', score: Math.round(random() * 100) };
+    check(`macro-regime round ${round}`, analytics.calculateMacroRegimeModel(series, usLiquidity, usdStrength, globalLiquidity));
+    check(`usd-strength round ${round}`, usdStrength);
+
+    const technical = {
+      components: { trend: random() * 100, momentum: random() * 100, volatilityQuality: random() * 100 },
+      indicators: { momentum20d: 1, annualizedVolatility20d: 14 },
+      asOf: day(1_389),
+    };
+    check(`equity-regime round ${round}`, equity.calculateEquityRegime({
+      technical,
+      liquidity: { status: 'calculated', score: Math.round(random() * 100), regime: 'x', version: 'v' },
+      breadth: { status: 'calculated', score: Math.round(random() * 100), source: 's', pctAbove200: 50 },
+    }));
+  }
+
+  assert.deepEqual(failures, []);
+});

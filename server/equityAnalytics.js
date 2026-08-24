@@ -36,11 +36,20 @@ function normalizeHistory(points) {
 }
 
 function weightedModel(definitions, minimumCoverage, mandatory = []) {
-  const available = definitions.filter((driver) => Number.isFinite(driver.score));
+  // Round each driver before weighting, so the published drivers reconstruct
+  // the published score exactly. Weighting the unrounded values and then
+  // rounding them for display left the two off by up to a point, which is the
+  // same "shown number is not the used number" gap that broke the volatility
+  // term-structure ratio.
+  const rounded = definitions.map((driver) => ({
+    ...driver,
+    score: Number.isFinite(driver.score) ? Math.round(clamp(driver.score)) : driver.score,
+  }));
+  const available = rounded.filter((driver) => Number.isFinite(driver.score));
   const availableKeys = new Set(available.map((driver) => driver.key));
   const availableWeight = available.reduce((total, driver) => total + driver.weight, 0);
   const coverage = Math.round(availableWeight * 100);
-  const missing = definitions.filter((driver) => !availableKeys.has(driver.key)).map((driver) => driver.name);
+  const missing = rounded.filter((driver) => !availableKeys.has(driver.key)).map((driver) => driver.name);
   const mandatoryPresent = mandatory.every((key) => availableKeys.has(key));
   const rawScore = availableWeight
     ? available.reduce((total, driver) => total + (driver.score * driver.weight), 0) / availableWeight
@@ -50,10 +59,10 @@ function weightedModel(definitions, minimumCoverage, mandatory = []) {
     score: rawScore === null ? null : Math.round(clamp(rawScore)),
     coverage,
     missing,
-    drivers: definitions.map((driver) => ({
+    drivers: rounded.map((driver) => ({
       key: driver.key,
       name: driver.name,
-      score: Number.isFinite(driver.score) ? Math.round(clamp(driver.score)) : null,
+      score: Number.isFinite(driver.score) ? driver.score : null,
       weight: driver.weight,
       source: driver.source,
     })),

@@ -1,5 +1,5 @@
 import { mean, standardDeviation } from './statistics.js';
-import { buildVerdict } from './verdict.js';
+import { buildVerdict, buildVerdictFromModel } from './verdict.js';
 
 function round(value, digits = 2) {
   if (!Number.isFinite(value)) return null;
@@ -753,42 +753,33 @@ export function calculateConsensusHistory(outputs = [], { minimumObservations = 
 /**
  * The macro section's conclusion.
  *
- * Reuses the same signals the consensus model compares, minus the composite:
- * macro-regime is itself built from several of these, so counting it beside
- * its own components would let one view of the world vote twice.
+ * Derived from macro-regime-v1's own drivers rather than from a second set of
+ * weights over a wider set of models. The wider version was tempting - it
+ * reached growth, the curve and reserve scarcity - but it produced a second
+ * number for a question the regime card on the same page already answers, and
+ * two composites of overlapping inputs drift apart. The equity dashboard
+ * carried exactly that fault for one commit.
  *
- * Weights sit at the family level, so adding a third liquidity reading does
- * not quietly make liquidity the whole verdict.
+ * Growth, rates and surprise data are not lost: the consensus model below
+ * compares all of them explicitly, which is the panel whose job is breadth.
+ * This one's job is to state the call and show what carries it.
+ *
+ * The regime's components vote here, never the regime itself - a composite
+ * sitting beside its own drivers would count one view of the world twice.
  */
-const MACRO_VERDICT_WEIGHTS = {
-  liquidity: 0.22,
-  globalLiquidity: 0.14,
-  dollar: 0.14,
-  growth: 0.16,
-  dataSurprise: 0.1,
-  curve: 0.12,
-  termPremium: 0.06,
-  reserves: 0.06,
-};
-
 export function calculateMacroVerdict(models = {}) {
-  const { directional } = collectMacroSignals(models);
-  const signals = directional
-    .filter((signal) => signal.family !== 'composite' && MACRO_VERDICT_WEIGHTS[signal.key] !== undefined)
-    .map((signal) => ({
-      key: signal.key,
-      name: signal.name,
-      score: signal.available ? signal.score : null,
-      weight: MACRO_VERDICT_WEIGHTS[signal.key],
-      detail: signal.detail ?? null,
-      ageDays: Number.isFinite(signal.ageDays) ? signal.ageDays : null,
-      reason: signal.reason ?? 'This model did not publish.',
-    }));
-
-  return buildVerdict({
+  const { macroRegime } = models;
+  if (!macroRegime || macroRegime.status === 'unavailable') {
+    return buildVerdict({ title: 'Macro conditions', version: 'macro-verdict-v1', signals: [] });
+  }
+  return buildVerdictFromModel(macroRegime, {
     title: 'Macro conditions',
     version: 'macro-verdict-v1',
-    signals,
     meaning: { high: 'supportive of risk', low: 'restrictive' },
+    details: {
+      liquidity: models.liquidity?.regime ?? null,
+      globalLiquidity: models.globalLiquidity?.regime ?? null,
+      dollar: models.usdStrength?.regime ? `${models.usdStrength.regime} dollar, inverted` : 'inverted',
+    },
   });
 }

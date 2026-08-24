@@ -504,7 +504,14 @@ function absoluteChangeOverDays(points, days) {
 }
 
 function driverComposite(drivers, minimumCoverage, minimumDrivers = 1) {
-  const available = drivers.filter((driver) => Number.isFinite(driver.score));
+  // Rounded before weighting, so the drivers a reader sees add up to the score
+  // beside them. Weighting unrounded values and rounding only for display left
+  // the two reconstructible only to within a point.
+  const rounded = drivers.map((driver) => ({
+    ...driver,
+    score: Number.isFinite(driver.score) ? Math.round(clamp(driver.score)) : driver.score,
+  }));
+  const available = rounded.filter((driver) => Number.isFinite(driver.score));
   const availableWeight = available.reduce((total, driver) => total + driver.weight, 0);
   const coverage = Math.round(availableWeight * 100);
   const score = availableWeight
@@ -514,11 +521,11 @@ function driverComposite(drivers, minimumCoverage, minimumDrivers = 1) {
     publishable: availableWeight >= minimumCoverage - 1e-9 && available.length >= minimumDrivers,
     score,
     coverage,
-    missing: drivers.filter((driver) => !Number.isFinite(driver.score)).map((driver) => driver.name),
-    drivers: drivers.map((driver) => ({
+    missing: rounded.filter((driver) => !Number.isFinite(driver.score)).map((driver) => driver.name),
+    drivers: rounded.map((driver) => ({
       key: driver.key,
       name: driver.name,
-      score: Number.isFinite(driver.score) ? Math.round(clamp(driver.score)) : null,
+      score: Number.isFinite(driver.score) ? driver.score : null,
       weight: driver.weight,
       value: Number.isFinite(driver.value) ? driver.value : null,
       change: Number.isFinite(driver.change) ? driver.change : null,

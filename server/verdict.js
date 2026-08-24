@@ -380,3 +380,30 @@ export function buildMetalsVerdict({ goldTechnical, usdStrength, globalLiquidity
     meaning: { high: 'constructive for gold', low: 'a headwind for gold' },
   });
 }
+
+/**
+ * A verdict built from a model that has already done the weighting.
+ *
+ * Recomputing a section's score from a second, slightly different set of
+ * weights produces a second number for the same question. The equity dashboard
+ * did exactly that for one commit: its regime panel and its verdict banner
+ * drifted up to 8 points apart and landed in different bands about one time in
+ * twelve, so the same page could say "Neutral" in one place and "Constructive"
+ * in another.
+ *
+ * Passing the model's own drivers through means the verdict cannot disagree
+ * with the panel beneath it: `weightedModel` and `buildVerdict` renormalise by
+ * available weight the same way, so the score is identical by construction
+ * rather than by coincidence.
+ */
+export function buildVerdictFromModel(model, { title, version, bands, meaning, details = {}, reasons = {} } = {}) {
+  const signals = (model?.drivers ?? []).map((driver) => ({
+    key: driver.key,
+    name: driver.name,
+    score: Number.isFinite(driver.score) ? driver.score : null,
+    weight: driver.weight,
+    detail: details[driver.key] ?? null,
+    reason: reasons[driver.key] ?? driver.source ?? null,
+  }));
+  return buildVerdict({ title, version, bands, meaning, signals });
+}

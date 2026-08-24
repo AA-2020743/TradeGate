@@ -284,6 +284,8 @@ Two rules govern what is allowed to vote. A composite never sits beside its own 
 
 Confidence is held back by the weakest link, and dissent is measured by weight rather than by count: with three signals, one opposing reading is a 67% "majority" that still leaves a third of the verdict arguing the other way.
 
+Where a section already publishes a weighted model, the verdict is built from **that model's own drivers** rather than from a second set of weights. Two composites over overlapping inputs drift: the equity dashboard briefly carried both, and its banner and its regime panel landed in different bands about one page load in twelve. Feeding the drivers through makes the two numbers identical by construction. For the same reason every composite now rounds each driver *before* weighting, so the drivers a reader sees add up to the score printed beside them.
+
 ### Equity calculation engines
 
 `equity-regime-v1` dynamically changes factor weights, alert thresholds, and expected holding periods. It requires price trend, momentum, and volatility, and remains provisional below 75% driver coverage. `equity-top-risk-v1` and `equity-bottom-signal-v1` require both technical and constituent-breadth confirmation and do not publish from price and liquidity alone.

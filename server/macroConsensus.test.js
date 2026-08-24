@@ -497,31 +497,43 @@ test('consensus history refuses without enough stored readings', () => {
   assert.deepEqual(result.points, []);
 });
 
-test('the macro verdict inherits the dollar inversion and excludes composites', () => {
-  const published = (score, regime) => ({ status: 'calculated', score, regime, asOf: '2026-08-20' });
-  const base = {
-    liquidity: published(60, 'Expansion'),
-    globalLiquidity: published(60, 'Expansion'),
-    growthNowcast: published(60, 'Steady'),
-    dataSurprise: published(60, 'In line'),
-    // A composite built from the others: counting it beside its own
-    // components would let one view of the world vote twice.
-    macroRegime: published(95, 'Expansion / risk-on'),
+test('the macro verdict agrees with the regime card it sits above', () => {
+  // Two composites over overlapping inputs drift apart, and the equity
+  // dashboard carried exactly that fault for one commit: its banner and its
+  // panel landed in different bands about one time in twelve. The macro
+  // verdict is therefore built from macro-regime-v1's own drivers, so the two
+  // numbers are identical by construction rather than by coincidence.
+  // 70*.25 + 66*.15 + 52*.2 + 69*.18 + 81*.12 + 55*.1 = 65.44
+  const regime = {
+    status: 'calculated',
+    score: 65,
+    regime: 'Constructive',
+    coverage: 100,
+    drivers: [
+      { key: 'liquidity', name: 'US liquidity impulse', score: 70, weight: 0.25 },
+      { key: 'globalLiquidity', name: 'Global liquidity impulse', score: 66, weight: 0.15 },
+      { key: 'financialConditions', name: 'Financial conditions', score: 52, weight: 0.2 },
+      { key: 'credit', name: 'Credit conditions', score: 69, weight: 0.18 },
+      { key: 'volatility', name: 'Volatility', score: 81, weight: 0.12 },
+      // Already inverted by the regime model, so a firm dollar reads low here.
+      { key: 'dollar', name: 'Dollar (inverted)', score: 55, weight: 0.1 },
+    ],
   };
+  const verdict = calculateMacroVerdict({ macroRegime: regime, usdStrength: { status: 'calculated', score: 45, regime: 'Soft' } });
 
-  const firmDollar = calculateMacroVerdict({ ...base, usdStrength: published(85, 'Firm') });
-  const softDollar = calculateMacroVerdict({ ...base, usdStrength: published(15, 'Soft') });
+  assert.equal(verdict.score, regime.score);
+  // The drivers a reader sees must add up to the score beside them. Weighting
+  // unrounded values and rounding only for display left the two reconstructible
+  // only to within a point.
+  const reconstructed = Math.round(regime.drivers.reduce((total, driver) => total + (driver.score * driver.weight), 0));
+  assert.equal(reconstructed, regime.score);
+  // The composite must not vote alongside its own drivers.
+  const keys = [...verdict.supporting, ...verdict.opposing, ...verdict.missing].map((entry) => entry.key);
+  assert.ok(!keys.includes('macroRegime'));
+  assert.deepEqual(keys.sort(), ['credit', 'dollar', 'financialConditions', 'globalLiquidity', 'liquidity', 'volatility']);
+});
 
-  // A strong dollar tightens global conditions, so it must lower the verdict.
-  assert.ok(firmDollar.score < softDollar.score, `firm ${firmDollar.score} should be below soft ${softDollar.score}`);
-  assert.ok(firmDollar.opposing.some((signal) => signal.key === 'dollar'));
-  assert.ok(softDollar.supporting.some((signal) => signal.key === 'dollar'));
-
-  // The composite must not appear as its own contributor.
-  const keys = [...firmDollar.supporting, ...firmDollar.opposing, ...firmDollar.missing].map((entry) => entry.key);
-  assert.ok(!keys.includes('macroRegime'), 'the composite must not vote alongside its own components');
-
-  // Cautions are not directions and must not be averaged into the axis.
-  assert.ok(!keys.includes('inflation'));
-  assert.ok(!keys.includes('regimeDwell'));
+test('the macro verdict declines when the regime model has not published', () => {
+  assert.equal(calculateMacroVerdict({}).status, 'unavailable');
+  assert.equal(calculateMacroVerdict({ macroRegime: { status: 'unavailable', reason: 'no drivers' } }).status, 'unavailable');
 });
