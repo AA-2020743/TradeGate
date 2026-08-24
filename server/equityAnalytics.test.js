@@ -1108,3 +1108,28 @@ test('a one-session count reads as a session, not as sessions', () => {
   // Whatever the branch, no rendered count should read "1 sessions".
   assert.doesNotMatch(result.read, /\b1 sessions\b/);
 });
+
+test('a market with no range declines a divergence read instead of calling a low', () => {
+  // Left unguarded a null percentile failed ">= 80" and passed "<= 20", so an
+  // index that had gone nowhere reported "Breadth confirms the low" - a
+  // bearish state manufactured from the absence of data, described as the
+  // "nullth percentile".
+  const flatIndex = Array.from({ length: 80 }, () => 100);
+  const flatBreadth = Array.from({ length: 80 }, () => 5_000);
+  const result = calculateBreadthDivergence(flatIndex, flatBreadth);
+
+  assert.equal(result.status, 'unavailable');
+  assert.match(result.reason, /no range/);
+  assert.equal(result.state, undefined);
+  assert.equal(result.divergent, undefined);
+});
+
+test('a market with real range still produces a divergence read', () => {
+  const price = Array.from({ length: 80 }, (_, index) => 100 + (Math.sin(index / 9) * 5) + (index * 0.2));
+  const breadth = Array.from({ length: 80 }, (_, index) => 5_000 + (Math.sin(index / 11) * 80) + (index * 2));
+  const result = calculateBreadthDivergence(price, breadth);
+
+  assert.equal(result.status, 'calculated');
+  assert.ok(Number.isFinite(result.pricePercentile));
+  assert.doesNotMatch(result.read, /null|undefined|—th/);
+});

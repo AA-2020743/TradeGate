@@ -58,3 +58,16 @@ export function medianSpacingDays(points) {
   const middle = Math.floor(sorted.length / 2);
   return sorted.length % 2 ? sorted[middle] : (sorted[middle - 1] + sorted[middle]) / 2;
 }
+
+/**
+ * "43rd", "22nd", "11th". Kept here because five copies of this existed and
+ * one of them had drifted: without the finite guard a null percentile - which
+ * a refused rank now legitimately produces - rendered as "nullth", and without
+ * Math.abs a negative value rendered as "-3th".
+ */
+export function ordinal(value) {
+  if (!Number.isFinite(value)) return '\u2014';
+  const lastTwo = Math.abs(value) % 100;
+  if (lastTwo >= 11 && lastTwo <= 13) return `${value}th`;
+  return `${value}${{ 1: 'st', 2: 'nd', 3: 'rd' }[Math.abs(value) % 10] ?? 'th'}`;
+}

@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mean, median, medianSpacingDays, percentileRank, standardDeviation } from './statistics.js';
+import { mean, median, medianSpacingDays, ordinal, percentileRank, standardDeviation } from './statistics.js';
 
 test('a percentile refuses a distribution with no spread to rank against', () => {
   // A yield spread pinned at one level for two years, differing only by the
@@ -51,4 +51,17 @@ test('median spacing reports a series own resolution', () => {
   const weekly = Array.from({ length: 20 }, (_, index) => ({ date: new Date(Date.UTC(2024, 0, 3) + (index * 7 * 86_400_000)).toISOString().slice(0, 10) }));
   assert.equal(medianSpacingDays(weekly), 7);
   assert.equal(medianSpacingDays(weekly.slice(0, 2)), null);
+});
+
+test('an ordinal refuses a value it cannot number, and respects sign', () => {
+  // A refused percentile is now a legitimate null, and the equity copy of this
+  // helper rendered that as "nullth" inside a breadth narrative.
+  assert.equal(ordinal(null), '—');
+  assert.equal(ordinal(undefined), '—');
+  assert.equal(ordinal(Number.NaN), '—');
+  assert.equal(ordinal(-3), '-3rd');
+  assert.equal(ordinal(43), '43rd');
+  assert.equal(ordinal(22), '22nd');
+  assert.equal(ordinal(11), '11th');
+  assert.equal(ordinal(1), '1st');
 });

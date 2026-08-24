@@ -1,4 +1,4 @@
-import { mean, medianSpacingDays, percentileRank, standardDeviation } from './statistics.js';
+import { mean, medianSpacingDays, ordinal, percentileRank, standardDeviation } from './statistics.js';
 
 /**
  * Rate-structure models: what is inside a nominal yield, how the US curve sits
@@ -16,13 +16,6 @@ function round(value, digits = 2) {
   if (!Number.isFinite(value)) return null;
   const factor = 10 ** digits;
   return Math.round(value * factor) / factor;
-}
-
-function ordinal(value) {
-  if (!Number.isFinite(value)) return '—';
-  const lastTwo = Math.abs(value) % 100;
-  if (lastTwo >= 11 && lastTwo <= 13) return `${value}th`;
-  return `${value}${{ 1: 'st', 2: 'nd', 3: 'rd' }[Math.abs(value) % 10] ?? 'th'}`;
 }
 
 function unavailable(version, reason, extra = {}) {

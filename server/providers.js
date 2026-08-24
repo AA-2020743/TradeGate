@@ -2338,7 +2338,38 @@ export async function getLiquiditySnapshot(options = {}) {
     const modelSeries = series.filter((item) => !item.stale);
     const staleSeries = series.filter((item) => item.stale);
     const staleLiveSeries = liveSeries.filter((item) => item.stale);
-    const errors = results.flatMap((result) => result.status === 'rejected' ? [result.reason.message] : []);
+    // Which series each settled result belongs to is recoverable by index, and
+    // without it every failure read "Upstream request failed with 403" - five
+    // identical anonymous lines that named nothing and diagnosed nothing.
+    const definitionAt = (index) => FRED_SERIES[index] ?? { id: PBOC_SERIES_ID, key: 'pbocBalanceSheet', name: 'PBoC total assets' };
+    const usedKeys = new Set(series.map((item) => item.key));
+    const seriesHealth = results.map((result, index) => {
+      const definition = definitionAt(index);
+      const base = { id: definition.id, key: definition.key, name: definition.name };
+      if (result.status === 'rejected') {
+        return {
+          ...base,
+          state: 'failed',
+          // A stored observation may still be carrying this key, in which case
+          // the models are fed even though the live fetch failed.
+          covered: usedKeys.has(definition.key),
+          asOf: null,
+          reason: result.reason?.message ?? 'The request failed without a message.',
+        };
+      }
+      const value = result.value;
+      return {
+        ...base,
+        state: value.stale ? 'stale' : value.freshness?.state ?? 'current',
+        covered: usedKeys.has(definition.key),
+        asOf: value.date ?? null,
+        stored: Boolean(value.stored),
+        reason: value.freshness?.read ?? null,
+      };
+    });
+    const failedSeries = seriesHealth.filter((item) => item.state === 'failed');
+
+    const errors = failedSeries.map((item) => `${item.id} (${item.name}) could not be fetched: ${item.reason}${item.covered ? ' - a stored observation is standing in.' : ''}`);
     if (!config.fredApiKey && !storedSeries.length && !series.length) errors.push('FRED is unreachable and no stored observations are available');
     if (staleLiveSeries.length) errors.push(`Latest FRED responses are stale: ${staleLiveSeries.map((item) => item.id).join(', ')}`);
     if (staleSeries.length) errors.push(`FRED series are stale and excluded from models: ${staleSeries.map((item) => item.id).join(', ')}`);
@@ -2535,7 +2566,16 @@ export async function getLiquiditySnapshot(options = {}) {
 
     return {
       asOf: new Date().toISOString(),
-      provider: { configured: true, mode: config.fredApiKey ? 'api' : 'public-csv', name: 'FRED', storedFallbacks: series.filter((item) => item.stored).length, staleSeries: staleSeries.length },
+      provider: {
+        configured: true,
+        mode: config.fredApiKey ? 'api' : 'public-csv',
+        name: 'FRED',
+        storedFallbacks: series.filter((item) => item.stored).length,
+        staleSeries: staleSeries.length,
+        failedSeries: failedSeries.length,
+        requestedSeries: seriesHealth.length,
+      },
+      seriesHealth,
       series,
       // One net-liquidity number, and it is the date-aligned one the model
       // publishes. Subtracting each series' own latest value gave a second,

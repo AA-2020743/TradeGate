@@ -588,6 +588,45 @@ function rankLabel(percentile, count, unit = 'sessions') {
   return `${ordinal(percentile)} percentile of ${count} ${unit}`;
 }
 
+/**
+ * What did not load, and why.
+ *
+ * A model that cannot publish already names the input it is missing, but not
+ * why that input is absent - so a feed returning 403 for five series looked
+ * identical to a platform with no key configured, and the payload carried the
+ * real reason where nobody could read it.
+ */
+function FeedHealthPanel({ provider, seriesHealth }) {
+  const troubled = (seriesHealth ?? []).filter((item) => item.state === 'failed' || item.state === 'stale');
+  if (!troubled.length) return null;
+  const failed = troubled.filter((item) => item.state === 'failed').length;
+  const stale = troubled.length - failed;
+  return <section className="feed-health panel">
+    <div className="panel-title">
+      <div>
+        <p className="section-kicker">FEED HEALTH</p>
+        <h3>{failed ? `${failed} of ${provider?.requestedSeries ?? '?'} series did not load` : `${stale} series are too old to use`}</h3>
+      </div>
+      <span className="data-pill">{stale ? `${stale} stale · ` : ''}{failed} failed</span>
+    </div>
+    <div className="feed-health-list">
+      {troubled.map((item) => <div className="feed-health-row" key={item.id}>
+        <span>
+          <b>{item.name}</b>
+          <small>{item.id}{item.asOf ? ` · last observation ${item.asOf}` : ''}</small>
+        </span>
+        <i className={item.state === 'failed' ? 'negative' : 'neutral'}>{item.covered ? 'stored fallback' : item.state}</i>
+        <small className="feed-health-reason">{item.reason ?? 'No reason was reported.'}</small>
+      </div>)}
+    </div>
+    <p className="model-footnote">
+      A model listing one of these as missing is blocked by this, not by configuration. A failed fetch is an
+      upstream or network problem; a stale series reached the platform but its last observation is past the
+      tolerance for its own release cadence, so it is excluded rather than carried forward.
+    </p>
+  </section>;
+}
+
 function VolatilityTermPanel({ volatility }) {
   const status = volatility?.status ?? 'unavailable';
   const published = status !== 'unavailable';
@@ -1373,6 +1412,7 @@ function MacroDashboard({ data }) {
     </section>
     <DataDisclosure data={data} message="Every model here is a versioned calculation from keyless public sources; only panels whose sources are confirmed blocked remain preview-labeled." />
     {data.liquidity?.series?.length ? <section className="official-data-strip panel"><div><p className="section-kicker">OFFICIAL FRED OBSERVATIONS</p><b>Latest released data</b></div>{data.liquidity.series.slice(0, 5).map((series) => <div key={series.id}><span>{series.name}</span><strong>{formatMacroValue(series)}</strong><small className={series.freshness?.state === 'overdue' ? 'freshness-overdue' : undefined} title={series.freshness?.read ?? undefined}>{series.date}{series.stale ? ' · stale' : series.freshness?.state === 'overdue' ? ' · print overdue' : series.stored ? ' · stored' : ' · live'}</small></div>)}</section> : <section className="provider-setup-note"><b>Live macro feed unavailable</b><span>The server could not reach FRED (API or public CSV endpoint) and no stored observations exist yet.</span></section>}
+    <FeedHealthPanel provider={data.liquidity?.provider} seriesHealth={data.liquidity?.seriesHealth} />
 
     <section className="model-overview-grid">
       <article className={`macro-model panel ${activeModel === 'Liquidity' ? 'model-emphasis' : ''}`}>

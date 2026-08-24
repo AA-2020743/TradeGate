@@ -1,4 +1,4 @@
-import { mean, medianSpacingDays, percentileRank } from './statistics.js';
+import { mean, medianSpacingDays, ordinal, percentileRank } from './statistics.js';
 /**
  * Macro models that sit alongside the liquidity and regime engines: the yield
  * curve, market-implied inflation, the rate path the curve is pricing, the
@@ -21,13 +21,6 @@ function round(value, digits = 2) {
   if (!Number.isFinite(value)) return null;
   const factor = 10 ** digits;
   return Math.round(value * factor) / factor;
-}
-
-function ordinal(value) {
-  if (!Number.isFinite(value)) return '—';
-  const lastTwo = Math.abs(value) % 100;
-  if (lastTwo >= 11 && lastTwo <= 13) return `${value}th`;
-  return `${value}${{ 1: 'st', 2: 'nd', 3: 'rd' }[Math.abs(value) % 10] ?? 'th'}`;
 }
 
 /** `{ key, multiplier, history: [{ date, value }] }` into sorted `{ date, value }`. */

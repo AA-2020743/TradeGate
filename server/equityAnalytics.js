@@ -1,5 +1,5 @@
 import { calculateChangeCorrelations, calculateTechnicalSnapshot, pearsonCorrelation } from './analytics.js';
-import { mean, median, percentileRank, standardDeviation } from './statistics.js';
+import { mean, median, ordinal, percentileRank, standardDeviation } from './statistics.js';
 
 function clamp(value, minimum = 0, maximum = 100) {
   return Math.min(maximum, Math.max(minimum, value));
@@ -575,12 +575,6 @@ export function calculateBreadth(constituents, options = {}) {
   };
 }
 
-function ordinal(value) {
-  const lastTwo = value % 100;
-  if (lastTwo >= 11 && lastTwo <= 13) return `${value}th`;
-  const suffix = { 1: 'st', 2: 'nd', 3: 'rd' }[value % 10] ?? 'th';
-  return `${value}${suffix}`;
-}
 
 /**
  * Asks whether participation confirms the index. An advance/decline line and a
@@ -601,6 +595,19 @@ export function calculateBreadthDivergence(breadthLine, benchmarkValues, { lookb
   const priceWindow = price.slice(-observations);
   const pricePercentile = percentileRank(priceWindow, priceWindow.at(-1));
   const breadthPercentile = percentileRank(breadthWindow, breadthWindow.at(-1));
+  // A window with no range cannot place today inside it. Left unguarded, null
+  // failed the ">= 80" test and passed the "<= 20" one, so an index that had
+  // gone nowhere reported "Breadth confirms the low" - a bearish reading
+  // manufactured out of the absence of data.
+  if (!Number.isFinite(pricePercentile) || !Number.isFinite(breadthPercentile)) {
+    return {
+      status: 'unavailable',
+      reason: `Neither leg can be ranked: the ${observations}-session window shows no range in ${!Number.isFinite(pricePercentile) ? 'the index' : 'the advance/decline line'}.`,
+      observations,
+      pricePercentile,
+      breadthPercentile,
+    };
+  }
   const gap = pricePercentile - breadthPercentile;
   const lowEdge = 100 - nearEdge;
 

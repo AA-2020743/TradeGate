@@ -1,4 +1,4 @@
-import { mean, median, medianSpacingDays, standardDeviation } from './statistics.js';
+import { mean, median, medianSpacingDays, ordinal, standardDeviation } from './statistics.js';
 const TRADING_DAYS = 252;
 const DAY_MS = 86_400_000;
 
@@ -783,14 +783,6 @@ export function calculateLiquidityRunway(seriesList, { windowDays = 91 } = {}) {
   };
 }
 
-
-/** 1st, 2nd, 3rd — a hardcoded "th" suffix prints "2th" and gives itself away. */
-function ordinal(value) {
-  if (!Number.isFinite(value)) return '—';
-  const lastTwo = Math.abs(value) % 100;
-  if (lastTwo >= 11 && lastTwo <= 13) return `${value}th`;
-  return `${value}${{ 1: 'st', 2: 'nd', 3: 'rd' }[Math.abs(value) % 10] ?? 'th'}`;
-}
 
 const CYCLE_WINDOW_DAYS = 1095;
 const CYCLE_TREND_DAYS = 365;
