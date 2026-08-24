@@ -330,3 +330,53 @@ export function buildFxVerdict({ usdStrength, usdBreadth, rateDivergence } = {})
     meaning: { high: 'a firm dollar', low: 'a soft dollar' },
   });
 }
+
+/**
+ * The metals section's conclusion, on a "constructive for gold" axis.
+ *
+ * Real yields are gold's most direct driver and are deliberately *not* added
+ * as their own signal: the broad-dollar model already carries a real-yield
+ * driver, so counting both would weigh real yields twice under two names. The
+ * dollar composite is the more complete of the two and subsumes it.
+ *
+ * Speculative positioning is excluded for the same reason as in the FX
+ * verdict - a crowded net-long is support today and fragility tomorrow.
+ */
+export function buildMetalsVerdict({ goldTechnical, usdStrength, globalLiquidity } = {}) {
+  const dollarScore = Number.isFinite(usdStrength?.score) ? usdStrength.score : null;
+  const liquidityScore = Number.isFinite(globalLiquidity?.score) ? globalLiquidity.score : null;
+
+  return buildVerdict({
+    title: 'Gold conditions',
+    version: 'metals-verdict-v1',
+    signals: [
+      {
+        key: 'technicals',
+        name: 'Gold technicals',
+        score: Number.isFinite(goldTechnical?.score) ? goldTechnical.score : null,
+        weight: 0.5,
+        detail: goldTechnical?.regime ?? null,
+        reason: 'No usable gold futures close history',
+      },
+      {
+        // Gold is priced in dollars and competes with the real yield a dollar
+        // earns, both of which this model already carries.
+        key: 'dollar',
+        name: 'Dollar (inverted)',
+        score: dollarScore === null ? null : 100 - dollarScore,
+        weight: 0.3,
+        detail: usdStrength?.regime ? `${usdStrength.regime} dollar` : null,
+        reason: 'The broad-dollar model did not publish',
+      },
+      {
+        key: 'globalLiquidity',
+        name: 'Global liquidity impulse',
+        score: liquidityScore,
+        weight: 0.2,
+        detail: globalLiquidity?.regime ?? null,
+        reason: 'The global liquidity model did not publish',
+      },
+    ],
+    meaning: { high: 'constructive for gold', low: 'a headwind for gold' },
+  });
+}

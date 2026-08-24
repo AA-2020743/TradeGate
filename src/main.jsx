@@ -1130,6 +1130,7 @@ function MetalsDashboard({ data }) {
   return <div className="metals-dashboard">
     <section className="metals-intro">
       <div><p className="eyebrow">PRECIOUS METALS RESEARCH</p><h1>Where monetary metal meets market structure.</h1><p className="intro">Technical, macro, physical, and positioning signals for metals and their equity proxies.</p></div>
+      <VerdictBanner verdict={workspace?.verdict} />
       <div className="metals-pulse">{workspace?.status !== 'calculated' && <PreviewBadge />}<div><b>{workspace?.calculatedCount ? `${workspace.calculatedCount} of ${workspace.universeSize} series calculated` : 'Awaiting provider histories'}</b><small>technical-v1 · COMEX futures · COT</small></div></div>
     </section>
     <DataDisclosure data={data} message={workspace?.status === 'calculated' ? 'Spot metals prices come from front COMEX/CME futures via Yahoo Finance; scores, momentum, volatility, and RSI are technical-v1 calculations. ETF flows, physical-market indicators, and producer costs remain previews until dedicated feeds are connected.' : 'The metals workspace publishes once futures and miner histories are available.'} />

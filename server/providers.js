@@ -11,7 +11,7 @@ import { getAllEquityHistorySymbols, getCoreEquityHistorySymbols } from './equit
 import { buildBackfillRows, calculateConsensusHistory, calculateMacroVerdict, calculateModelConsensus, calculateModelCorrelationMatrix, calculateWeightOverlap, evaluateMacroAlerts } from './macroConsensus.js';
 import { calculateDataSurprise, calculateLiquidityPayoff, calculateNominalDecomposition, calculateRateDivergence, calculateReserveScarcity, calculateTermPremium } from './macroRates.js';
 import { calculateGrowthNowcast, calculateInflationNowcast, calculateLiquidityCalendar, calculateRatePath, calculateRegimeTransitions, calculateYieldCurveModel, seriesPoints } from './macroModels.js';
-import { buildCryptoVerdict, buildFxVerdict } from './verdict.js';
+import { buildCryptoVerdict, buildFxVerdict, buildMetalsVerdict } from './verdict.js';
 import { cryptoHistoryGranularity, describeSeriesFreshness, isCryptoHistoryStale, isCotReportStale, isDailyCloseStale, isFredSeriesStale, isPbocObservationStale, monthsBetween } from './freshness.js';
 import { percentileRank } from './statistics.js';
 
@@ -1593,6 +1593,11 @@ export async function getMetalsWorkspace() {
       miners,
       cot: goldContract ? { percentile: goldContract.percentile, netNoncomm: goldContract.netNoncomm, weeklyChange: goldContract.weeklyChange, crowd: goldContract.crowd, stance: goldContract.stance, asOf: goldContract.asOf } : null,
       cotDetail,
+      verdict: buildMetalsVerdict({
+        goldTechnical: assets.find((asset) => asset.symbol === 'XAU') ?? null,
+        usdStrength: isPublished(liquidity?.usdStrength) ? liquidity.usdStrength : null,
+        globalLiquidity: isPublished(liquidity?.globalLiquidity) ? liquidity.globalLiquidity : null,
+      }),
       ratios: { goldSilver: goldSilverRatio, goldCopper: goldCopperRatio },
       costStructure,
       macro: isPublished(liquidity?.usdStrength) && isPublished(liquidity?.globalLiquidity) ? { dollar: { score: liquidity.usdStrength.score, regime: liquidity.usdStrength.regime }, globalLiquidity: { score: liquidity.globalLiquidity.score, regime: liquidity.globalLiquidity.regime } } : null,

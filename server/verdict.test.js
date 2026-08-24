@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { buildCryptoVerdict, buildVerdict } from './verdict.js';
+import { buildCryptoVerdict, buildMetalsVerdict, buildVerdict } from './verdict.js';
 
 const signal = (key, name, score, weight, extra = {}) => ({ key, name, score, weight, ...extra });
 
@@ -221,4 +221,18 @@ test('an acronym survives the mid-sentence lowercasing in a headline', () => {
   // Ordinary names still read as part of the sentence.
   assert.match(verdict.headline, /broad dollar model/);
   assert.match(verdict.headline, /cross-rate breadth/);
+});
+
+test('the metals verdict inverts the dollar and does not double-count real yields', () => {
+  const soft = buildMetalsVerdict({ goldTechnical: { score: 60 }, usdStrength: { score: 20 }, globalLiquidity: { score: 60 } });
+  const firm = buildMetalsVerdict({ goldTechnical: { score: 60 }, usdStrength: { score: 80 }, globalLiquidity: { score: 60 } });
+  // Gold is priced in dollars, so a firmer dollar is a headwind.
+  assert.ok(firm.score < soft.score);
+
+  // Real yields are gold's most direct driver and are already a component of
+  // the broad-dollar model. Adding them again under their own name would weigh
+  // them twice, so the verdict carries exactly three signals.
+  const keys = [...soft.supporting, ...soft.opposing, ...soft.missing].map((entry) => entry.key);
+  assert.deepEqual(keys.sort(), ['dollar', 'globalLiquidity', 'technicals']);
+  assert.ok(!keys.includes('realYield'));
 });
