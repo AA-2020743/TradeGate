@@ -143,7 +143,32 @@ export function isDailyCloseStale(timestamp, now = Date.now()) {
   return !Number.isFinite(observedAt) || now - observedAt > 5 * DAY_MS;
 }
 
-export function isCryptoHistoryStale(timestamp, now = Date.now()) {
+/**
+ * CoinGecko's market_chart picks its own granularity from the window asked
+ * for: five-minute inside a day, hourly out to 90 days, and daily beyond that,
+ * stamped at 00:00 UTC. A staleness tolerance has to exceed the cadence of
+ * whatever actually came back.
+ */
+export function cryptoHistoryGranularity(days) {
+  if (days === 'max') return 'daily';
+  const window = Number(days);
+  if (!Number.isFinite(window)) return 'daily';
+  if (window <= 1) return 'intraday';
+  return window <= 90 ? 'hourly' : 'daily';
+}
+
+const CRYPTO_MAX_OBSERVATION_AGE_HOURS = {
+  intraday: 6,
+  hourly: 12,
+  // A daily series is up to 24 hours old the moment it arrives, so a 24-hour
+  // tolerance is the cadence itself and trips near the end of every UTC day -
+  // the same fault the H.10 tolerance had. 48 leaves a full cycle of room.
+  daily: 48,
+};
+
+export function isCryptoHistoryStale(timestamp, now = Date.now(), granularity = 'daily') {
   const observedAt = new Date(timestamp).getTime();
-  return !Number.isFinite(observedAt) || now - observedAt > DAY_MS;
+  if (!Number.isFinite(observedAt)) return true;
+  const maxAgeHours = CRYPTO_MAX_OBSERVATION_AGE_HOURS[granularity] ?? CRYPTO_MAX_OBSERVATION_AGE_HOURS.daily;
+  return now - observedAt > (maxAgeHours * 60 * 60_000);
 }

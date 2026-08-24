@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { describeSeriesFreshness, isCryptoHistoryStale, isDailyCloseStale, isFredSeriesStale } from './freshness.js';
+import { cryptoHistoryGranularity, describeSeriesFreshness, isCryptoHistoryStale, isDailyCloseStale, isFredSeriesStale } from './freshness.js';
 
 const now = new Date('2026-08-21T12:00:00.000Z').getTime();
 
@@ -22,9 +22,32 @@ test('daily closes remain usable through a long weekend', () => {
   assert.equal(isDailyCloseStale('2026-09-02T00:00:00.000Z', tuesdayMorning), true);
 });
 
-test('always-open crypto history uses a one-day freshness limit', () => {
-  assert.equal(isCryptoHistoryStale('2026-08-21T00:00:00.000Z', now), false);
-  assert.equal(isCryptoHistoryStale('2026-08-20T00:00:00.000Z', now), true);
+test('crypto freshness follows the granularity the provider returned', () => {
+  // CoinGecko picks granularity from the window asked for, so one fixed
+  // tolerance cannot be right for all of them. The old flat 24-hour rule was
+  // simultaneously too tight for daily data - which is up to 24 hours old the
+  // moment it arrives, so the rule tripped near the end of every UTC day - and
+  // too loose for five-minute data, where an eight-hour-old point passed.
+  assert.equal(cryptoHistoryGranularity('1'), 'intraday');
+  assert.equal(cryptoHistoryGranularity('30'), 'hourly');
+  assert.equal(cryptoHistoryGranularity('365'), 'daily');
+  assert.equal(cryptoHistoryGranularity('max'), 'daily');
+
+  const evening = new Date('2026-08-24T23:30:00.000Z').getTime();
+  // A daily point stamped at midnight today is 23.5 hours old by the evening,
+  // and one stamped yesterday is 47.5 - neither is a fault on a daily series.
+  assert.equal(isCryptoHistoryStale('2026-08-24T00:00:00.000Z', evening, 'daily'), false);
+  assert.equal(isCryptoHistoryStale('2026-08-23T00:00:00.000Z', evening, 'daily'), false);
+  // Three days without a daily point is a real outage.
+  assert.equal(isCryptoHistoryStale('2026-08-21T00:00:00.000Z', evening, 'daily'), true);
+
+  // Intraday is held to a much tighter rule than the old flat one allowed.
+  assert.equal(isCryptoHistoryStale('2026-08-24T21:30:00.000Z', evening, 'intraday'), false);
+  assert.equal(isCryptoHistoryStale('2026-08-24T15:30:00.000Z', evening, 'intraday'), true);
+  assert.equal(isCryptoHistoryStale('2026-08-24T13:00:00.000Z', evening, 'hourly'), false);
+  assert.equal(isCryptoHistoryStale('2026-08-23T20:00:00.000Z', evening, 'hourly'), true);
+
+  assert.equal(isCryptoHistoryStale('not a date', evening, 'daily'), true);
 });
 
 const at = (isoDate) => new Date(`${isoDate}T00:00:00.000Z`).getTime();

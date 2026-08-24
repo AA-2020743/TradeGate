@@ -11,7 +11,7 @@ import { getAllEquityHistorySymbols, getCoreEquityHistorySymbols } from './equit
 import { buildBackfillRows, calculateConsensusHistory, calculateModelConsensus, calculateModelCorrelationMatrix, calculateWeightOverlap, evaluateMacroAlerts } from './macroConsensus.js';
 import { calculateDataSurprise, calculateLiquidityPayoff, calculateNominalDecomposition, calculateRateDivergence, calculateReserveScarcity, calculateTermPremium } from './macroRates.js';
 import { calculateGrowthNowcast, calculateInflationNowcast, calculateLiquidityCalendar, calculateRatePath, calculateRegimeTransitions, calculateYieldCurveModel, seriesPoints } from './macroModels.js';
-import { describeSeriesFreshness, isCryptoHistoryStale, isCotReportStale, isDailyCloseStale, isFredSeriesStale, isPbocObservationStale, monthsBetween } from './freshness.js';
+import { cryptoHistoryGranularity, describeSeriesFreshness, isCryptoHistoryStale, isCotReportStale, isDailyCloseStale, isFredSeriesStale, isPbocObservationStale, monthsBetween } from './freshness.js';
 import { percentileRank } from './statistics.js';
 
 /** The provider layer's spelling of the shared percentile. */
@@ -485,7 +485,13 @@ export async function getMarketHistory(symbol, requestedRange, options = {}) {
   if (!HISTORY_SYMBOLS.has(normalizedSymbol)) throw new Error(`Unsupported history symbol: ${normalizedSymbol}`);
 
   const cacheMode = options.preferStored === false ? 'provider' : 'default';
-  const historyIsStale = (timestamp) => normalizedSymbol === 'BTC' ? isCryptoHistoryStale(timestamp) : isDailyCloseStale(timestamp);
+  // The crypto tolerance has to match the granularity CoinGecko returns for
+  // this window, not a fixed day: the long ranges come back as daily points at
+  // 00:00 UTC, which a 24-hour rule calls stale every evening.
+  const cryptoGranularity = cryptoHistoryGranularity(HISTORY_RANGES[range].days);
+  const historyIsStale = (timestamp) => (normalizedSymbol === 'BTC'
+    ? isCryptoHistoryStale(timestamp, Date.now(), cryptoGranularity)
+    : isDailyCloseStale(timestamp));
   return withCache(`history:${normalizedSymbol}:${range}:${cacheMode}`, 60_000, async () => {
     let storedPoints = [];
     if (options.preferStored !== false) {
