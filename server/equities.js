@@ -1,6 +1,6 @@
 import { getStoredMarketHistories, getStoredSeriesCoverage, isDatabaseConfigured } from './database.js';
 import { calculateTechnicalSnapshot, isPublished } from './analytics.js';
-import { calculateBottomSignal, calculateBasketRotation, calculateCaptureProfile, calculateDrawdownProfile, calculateEquityRegime, calculateMacroSensitivities, calculateSectorBreadthProxy, calculateSectorDispersion, calculateSectorRotation, calculateTopRisk, calculateVolatilityTermStructure } from './equityAnalytics.js';
+import { calculateBottomSignal, calculateBasketRotation, calculateCaptureProfile, calculateDrawdownProfile, calculateExpectedMove, calculateEquityRegime, calculateMacroSensitivities, calculateSectorBreadthProxy, calculateSectorDispersion, calculateSectorRotation, calculateTopRisk, calculateVolatilityTermStructure } from './equityAnalytics.js';
 import {
   attachSeriesCoverage,
   breadthRequirements,
@@ -95,6 +95,9 @@ export async function getEquityDashboard(requestedSymbol = 'SPY') {
   const volatility = drawdownHistory.length
     ? calculateVolatilityTermStructure(drawdownHistory)
     : { version: 'equity-volatility-term-v1', status: 'unavailable', reason: `A ${symbol} daily close history is required for the volatility term structure.`, observations: 0, terms: [] };
+  const expectedMove = drawdownHistory.length
+    ? { ...calculateExpectedMove(drawdownHistory), source: drawdownSource }
+    : { version: 'equity-expected-move-v1', status: 'unavailable', reason: `A ${symbol} daily close history is required to draw a band and test it.`, observations: 0, horizons: [], source: null };
   const revisions = revisionsResult.status === 'fulfilled'
     ? { ...revisionsResult.value.model, source: revisionsResult.value.source, universeRequested: revisionsResult.value.universeRequested, reason: revisionsResult.value.model.reason ?? revisionsResult.value.reason }
     : { version: 'equity-revision-breadth-v1', status: 'unavailable', reason: `Analyst revision counts are unreachable: ${revisionsResult.reason?.message ?? revisionsResult.reason}`, source: null };
@@ -110,6 +113,7 @@ export async function getEquityDashboard(requestedSymbol = 'SPY') {
     regime,
     drawdown,
     volatility,
+    expectedMove,
     revisions,
     topRisk,
     bottomSignal,

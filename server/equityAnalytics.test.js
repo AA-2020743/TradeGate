@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { calculateBasketRotation, calculateBottomSignal, calculateBreadth, calculateBreadthDivergence, calculateCaptureProfile, calculateDrawdownProfile, calculateEquityRegime, calculateMacroSensitivities, calculateRevisionBreadth, calculateSectorBreadthProxy, calculateSectorDispersion, calculateSectorRotation, calculateTopRisk, calculateVolatilityTermStructure, rrgQuadrant } from './equityAnalytics.js';
+import { calculateBasketRotation, calculateExpectedMove, calculateBottomSignal, calculateBreadth, calculateBreadthDivergence, calculateCaptureProfile, calculateDrawdownProfile, calculateEquityRegime, calculateMacroSensitivities, calculateRevisionBreadth, calculateSectorBreadthProxy, calculateSectorDispersion, calculateSectorRotation, calculateTopRisk, calculateVolatilityTermStructure, rrgQuadrant } from './equityAnalytics.js';
 
 function technicalFixture(overrides = {}) {
   return {
@@ -1132,4 +1132,106 @@ test('a market with real range still produces a divergence read', () => {
   assert.equal(result.status, 'calculated');
   assert.ok(Number.isFinite(result.pricePercentile));
   assert.doesNotMatch(result.read, /null|undefined|—th/);
+});
+
+// A deterministic generator, so a calibration test is reproducible rather than
+// occasionally unlucky.
+function seededReturns() {
+  let seed = 12_345;
+  const uniform = () => { seed = ((seed * 1_103_515_245) + 12_345) & 0x7fffffff; return seed / 0x7fffffff; };
+  const gaussian = () => Math.sqrt(-2 * Math.log(Math.max(uniform(), 1e-12))) * Math.cos(2 * Math.PI * uniform());
+  const studentT = (degrees) => {
+    let sum = 0;
+    for (let index = 0; index < degrees; index += 1) { const draw = gaussian(); sum += draw * draw; }
+    return gaussian() / Math.sqrt(sum / degrees);
+  };
+  return { gaussian, studentT };
+}
+
+function priceSeries(generate, count = 3_000) {
+  let value = 100;
+  return Array.from({ length: count }, (_, index) => {
+    value *= Math.exp(generate() * 0.01);
+    return { date: new Date(Date.UTC(2010, 0, 1) + (index * 86_400_000)).toISOString().slice(0, 10), value };
+  });
+}
+
+test('the expected-move band recovers the hit rate it claims on normal returns', () => {
+  const { gaussian } = seededReturns();
+  const result = calculateExpectedMove(priceSeries(gaussian));
+
+  assert.equal(result.status, 'calculated');
+  // A one-sigma Gaussian band holds 68.3% of the time in theory. Estimation
+  // error in sigma and a finite number of windows pull it a little below, so
+  // this checks the machinery lands in the right neighbourhood rather than on
+  // a point value it has no right to hit exactly.
+  for (const horizon of result.horizons) {
+    assert.ok(horizon.heldPercent > 55 && horizon.heldPercent < 80, `${horizon.horizon}d held ${horizon.heldPercent}%`);
+  }
+  // Normal returns have no excess kurtosis.
+  assert.ok(Math.abs(result.excessKurtosis) < 1, `excess kurtosis ${result.excessKurtosis}`);
+});
+
+test('fat tails make the band hold more often, and fail by more when it fails', () => {
+  const { studentT } = seededReturns();
+  const fat = calculateExpectedMove(priceSeries(() => studentT(3)));
+  const { gaussian } = seededReturns();
+  const normal = calculateExpectedMove(priceSeries(gaussian));
+
+  // The intuition that fat tails break a one-sigma band more often is wrong: a
+  // leptokurtic distribution piles mass at the centre as well as in the tails,
+  // and it is the shoulders that thin out. The band's real weakness is the
+  // size of what escapes it.
+  assert.ok(fat.excessKurtosis > 3, `expected fat tails, got ${fat.excessKurtosis}`);
+  assert.ok(fat.horizons[0].heldPercent > normal.horizons[0].heldPercent);
+  assert.ok(fat.horizons[0].worstBreachSigmas > normal.horizons[0].worstBreachSigmas);
+});
+
+test('the expected-move band tests itself on independent windows only', () => {
+  const { gaussian } = seededReturns();
+  const result = calculateExpectedMove(priceSeries(gaussian, 3_000));
+  for (const horizon of result.horizons) {
+    // Non-overlapping windows: at most (observations - lookback) / horizon of
+    // them. Overlapping ones would report many times this and look settled on
+    // evidence they do not have.
+    const ceiling = Math.ceil((3_000 - result.estimationWindow) / horizon.horizon);
+    assert.ok(horizon.testedWindows <= ceiling, `${horizon.horizon}d claimed ${horizon.testedWindows} windows, ceiling ${ceiling}`);
+    // Every tested window either held or was breached; nothing is unaccounted for.
+    const heldWindows = horizon.testedWindows - horizon.breachedWindows;
+    assert.equal(Math.round((heldWindows / horizon.testedWindows) * 1_000) / 10, horizon.heldPercent);
+  }
+});
+
+test('the expected-move band refuses a history too short to test itself', () => {
+  const { gaussian } = seededReturns();
+  const result = calculateExpectedMove(priceSeries(gaussian, 200));
+  assert.equal(result.status, 'unavailable');
+  assert.match(result.reason, /252 sessions/);
+});
+
+test('a trending market breaks the drift-free band more often, and the calibration shows it', () => {
+  const { gaussian } = seededReturns();
+  // Same volatility, but with a persistent drift the band does not model.
+  let value = 100;
+  const trending = Array.from({ length: 3_000 }, (_, index) => {
+    value *= Math.exp((gaussian() * 0.01) + 0.004);
+    return { date: new Date(Date.UTC(2010, 0, 1) + (index * 86_400_000)).toISOString().slice(0, 10), value };
+  });
+  const drifting = calculateExpectedMove(trending);
+
+  const { gaussian: flat } = seededReturns();
+  let level = 100;
+  const driftless = Array.from({ length: 3_000 }, (_, index) => {
+    level *= Math.exp(flat() * 0.01);
+    return { date: new Date(Date.UTC(2010, 0, 1) + (index * 86_400_000)).toISOString().slice(0, 10), value: level };
+  });
+  const steady = calculateExpectedMove(driftless);
+
+  // The band is centred on spot with no drift term, so a trending series
+  // escapes it more often. The model must not hide that behind the same
+  // hit rate.
+  const longest = (model) => model.horizons.at(-1);
+  assert.ok(longest(drifting).heldPercent < longest(steady).heldPercent,
+    `trending held ${longest(drifting).heldPercent}%, driftless held ${longest(steady).heldPercent}%`);
+  assert.match(drifting.methodology, /no drift term/);
 });

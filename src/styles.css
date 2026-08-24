@@ -164,3 +164,30 @@ html[data-theme='dark'] .screener-search { background: #1a221d; border-color: #3
   font-size: 0.8em;
   line-height: 1.45;
 }
+
+/* The one-sigma band beside the hit rate it earned. */
+.expected-move-head,
+.expected-move-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1.3fr) minmax(0, 1.2fr) minmax(0, 0.9fr) minmax(0, 0.8fr);
+  gap: 0.75rem;
+  align-items: baseline;
+}
+.expected-move-head {
+  margin-top: 0.9rem;
+  padding-bottom: 0.4rem;
+  font-size: 0.72rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  opacity: 0.55;
+  border-bottom: 1px solid var(--hairline, rgba(255, 255, 255, 0.08));
+}
+.expected-move-row {
+  padding: 0.55rem 0;
+  border-bottom: 1px solid var(--hairline, rgba(255, 255, 255, 0.06));
+}
+.expected-move-row:last-of-type { border-bottom: none; }
+.expected-move-row > span { display: flex; flex-direction: column; min-width: 0; }
+.expected-move-row > span small { opacity: 0.6; font-size: 0.76em; }
+.expected-move-row > i { font-style: normal; display: flex; flex-direction: column; }
+.expected-move-row > i small { opacity: 0.55; font-size: 0.72em; }

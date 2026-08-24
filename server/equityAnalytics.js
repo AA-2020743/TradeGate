@@ -1371,3 +1371,135 @@ export function calculateRevisionBreadth(rows, { requested = null, minimumCovere
     methodology: `Per name, revisions are netted as (raises - cuts) / (raises + cuts) over the provider's trailing revision window. Diffusion is the share of names with a positive net - how broad. The aggregate pools every revision across the universe - how large. A name with no revisions at all is excluded from both rather than counted as unchanged, because no coverage is not the same as no opinion. The model reports provisional below 85% universe coverage.`,
   };
 }
+
+/**
+ * How far the index can travel over a horizon, and whether that band has
+ * actually held.
+ *
+ * A one-sigma cone drawn from realised volatility is easy to publish and easy
+ * to believe. The number that makes it research rather than decoration is the
+ * second one: taking the same rule back through history - estimating from data
+ * available at the time and checking where price actually landed - and
+ * reporting how often it was right. A Gaussian band on daily equity returns is
+ * expected to hold about 68% of the time and generally does not, because the
+ * tails are fatter than the assumption, so a band that held 61% of the time is
+ * the honest headline and the 68% is the claim being tested.
+ *
+ * Calibration windows are non-overlapping. Overlapping ones share most of
+ * their observations, which inflates the sample count without adding
+ * independent evidence and makes a thin study look settled.
+ */
+export function calculateExpectedMove(points, { horizons = [5, 21, 63], lookback = 252, minimumCalibrationSamples = 20 } = {}) {
+  const version = 'equity-expected-move-v1';
+  const history = normalizeHistory(points ?? []).filter((point) => point.value > 0);
+  const longestHorizon = Math.max(...horizons);
+  const required = lookback + longestHorizon;
+  if (history.length < required) {
+    return {
+      version,
+      status: 'unavailable',
+      reason: `Needs ${lookback} sessions to estimate volatility plus ${longestHorizon} to test the band against; ${history.length} available.`,
+      observations: history.length,
+      horizons: [],
+    };
+  }
+
+  const values = history.map((point) => point.value);
+  const logReturns = values.slice(1).map((value, index) => Math.log(value / values[index]));
+
+  /** Daily sigma from the `lookback` returns ending at `endIndex` (exclusive). */
+  const sigmaEndingAt = (endIndex) => {
+    const window = logReturns.slice(Math.max(0, endIndex - lookback), endIndex);
+    return window.length >= Math.min(lookback, 60) ? standardDeviation(window) : null;
+  };
+
+  const latestSigma = sigmaEndingAt(logReturns.length);
+  if (!Number.isFinite(latestSigma) || latestSigma <= 0) {
+    return {
+      version,
+      status: 'unavailable',
+      reason: 'Realised volatility over the estimation window is zero, so there is no band to draw.',
+      observations: history.length,
+      horizons: [],
+    };
+  }
+
+  const spot = values.at(-1);
+  const asOf = history.at(-1).date;
+
+  // Excess kurtosis measures tail weight directly. The share of moves beyond
+  // two sigma looks like the obvious measure and is not: sample sigma is
+  // itself inflated by the outliers, so a fatter-tailed series can show a
+  // *smaller* share beyond two of its own sigmas. Zero is normal; positive
+  // means more weight in both the peak and the tails than a normal has.
+  const recentReturns = logReturns.slice(-lookback);
+  const returnMean = mean(recentReturns);
+  const fourthMoment = mean(recentReturns.map((value) => (value - returnMean) ** 4));
+  const excessKurtosis = latestSigma > 0 ? (fourthMoment / (latestSigma ** 4)) - 3 : null;
+
+  const built = horizons.map((horizon) => {
+    const horizonSigma = latestSigma * Math.sqrt(horizon);
+    const upperPercent = (Math.exp(horizonSigma) - 1) * 100;
+    const lowerPercent = (Math.exp(-horizonSigma) - 1) * 100;
+
+    // Walk forward in non-overlapping steps: estimate from what was known at
+    // the start of each window, then look at where price actually went.
+    let held = 0;
+    let tested = 0;
+    const breachSigmas = [];
+    for (let start = lookback; start + horizon < values.length; start += horizon) {
+      const sigma = sigmaEndingAt(start);
+      if (!Number.isFinite(sigma) || sigma <= 0) continue;
+      const move = Math.log(values[start + horizon] / values[start]);
+      const band = sigma * Math.sqrt(horizon);
+      tested += 1;
+      if (Math.abs(move) <= band) held += 1;
+      // How far past the band price went, in multiples of the band itself.
+      // Frequency alone hides the failure that matters: a band breached 30% of
+      // the time by a hair is a different instrument from one breached 30% of
+      // the time by three sigma.
+      else breachSigmas.push(Math.abs(move) / band);
+    }
+    const heldPercent = tested ? Math.round((held / tested) * 1_000) / 10 : null;
+    const medianBreach = breachSigmas.length ? Math.round(median(breachSigmas) * 100) / 100 : null;
+    const worstBreach = breachSigmas.length ? Math.round(Math.max(...breachSigmas) * 100) / 100 : null;
+
+    return {
+      horizon,
+      sigmaPercent: Math.round(horizonSigma * 1_000) / 10,
+      upperPercent: Math.round(upperPercent * 100) / 100,
+      lowerPercent: Math.round(lowerPercent * 100) / 100,
+      upper: Math.round(spot * Math.exp(horizonSigma) * 100) / 100,
+      lower: Math.round(spot * Math.exp(-horizonSigma) * 100) / 100,
+      heldPercent,
+      testedWindows: tested,
+      // 68.3% is what a one-sigma Gaussian band claims. The gap is the finding.
+      calibrationGap: heldPercent === null ? null : Math.round((heldPercent - 68.3) * 10) / 10,
+      medianBreachSigmas: medianBreach,
+      worstBreachSigmas: worstBreach,
+      breachedWindows: breachSigmas.length,
+      status: tested >= minimumCalibrationSamples ? 'calculated' : 'provisional',
+    };
+  });
+
+  const calibrated = built.filter((entry) => entry.status === 'calculated');
+  const worst = calibrated.length
+    ? calibrated.reduce((furthest, entry) => (Math.abs(entry.calibrationGap) > Math.abs(furthest.calibrationGap) ? entry : furthest))
+    : null;
+
+  return {
+    version,
+    status: calibrated.length === built.length ? 'calculated' : calibrated.length ? 'provisional' : 'unavailable',
+    asOf,
+    observations: history.length,
+    spot: Math.round(spot * 100) / 100,
+    annualizedVolatilityPercent: Math.round(latestSigma * Math.sqrt(252) * 1_000) / 10,
+    estimationWindow: lookback,
+    excessKurtosis: excessKurtosis === null ? null : Math.round(excessKurtosis * 100) / 100,
+    horizons: built,
+    read: worst
+      ? `A one-sigma band from ${lookback} sessions of realised volatility puts the next ${built[0].horizon} sessions inside ${built[0].lower} to ${built[0].upper}. Tested in non-overlapping windows across this history, the ${worst.horizon}-session band held ${worst.heldPercent}% of the time against the 68.3% a normal distribution claims, over ${worst.testedWindows} independent windows.${worst.worstBreachSigmas ? ` When it broke, the median break ran ${worst.medianBreachSigmas}x the band and the worst ran ${worst.worstBreachSigmas}x - the frequency is the smaller half of the story.` : ''}${excessKurtosis > 1 ? ` Daily returns carry excess kurtosis of ${Math.round(excessKurtosis * 100) / 100}, so the moves that escape this band escape it by more than a normal would allow.` : ''}`
+      : 'Not enough independent windows to test the band against its own history.',
+    methodology: 'Sigma is the standard deviation of daily log returns over the estimation window, scaled by the square root of the horizon. The band is a one-sigma range centred on the current price, not a forecast and not a bound. It carries no drift term, so a strongly trending market breaks it asymmetrically and the hit rate falls below what volatility alone would imply - which is the calibration doing its job rather than failing. Calibration re-estimates sigma from data available at the start of each historical window and steps forward in non-overlapping blocks, so the sample count reflects independent evidence rather than reused observations. A one-sigma band on equity returns usually holds more often than 68.3%, not less: the return distribution is peaked as well as fat-tailed, so it is the shoulders that are thin. The band understates risk through the size of the moves that escape it rather than their frequency, which is why the median and worst breach are reported beside the hit rate.',
+  };
+}

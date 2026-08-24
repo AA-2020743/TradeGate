@@ -641,6 +641,48 @@ function VolatilityTermPanel({ volatility }) {
 }
 
 /**
+ * The one-sigma band, and how it has actually behaved.
+ *
+ * The band itself is arithmetic. What makes it worth showing is the second
+ * column: the same rule walked back through this history in non-overlapping
+ * windows, so the reader sees the hit rate the band earned rather than the
+ * 68.3% it assumes — and, when it broke, by how much.
+ */
+function ExpectedMovePanel({ expectedMove }) {
+  const status = expectedMove?.status ?? 'unavailable';
+  const published = status !== 'unavailable';
+  const fatTails = Number.isFinite(expectedMove?.excessKurtosis) && expectedMove.excessKurtosis > 1;
+  return <article className={`panel ${published ? '' : 'preview-section'}`}>
+    <div className="panel-title">
+      <div>
+        <p className="section-kicker">EXPECTED MOVE · {status.toUpperCase()}</p>
+        <h3>{published ? `±${expectedMove.horizons?.[0]?.sigmaPercent ?? '—'}% over ${expectedMove.horizons?.[0]?.horizon ?? '—'} sessions` : 'Awaiting a multi-year close history'}</h3>
+      </div>
+      {published && Number.isFinite(expectedMove.annualizedVolatilityPercent)
+        ? <span className="data-pill">{expectedMove.annualizedVolatilityPercent}% annualized</span>
+        : null}
+    </div>
+    {published ? <>
+      <div className="expected-move-head"><span>Horizon</span><span>Band</span><span>Held</span><span>Worst break</span></div>
+      {(expectedMove.horizons ?? []).map((horizon) => <div className="expected-move-row" key={horizon.horizon}>
+        <span><strong>{horizon.horizon} sessions</strong><small>±{horizon.sigmaPercent}%</small></span>
+        <b>{horizon.lower} – {horizon.upper}</b>
+        <i title={`${horizon.testedWindows} independent windows`}>
+          {Number.isFinite(horizon.heldPercent) ? `${horizon.heldPercent}%` : '—'}
+          <small>{horizon.status === 'provisional' ? `only ${horizon.testedWindows} windows` : `of ${horizon.testedWindows}`}</small>
+        </i>
+        <strong>{Number.isFinite(horizon.worstBreachSigmas) ? `${horizon.worstBreachSigmas}×` : '—'}</strong>
+      </div>)}
+      {fatTails ? <div className="stat-row">
+        <span><strong>Excess kurtosis</strong><small>Zero is a normal distribution</small></span>
+        <b className="negative">{expectedMove.excessKurtosis}</b>
+      </div> : null}
+    </> : <div className="equity-empty">{expectedMove?.reason ?? 'A multi-year daily close history is required.'}</div>}
+    <p className="model-footnote">{published ? expectedMove.read : ''} {expectedMove?.methodology ?? ''}{expectedMove?.source ? ` Measured on ${expectedMove.source}.` : ''}</p>
+  </article>;
+}
+
+/**
  * Analyst EPS revisions — the one leg here that can disagree with price for a
  * fundamental reason. Diffusion is how broad the revision is, the aggregate how
  * large; when they part company a few heavily covered names are carrying it.
@@ -756,6 +798,7 @@ function EquitiesDashboard({ platformData }) {
       <EquitySignalCard kicker="CONSTITUENT BREADTH" title={dashboard?.breadth?.status === 'calculated' ? 'Calculated breadth' : dashboard?.breadth?.status === 'partial' ? 'Partial breadth' : 'Breadth unavailable'} model={dashboard?.breadth} empty={dashboard?.breadth?.reason ?? 'Constituent histories are not connected.'} coverageLabel="constituent coverage" />
       <DrawdownProfilePanel drawdown={dashboard?.drawdown} />
       <VolatilityTermPanel volatility={dashboard?.volatility} />
+      <ExpectedMovePanel expectedMove={dashboard?.expectedMove} />
       <RevisionBreadthPanel revisions={dashboard?.revisions} />
       <ThrustLogPanel breadth={dashboard?.breadth} />
     </section>

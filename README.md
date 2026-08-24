@@ -262,6 +262,14 @@ The macro regime combines US liquidity, global liquidity, Chicago Fed financial 
 
 FRED histories are ingested with up to 2,500 observations per series, so weekly balance-sheet and rate series reach back well beyond five years in the liquidity inspector's `All` range; daily series remain bounded by FRED's own history (for example the broad dollar starts in 2006).
 
+### `equity-expected-move-v1`
+
+A one-sigma band from realised volatility, together with the hit rate it earned. Sigma is the standard deviation of daily log returns over a 252-session estimation window, scaled by the square root of the horizon; the band is a range centred on spot, not a forecast and not a bound.
+
+The band alone is arithmetic, so the model also tests it: the same rule is walked back through the history, re-estimating sigma from data available at the start of each window and stepping forward in **non-overlapping** blocks, and the published hit rate is what that produced. Overlapping windows would inflate the sample count without adding independent evidence.
+
+Two results are reported that a band on its own hides. A one-sigma band on equity returns usually holds *more* often than the 68.3% a normal claims, not less — the distribution is peaked as well as fat-tailed, so it is the shoulders that are thin. The band therefore understates risk through the *size* of what escapes it rather than the frequency, which is why the median and worst breach are published as multiples of the band beside the hit rate, along with excess kurtosis. The band also carries no drift term, so a strongly trending market breaks it asymmetrically and the hit rate falls below what volatility alone implies.
+
 ### Equity calculation engines
 
 `equity-regime-v1` dynamically changes factor weights, alert thresholds, and expected holding periods. It requires price trend, momentum, and volatility, and remains provisional below 75% driver coverage. `equity-top-risk-v1` and `equity-bottom-signal-v1` require both technical and constituent-breadth confirmation and do not publish from price and liquidity alone.
