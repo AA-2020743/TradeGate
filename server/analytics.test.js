@@ -1886,3 +1886,33 @@ test('volatility that cannot be measured is withheld rather than published as ze
   // read as the quietest possible tape.
   assert.equal(snapshot.components.volatilityQuality, 50);
 });
+
+test('a liquidity driver publishes the window it actually measured', () => {
+  const DAY = 86_400_000;
+  const start = Date.now() - (1_400 * DAY);
+  const day = (index) => new Date(start + (index * DAY)).toISOString().slice(0, 10);
+  const weekly = (key, base, step, multiplier = 1) => ({ key, multiplier, history: Array.from({ length: 190 }, (_, index) => ({ date: day(index * 7), value: base + (index * step) })) });
+  const daily = (key, base, step, multiplier = 1) => ({ key, multiplier, history: Array.from({ length: 1_390 }, (_, index) => ({ date: day(index), value: base + (index * step) })) });
+  // M2 prints monthly, so the observation nearest 91 days back is 120 days back.
+  const monthly = (key, base, step, multiplier = 1) => ({ key, multiplier, history: Array.from({ length: 46 }, (_, index) => ({ date: day(index * 30), value: base + (index * step) })) });
+
+  const model = calculateUsLiquidityModel([
+    weekly('fedBalanceSheet', 7_000_000, 6_000),
+    daily('treasuryGeneralAccount', 700_000, 20),
+    daily('reverseRepo', 2_000, -0.6, 1_000),
+    monthly('usM2', 20_000, 120, 1_000),
+    daily('dxy', 110, -0.01),
+  ]);
+
+  assert.equal(model.status, 'calculated');
+  const byKey = Object.fromEntries(model.drivers.map((driver) => [driver.key, driver]));
+  for (const driver of model.drivers) assert.equal(driver.requestedDays, 91);
+
+  // The weekly and daily legs land on the requested window.
+  assert.equal(byKey.netLiquidity.spanDays, 91);
+  assert.equal(byKey.dollar.spanDays, 91);
+  // The monthly one cannot, and says so rather than presenting its change as a
+  // 91-day figure beside two that are.
+  assert.equal(byKey.usM2.spanDays, 120);
+  assert.ok(byKey.usM2.measuredFrom, 'the driver names the date it measured from');
+});

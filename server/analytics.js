@@ -507,6 +507,23 @@ function boundedImpulse(change, scale, inverse = false) {
   return inverse ? -impulse : impulse;
 }
 
+/**
+ * A driver's change over a requested window, carrying the window it actually
+ * covered. A 91-day request lands on whatever observation is nearest 91 days
+ * back, which for a weekly series is rarely exactly 91 - and the model used to
+ * publish the change while discarding the span, so "91-day impulse" was a
+ * claim the payload could not substantiate.
+ */
+function driverChange(points, days) {
+  const measured = measureChangeOverDays(points, days);
+  return {
+    change: measured?.percent ?? null,
+    requestedDays: days,
+    spanDays: measured?.spanDays ?? null,
+    measuredFrom: measured?.fromDate ?? null,
+  };
+}
+
 function absoluteChangeOverDays(points, days) {
   const measured = measureChangeOverDays(points, days);
   return measured ? measured.absolute : null;
@@ -567,9 +584,9 @@ export function calculateUsLiquidityModel(seriesList) {
   const netLiquidity = buildNetLiquiditySeries(fed, treasury, reverseRepo);
 
   const driverDefinitions = [
-    { key: 'netLiquidity', name: 'Fed net liquidity', change: changeOverDays(netLiquidity, 91), scale: 3, weight: 0.55 },
-    { key: 'usM2', name: 'US M2 growth', change: changeOverDays(m2, 91), scale: 2, weight: 0.25 },
-    { key: 'dollar', name: 'Dollar transmission', change: changeOverDays(dollar, 91), scale: 3, weight: 0.2, inverse: true },
+    { key: 'netLiquidity', name: 'Fed net liquidity', ...driverChange(netLiquidity, 91), scale: 3, weight: 0.55 },
+    { key: 'usM2', name: 'US M2 growth', ...driverChange(m2, 91), scale: 2, weight: 0.25 },
+    { key: 'dollar', name: 'Dollar transmission', ...driverChange(dollar, 91), scale: 3, weight: 0.2, inverse: true },
   ];
   const drivers = driverDefinitions.map((driver) => ({
     ...driver,
@@ -588,7 +605,7 @@ export function calculateUsLiquidityModel(seriesList) {
       netLiquidity: netLiquidity.at(-1)?.value ?? null,
       history: netLiquidity,
       missing: missing.map((driver) => driver.name),
-      drivers: driverDefinitions.map(({ key, name, weight }) => ({ key, name, changePercent: null, impulse: null, weight })),
+      drivers: driverDefinitions.map(({ key, name, weight, requestedDays }) => ({ key, name, changePercent: null, impulse: null, weight, requestedDays, spanDays: null, measuredFrom: null })),
     };
   }
 
@@ -641,7 +658,9 @@ export function calculateUsLiquidityModel(seriesList) {
     history: netLiquidity,
     decomposition,
     composite,
-    drivers: drivers.map(({ key, name, change, impulse, weight }) => ({ key, name, changePercent: change, impulse, weight })),
+    drivers: drivers.map(({ key, name, change, impulse, weight, requestedDays, spanDays, measuredFrom }) => ({
+      key, name, changePercent: change, impulse, weight, requestedDays, spanDays, measuredFrom,
+    })),
   };
 }
 
@@ -912,11 +931,11 @@ export function calculateGlobalLiquidityModel(seriesList) {
 
   const exUs = sumAlignedSeries([ecbLeg, bojLeg]);
   const driverDefinitions = [
-    { key: 'globalCentralBank', name: 'Global central-bank impulse', change: changeOverDays(globalLiquidity, 91), scale: 3, weight: 0.3 },
-    { key: 'usM2', name: 'US M2 growth', change: changeOverDays(m2, 91), scale: 2, weight: 0.2 },
-    { key: 'exUsCentralBank', name: 'ECB + BoJ impulse', change: changeOverDays(exUs, 91), scale: 3, weight: 0.15 },
-    { key: 'dollar', name: 'Dollar transmission', change: changeOverDays(dollar, 91), scale: 3, weight: 0.2, inverse: true },
-    ...(pbocLeg.length >= 13 ? [{ key: 'pbocCentralBank', name: 'PBoC impulse', change: changeOverDays(pbocLeg, 91), scale: 3, weight: 0.15 }] : []),
+    { key: 'globalCentralBank', name: 'Global central-bank impulse', ...driverChange(globalLiquidity, 91), scale: 3, weight: 0.3 },
+    { key: 'usM2', name: 'US M2 growth', ...driverChange(m2, 91), scale: 2, weight: 0.2 },
+    { key: 'exUsCentralBank', name: 'ECB + BoJ impulse', ...driverChange(exUs, 91), scale: 3, weight: 0.15 },
+    { key: 'dollar', name: 'Dollar transmission', ...driverChange(dollar, 91), scale: 3, weight: 0.2, inverse: true },
+    ...(pbocLeg.length >= 13 ? [{ key: 'pbocCentralBank', name: 'PBoC impulse', ...driverChange(pbocLeg, 91), scale: 3, weight: 0.15 }] : []),
   ];
   const coreDriverKeys = ['globalCentralBank', 'usM2', 'exUsCentralBank', 'dollar'];
   const drivers = driverDefinitions.map((driver) => ({
@@ -1014,7 +1033,9 @@ export function calculateGlobalLiquidityModel(seriesList) {
     centralBanks: legSummary,
     composite,
     history: globalLiquidity,
-    drivers: drivers.map(({ key, name, change, impulse, weight }) => ({ key, name, changePercent: change, impulse, weight })),
+    drivers: drivers.map(({ key, name, change, impulse, weight, requestedDays, spanDays, measuredFrom }) => ({
+      key, name, changePercent: change, impulse, weight, requestedDays, spanDays, measuredFrom,
+    })),
   };
 }
 
