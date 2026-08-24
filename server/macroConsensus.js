@@ -1,23 +1,4 @@
-/**
- * Cross-model layer: what the macro models say when read against each other,
- * how much of what they say is genuinely independent, and which readings are
- * time-sensitive enough to raise.
- *
- * The workspace publishes around twenty-five macro models and nothing until now
- * compared them. A growth nowcast reading "Accelerating" beside an inverted
- * curve and a negative surprise index is the most informative thing on the page
- * and was invisible because each model only ever spoke for itself.
- */
-
-function mean(values) {
-  return values.length ? values.reduce((total, value) => total + value, 0) / values.length : null;
-}
-
-function deviation(values) {
-  if (values.length < 2) return null;
-  const average = mean(values);
-  return Math.sqrt(values.reduce((total, value) => total + ((value - average) ** 2), 0) / (values.length - 1));
-}
+import { mean, standardDeviation } from './statistics.js';
 
 function round(value, digits = 2) {
   if (!Number.isFinite(value)) return null;
@@ -224,7 +205,7 @@ export function calculateModelConsensus(models = {}, { gap = CONTRADICTION_GAP }
   const scores = available.map((signal) => signal.score);
   const average = mean(scores);
   const spread = Math.max(...scores) - Math.min(...scores);
-  const dispersion = deviation(scores);
+  const dispersion = standardDeviation(scores);
   const ranked = [...available].sort((left, right) => right.score - left.score);
 
   const contradictions = [];

@@ -1,3 +1,4 @@
+import { mean, medianSpacingDays, percentileRank } from './statistics.js';
 /**
  * Macro models that sit alongside the liquidity and regime engines: the yield
  * curve, market-implied inflation, the rate path the curve is pricing, the
@@ -16,10 +17,6 @@ function clamp(value, minimum = 0, maximum = 100) {
   return Math.min(maximum, Math.max(minimum, value));
 }
 
-function mean(values) {
-  return values.length ? values.reduce((total, value) => total + value, 0) / values.length : null;
-}
-
 function round(value, digits = 2) {
   if (!Number.isFinite(value)) return null;
   const factor = 10 ** digits;
@@ -31,12 +28,6 @@ function ordinal(value) {
   const lastTwo = Math.abs(value) % 100;
   if (lastTwo >= 11 && lastTwo <= 13) return `${value}th`;
   return `${value}${{ 1: 'st', 2: 'nd', 3: 'rd' }[Math.abs(value) % 10] ?? 'th'}`;
-}
-
-function percentileRank(values, value) {
-  const finite = values.filter(Number.isFinite);
-  if (!finite.length || !Number.isFinite(value)) return null;
-  return Math.round((finite.filter((entry) => entry <= value).length / finite.length) * 100);
 }
 
 /** `{ key, multiplier, history: [{ date, value }] }` into sorted `{ date, value }`. */
@@ -53,15 +44,6 @@ function latestAtOrBefore(points, date) {
     if (points[index].date <= date) return points[index];
   }
   return null;
-}
-
-function medianSpacingDays(points) {
-  if (points.length < 3) return null;
-  const gaps = points.slice(1).map((point, index) => (new Date(point.date) - new Date(points[index].date)) / DAY_MS);
-  const sorted = gaps.filter((gap) => gap > 0).sort((left, right) => left - right);
-  if (!sorted.length) return null;
-  const middle = Math.floor(sorted.length / 2);
-  return sorted.length % 2 ? sorted[middle] : (sorted[middle - 1] + sorted[middle]) / 2;
 }
 
 /**

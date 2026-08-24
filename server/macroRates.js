@@ -1,3 +1,5 @@
+import { mean, medianSpacingDays, percentileRank, standardDeviation } from './statistics.js';
+
 /**
  * Rate-structure models: what is inside a nominal yield, how the US curve sits
  * against the rest of the world, whether official data has been surprising, what
@@ -10,16 +12,6 @@
 
 const DAY_MS = 86_400_000;
 
-function mean(values) {
-  return values.length ? values.reduce((total, value) => total + value, 0) / values.length : null;
-}
-
-function deviation(values) {
-  if (values.length < 2) return null;
-  const average = mean(values);
-  return Math.sqrt(values.reduce((total, value) => total + ((value - average) ** 2), 0) / (values.length - 1));
-}
-
 function round(value, digits = 2) {
   if (!Number.isFinite(value)) return null;
   const factor = 10 ** digits;
@@ -31,21 +23,6 @@ function ordinal(value) {
   const lastTwo = Math.abs(value) % 100;
   if (lastTwo >= 11 && lastTwo <= 13) return `${value}th`;
   return `${value}${{ 1: 'st', 2: 'nd', 3: 'rd' }[Math.abs(value) % 10] ?? 'th'}`;
-}
-
-/**
- * A percentile of a distribution with no spread is float dust, not information.
- * Four indicators each scoring an identical z came back at the 100th, 31st and
- * 22nd percentiles purely because the values differed in the fifteenth decimal
- * place, which reads as a contradiction next to identical numbers.
- */
-function percentileRank(values, value) {
-  const finite = values.filter(Number.isFinite);
-  if (!finite.length || !Number.isFinite(value)) return null;
-  const spread = Math.max(...finite) - Math.min(...finite);
-  const scale = Math.max(Math.abs(value), ...finite.map(Math.abs), 1);
-  if (spread <= scale * 1e-9) return null;
-  return Math.round((finite.filter((entry) => entry <= value).length / finite.length) * 100);
 }
 
 function unavailable(version, reason, extra = {}) {
@@ -65,15 +42,6 @@ function latestAtOrBefore(points, date) {
     if (points[index].date <= date) return points[index];
   }
   return null;
-}
-
-function medianSpacingDays(points) {
-  if (points.length < 3) return null;
-  const gaps = points.slice(1).map((point, index) => (new Date(point.date) - new Date(points[index].date)) / DAY_MS);
-  const sorted = gaps.filter((gap) => gap > 0).sort((left, right) => left - right);
-  if (!sorted.length) return null;
-  const middle = Math.floor(sorted.length / 2);
-  return sorted.length % 2 ? sorted[middle] : (sorted[middle - 1] + sorted[middle]) / 2;
 }
 
 /** The same bounded lookback the rest of the workspace uses. */
@@ -332,7 +300,7 @@ export function calculateDataSurprise(seriesList, { indicators = [], lookback = 
     const surprises = points.map((point, index) => {
       if (index < lookback) return null;
       const window = points.slice(index - lookback, index).map((entry) => entry.value);
-      const sigma = deviation(window);
+      const sigma = standardDeviation(window);
       const average = mean(window);
       if (!sigma || !Number.isFinite(average)) return null;
       return { date: point.date, value: ((point.value - average) / sigma) * (indicator.inverse ? -1 : 1) };

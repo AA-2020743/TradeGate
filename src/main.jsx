@@ -560,6 +560,17 @@ function ordinal(value) {
   return `${value}${{ 1: 'st', 2: 'nd', 3: 'rd' }[Math.abs(value) % 10] ?? 'th'}`;
 }
 
+/**
+ * "67th percentile of 600 sessions", or an honest note when the distribution
+ * had no spread to rank against - a series pinned at one level cannot place
+ * today anywhere in it, and an em-dash where the number goes does not say why.
+ */
+function rankLabel(percentile, count, unit = 'sessions') {
+  if (!Number.isFinite(count)) return '';
+  if (!Number.isFinite(percentile)) return `unranked · flat across ${count} ${unit}`;
+  return `${ordinal(percentile)} percentile of ${count} ${unit}`;
+}
+
 function VolatilityTermPanel({ volatility }) {
   const status = volatility?.status ?? 'unavailable';
   const published = status !== 'unavailable';
@@ -985,7 +996,7 @@ function YieldCurvePanel({ curve }) {
   return <article className={`panel ${published ? '' : 'preview-section'}`}>
     <div className="panel-title"><div><p className="section-kicker">YIELD CURVE · {status.toUpperCase()}</p><h3>{published ? curve.state : 'Awaiting Treasury yields'}</h3></div>{published ? <span className={`data-pill ${curve.inverted ? 'pill-warning' : ''}`}>{curve.inverted ? 'Inverted' : 'Not inverted'}</span> : null}</div>
     {published ? (curve.spreads ?? []).map((spread) => <div className="stat-row" key={spread.key}>
-      <span><strong>{spread.name}</strong><small>{spread.status === 'unavailable' ? spread.reason : `${ordinal(spread.percentile)} percentile of ${spread.rankedAgainst} sessions${spread.inverted ? ` · inverted ${spread.sessionsInverted} sessions` : spread.unInverted ? ` · un-inverted ${spread.sessionsSinceUnInversion} sessions ago` : ''}${Number.isFinite(spread.change60d) ? ` · ${spread.change60d > 0 ? '+' : ''}${spread.change60d} over 60` : ''}`}</small></span>
+      <span><strong>{spread.name}</strong><small>{spread.status === 'unavailable' ? spread.reason : `${rankLabel(spread.percentile, spread.rankedAgainst)}${spread.inverted ? ` · inverted ${spread.sessionsInverted} sessions` : spread.unInverted ? ` · un-inverted ${spread.sessionsSinceUnInversion} sessions ago` : ''}${Number.isFinite(spread.change60d) ? ` · ${spread.change60d > 0 ? '+' : ''}${spread.change60d} over 60` : ''}`}</small></span>
       <b className={spread.status === 'unavailable' ? '' : spread.inverted ? 'negative' : 'positive'}>{Number.isFinite(spread.spread) ? `${spread.spread}%` : '—'}</b>
     </div>) : <div className="equity-empty">{curve?.reason ?? 'The 10-year yield plus a 2-year or 3-month leg is required.'}</div>}
     <p className="model-footnote">{published ? curve.read : ''} {curve?.methodology ?? ''}</p>
@@ -1158,7 +1169,7 @@ function ReserveScarcityPanel({ scarcity }) {
   return <article className={`panel ${published ? '' : 'preview-section'}`}>
     <div className="panel-title"><div><p className="section-kicker">RESERVE SCARCITY · {status.toUpperCase()}</p><h3>{published ? scarcity.state : 'Awaiting SOFR and IORB'}</h3></div>{published ? <span className={`data-pill ${scarcity.spreadBasisPoints >= scarcity.thresholdBasisPoints ? 'pill-warning' : ''}`}>{scarcity.spreadBasisPoints > 0 ? '+' : ''}{scarcity.spreadBasisPoints}bp</span> : null}</div>
     {published ? <>
-      <div className="stat-row"><span><strong>SOFR over the reserve rate</strong><small>{`${ordinal(scarcity.percentile)} percentile of ${scarcity.rankedAgainst} sessions`}</small></span><b className={scarcity.spreadBasisPoints >= scarcity.thresholdBasisPoints ? 'negative' : 'positive'}>{scarcity.spreadBasisPoints > 0 ? '+' : ''}{scarcity.spreadBasisPoints}bp</b></div>
+      <div className="stat-row"><span><strong>SOFR over the reserve rate</strong><small>{rankLabel(scarcity.percentile, scarcity.rankedAgainst)}</small></span><b className={scarcity.spreadBasisPoints >= scarcity.thresholdBasisPoints ? 'negative' : 'positive'}>{scarcity.spreadBasisPoints > 0 ? '+' : ''}{scarcity.spreadBasisPoints}bp</b></div>
       <div className="stat-row"><span><strong>{`Sessions at or above ${scarcity.thresholdBasisPoints}bp`}</strong><small>Out of the last 21</small></span><b>{scarcity.daysAboveThreshold}</b></div>
       {Number.isFinite(scarcity.changeBasisPoints) ? <div className="stat-row"><span><strong>Change over a quarter</strong><small>Direction of the funding pressure</small></span><b className={scarcity.changeBasisPoints >= 0 ? 'negative' : 'positive'}>{scarcity.changeBasisPoints > 0 ? '+' : ''}{scarcity.changeBasisPoints}bp</b></div> : null}
     </> : <div className="equity-empty">{scarcity?.reason ?? 'Both SOFR and IORB are required.'}</div>}
