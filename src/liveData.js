@@ -218,3 +218,44 @@ export function formatTimestamp(timestamp) {
     timeZoneName: 'short',
   }).format(parsed);
 }
+
+/**
+ * The change from a chart point back to whatever observation sits closest to
+ * `days` before it, together with the span actually covered.
+ *
+ * Counting a fixed number of points backwards only measures a fixed number of
+ * days when the series has one cadence. The global liquidity history unions
+ * weekly US dates with weekly ECB dates and lands roughly twice a week, so
+ * thirteen points back was about six weeks - and the tooltip said "13W".
+ */
+export function changeOverSpan(points, index, days, maxSlackDays = 21) {
+  const current = points?.[index];
+  if (!current || !Number.isFinite(current.value) || current.value <= 0) return null;
+  const currentTime = new Date(current.date).getTime();
+  if (!Number.isFinite(currentTime)) return null;
+  const targetTime = currentTime - (days * 86_400_000);
+
+  let candidate = null;
+  for (let cursor = index - 1; cursor >= 0; cursor -= 1) {
+    const point = points[cursor];
+    const time = new Date(point?.date).getTime();
+    if (!Number.isFinite(time) || time > targetTime) continue;
+    candidate = point;
+    break;
+  }
+  if (!candidate || !Number.isFinite(candidate.value) || candidate.value <= 0) return null;
+
+  const spanDays = Math.round((currentTime - new Date(candidate.date).getTime()) / 86_400_000);
+  // A history that simply does not reach back far enough must not answer as
+  // though it did.
+  if (spanDays > days + maxSlackDays) return null;
+  return { percent: ((current.value / candidate.value) - 1) * 100, spanDays, fromDate: candidate.date };
+}
+
+/** "13W" for 91 days, "26D" for 26 - whichever unit reports the span honestly. */
+export function formatSpanLabel(spanDays) {
+  if (!Number.isFinite(spanDays) || spanDays <= 0) return '';
+  if (spanDays >= 14 && spanDays % 7 === 0) return `${spanDays / 7}W`;
+  if (spanDays >= 14) return `${Math.round(spanDays / 7)}W`;
+  return `${spanDays}D`;
+}

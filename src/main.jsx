@@ -1,7 +1,7 @@
 import React, { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 import './styles.css';
-import { formatPercent, formatTimestamp, formatUsd, useEquityResearch, useMarketHistory, usePlatformData, useTechnicalAnalytics } from './liveData.js';
+import { changeOverSpan, formatPercent, formatSpanLabel, formatTimestamp, formatUsd, useEquityResearch, useMarketHistory, usePlatformData, useTechnicalAnalytics } from './liveData.js';
 import { buildRoute, parseRoute } from './routing.js';
 import { addSymbolToList, normalizeWatchlists } from './watchlistRules.js';
 import { SCREENER_COLUMNS, ariaSortFor, nextSortState, sortRows } from './screenerSort.js';
@@ -158,8 +158,10 @@ function LiquidityHistoryChart({ history, range, onRangeChange, expanded = false
   const activeIndex = requestedIndex === null ? null : Math.min(requestedIndex, points.length - 1);
   const activePoint = activeIndex === null ? null : points[activeIndex];
   const activeCoordinate = activeIndex === null ? null : coordinates[activeIndex];
-  const priorPoint = activeIndex !== null && activeIndex >= 13 ? points[activeIndex - 13] : null;
-  const change13w = priorPoint?.value ? ((activePoint.value / priorPoint.value) - 1) * 100 : null;
+  // Measured over real calendar days, not a fixed number of observations:
+  // this chart serves both the weekly US series and the global series, which
+  // unions two weekly feeds and lands roughly twice a week.
+  const trailingChange = activeIndex === null ? null : changeOverSpan(points, activeIndex, 91);
   const labelIndexes = points.length ? [0, .25, .5, .75, 1].map((position) => Math.round((points.length - 1) * position)) : [];
 
   const selectNearest = (event, pin = false) => {
@@ -176,7 +178,7 @@ function LiquidityHistoryChart({ history, range, onRangeChange, expanded = false
   if (points.length < 2) return <div className="liquidity-history-empty">No aligned liquidity history is available.</div>;
   return <div className={`liquidity-history-workspace ${expanded ? 'expanded' : ''}`}>
     <div className="liquidity-history-toolbar">
-      <div><b>{formatLiquidityValue(activePoint?.value)}</b><span>{activePoint?.date ?? 'No date'}{Number.isFinite(change13w) ? ` · 13W ${change13w >= 0 ? '+' : ''}${change13w.toFixed(2)}%` : ''}</span></div>
+      <div><b>{formatLiquidityValue(activePoint?.value)}</b><span>{activePoint?.date ?? 'No date'}{trailingChange ? ` · ${formatSpanLabel(trailingChange.spanDays)} ${trailingChange.percent >= 0 ? '+' : ''}${trailingChange.percent.toFixed(2)}%` : ''}</span></div>
       <div className="window-buttons">{['1Y', '3Y', '5Y', 'All'].map((item) => <button className={range === item ? 'selected' : ''} key={item} onClick={() => { onRangeChange(item); setPinnedIndex(null); }}>{item}</button>)}</div>
     </div>
     <div className="liquidity-history-plot" onPointerMove={selectNearest} onPointerLeave={() => setHoveredIndex(null)} onClick={(event) => selectNearest(event, true)}>

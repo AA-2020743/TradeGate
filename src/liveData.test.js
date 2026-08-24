@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { formatPercent, formatTimestamp, formatUsd } from './liveData.js';
+import { changeOverSpan, formatPercent, formatSpanLabel, formatTimestamp, formatUsd } from './liveData.js';
 
 test('an unreadable provider timestamp is reported, not thrown', () => {
   // Intl.DateTimeFormat raises RangeError on an invalid date; one malformed
@@ -53,4 +53,37 @@ test('a missing percent change says so rather than reading as flat', () => {
   for (const value of [null, undefined, Number.NaN, '1.2']) {
     assert.equal(formatPercent(value), 'No change data');
   }
+});
+
+test('a trailing change is measured in days, not in observations', () => {
+  const day = 86_400_000;
+  // The global liquidity history unions two weekly feeds, so it lands about
+  // twice a week. Counting thirteen points back covers about six weeks.
+  const points = [];
+  for (let index = 0; index < 60; index += 1) {
+    points.push({ date: new Date(Date.UTC(2024, 0, 3) + (index * 7 * day)).toISOString().slice(0, 10), value: 24_000_000 + (index * 20_000) });
+    points.push({ date: new Date(Date.UTC(2024, 0, 5) + (index * 7 * day)).toISOString().slice(0, 10), value: 24_000_000 + (index * 20_000) + 9_000 });
+  }
+  points.sort((left, right) => (left.date < right.date ? -1 : 1));
+
+  const measured = changeOverSpan(points, points.length - 1, 91);
+  assert.equal(measured.spanDays, 91);
+  assert.equal(formatSpanLabel(measured.spanDays), '13W');
+});
+
+test('a history too short to reach back declines rather than shrinking the window', () => {
+  const day = 86_400_000;
+  const points = [];
+  for (let index = 0; index < 6; index += 1) {
+    points.push({ date: new Date(Date.UTC(2024, 0, 3) + (index * 7 * day)).toISOString().slice(0, 10), value: 100 + index });
+  }
+  // Five weeks of history cannot answer a thirteen-week question.
+  assert.equal(changeOverSpan(points, points.length - 1, 91), null);
+});
+
+test('a span reports in the unit that describes it', () => {
+  assert.equal(formatSpanLabel(91), '13W');
+  assert.equal(formatSpanLabel(88), '13W');
+  assert.equal(formatSpanLabel(10), '10D');
+  assert.equal(formatSpanLabel(0), '');
 });

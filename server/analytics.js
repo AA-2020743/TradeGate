@@ -470,7 +470,10 @@ export function measureChangeOverDays(points, days) {
     fromDate: previous.date,
     toDate: latest.date,
     absolute: latest.value - previous.value,
-    percent: previous.value === 0 ? null : ((latest.value / previous.value) - 1) * 100,
+    // Percent change off a negative base flips sign: a spread improving from
+    // -0.50 to -0.25 computes as -50%. The absolute move is still meaningful,
+    // so withhold the ratio rather than the whole measurement.
+    percent: previous.value > 0 ? ((latest.value / previous.value) - 1) * 100 : null,
   };
 }
 
