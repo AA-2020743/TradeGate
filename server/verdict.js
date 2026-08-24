@@ -26,6 +26,16 @@ const DEFAULT_BANDS = [
   { max: Infinity, label: 'Constructive' },
 ];
 
+/**
+ * Names read mid-sentence, so they lowercase - except where the first word is
+ * an acronym, which would turn "US yield advantage" into "us yield advantage".
+ */
+function midSentence(name) {
+  const [first = ''] = String(name).split(' ');
+  const isAcronym = first.length > 1 && first === first.toUpperCase() && /[A-Z]/.test(first);
+  return isAcronym ? name : name.charAt(0).toLowerCase() + name.slice(1);
+}
+
 /** "an 11-point move", not "a 11-point move". */
 function withArticle(count) {
   const leading = String(count);
@@ -129,10 +139,19 @@ export function buildVerdict({
   const stalest = dated.length ? dated.reduce((worst, signal) => (signal.ageDays > worst.ageDays ? signal : worst)) : null;
 
   // Confidence is the weakest link, not an average of comforts.
+  // How much of the verdict disagrees with it, by weight rather than by count.
+  // Counting readings understates a single heavy dissenter: with three signals
+  // one of them opposing is a 67% "majority" that still leaves a third of the
+  // verdict arguing the other way.
+  const dissentWeight = availableWeight > 0
+    ? opposing.reduce((total, signal) => total + signal.weight, 0) / availableWeight
+    : 0;
+
   const limits = [];
   if (coverage < 0.75) limits.push(`only ${Math.round(coverage * 100)}% of the evidence reported`);
+  if (dissentWeight >= 0.2) limits.push(`${Math.round(dissentWeight * 100)}% of the weight argues the other way`);
   if (agreement < 60) limits.push(`the readings are split ${agreement}/${100 - agreement}`);
-  if (spread >= 50) limits.push(`they span ${spread} points`);
+  if (spread >= 45) limits.push(`they span ${spread} points`);
   if (margin && margin.points <= 3) limits.push(`the call sits ${margin.points} ${margin.points === 1 ? 'point' : 'points'} from ${margin.becomes}`);
   if (stalest && stalest.ageDays >= 30) limits.push(`${stalest.name} is ${stalest.ageDays} days old`);
   const confidence = limits.length === 0 ? 'high' : limits.length === 1 ? 'moderate' : 'low';
@@ -143,9 +162,9 @@ export function buildVerdict({
 
   const leadPhrase = callLean === 'flat'
     ? 'the evidence is balanced'
-    : `${supporting.slice(0, 2).map((signal) => signal.name.toLowerCase()).join(' and ')} ${supporting.length === 1 ? 'carries' : 'carry'} it`;
+    : `${supporting.slice(0, 2).map((signal) => midSentence(signal.name)).join(' and ')} ${supporting.length === 1 ? 'carries' : 'carry'} it`;
   const againstPhrase = opposing.length
-    ? ` against ${opposing.slice(0, 2).map((signal) => signal.name.toLowerCase()).join(' and ')}`
+    ? ` against ${opposing.slice(0, 2).map((signal) => midSentence(signal.name)).join(' and ')}`
     : ', with nothing arguing the other way';
 
   return {
@@ -162,6 +181,7 @@ export function buildVerdict({
       : `The readings that reported broadly agree and the call is not near a boundary${missing.length ? `, though ${missing.length} input${missing.length === 1 ? '' : 's'} did not report` : ''}.`,
     coverage: Math.round(coverage * 100),
     agreement,
+    dissentWeight: Math.round(dissentWeight * 100),
     spread,
     margin,
     supporting: supporting.map(({ pull, ...rest }) => rest),
@@ -170,4 +190,143 @@ export function buildVerdict({
     read: `${call} at ${score}/100${decisive ? `, ${meaning[callLean] ?? 'balanced'} on this scale` : `, only ${Math.abs(score - neutral)} ${Math.abs(score - neutral) === 1 ? 'point' : 'points'} off neutral`}. ${supporting.length ? `${supporting[0].name} is the strongest contributor at ${supporting[0].score}${supporting[0].detail ? ` (${supporting[0].detail})` : ''}.` : ''}${opposing.length ? ` ${opposing[0].name} argues the other way at ${opposing[0].score}${opposing[0].detail ? ` (${opposing[0].detail})` : ''}.` : ' No reading argues the other way.'}${margin ? ` ${withArticle(margin.points).replace(/^a/, 'A').replace(/^an/, 'An')}-point move ${margin.direction} would make this ${margin.becomes}.` : ''}${missing.length ? ` ${missing.length} input${missing.length === 1 ? '' : 's'} did not report: ${missing.map((entry) => entry.name).join(', ')}.` : ''}`,
     methodology: 'The score is a weighted average renormalised by the weight that actually reported, so a missing input cannot pull the verdict toward its own absence. Contributions are ranked by distance from neutral times weight - how much a reading is moving the verdict, not how extreme it is on its own. Confidence is the weakest link rather than an average: thin coverage, split readings, a wide spread, a call near its boundary, or a stale input each hold it back, and the reasons are listed. Readings pointing against the call are always published.',
   };
+}
+
+function clampScore(value) {
+  return Math.min(100, Math.max(0, value));
+}
+
+/**
+ * The bitcoin section's conclusion, on a "constructive for bitcoin" axis.
+ *
+ * Several of the cycle legs are deliberately left out, because their direction
+ * depends on a horizon the verdict does not state:
+ *
+ * - MVRV valuation. A high reading means expensive, which is bearish over a
+ *   cycle and bullish over a quarter. Scoring it either way asserts a horizon.
+ * - Drawdown from the all-time high. Restrictive to a trend follower, an
+ *   opportunity to a contrarian.
+ * - Realized volatility. High volatility accompanies both capitulation and
+ *   melt-up, so it is not directional on its own.
+ *
+ * They stay published in their own panels, where a reader supplies the horizon.
+ * What is included has a direction that does not flip with the holding period.
+ */
+export function buildCryptoVerdict({ bitcoin, globalLiquidity, usdStrength } = {}) {
+  const published = (model) => (model?.status === 'calculated' ? model : null);
+  const technicals = published(bitcoin?.technicals);
+  const leverage = published(bitcoin?.leverage);
+  const stablecoins = published(bitcoin?.stablecoins);
+  const liquidity = published(globalLiquidity);
+  const dollar = published(usdStrength);
+
+  const fundingPercentile = Number.isFinite(leverage?.percentile) ? leverage.percentile : null;
+  const stablecoinChange = Number.isFinite(stablecoins?.change30dPercent) ? stablecoins.change30dPercent : null;
+
+  return buildVerdict({
+    title: 'Bitcoin conditions',
+    version: 'crypto-verdict-v1',
+    signals: [
+      {
+        key: 'technicals',
+        name: 'Price technicals',
+        score: Number.isFinite(technicals?.score) ? technicals.score : null,
+        weight: 0.3,
+        detail: technicals?.stance ? `${technicals.stance} tape` : null,
+        reason: bitcoin?.technicals?.reason ?? 'No usable bitcoin close history',
+      },
+      {
+        // Funding is what leveraged longs pay to stay long. An extreme is
+        // crowding, and crowding is fragile, so the axis inverts it.
+        key: 'funding',
+        name: 'Perpetual funding (inverted)',
+        score: fundingPercentile === null ? null : 100 - fundingPercentile,
+        weight: 0.18,
+        detail: Number.isFinite(leverage?.annualizedPercent) ? `${leverage.annualizedPercent}% annualized, ${fundingPercentile}th percentile` : null,
+        reason: bitcoin?.leverage?.reason ?? 'No perpetual funding data',
+      },
+      {
+        // Stablecoin supply is the cash sitting on exchanges. Expanding supply
+        // is capital arriving, contracting supply is capital leaving.
+        key: 'stablecoins',
+        name: 'Stablecoin supply',
+        score: stablecoinChange === null ? null : clampScore(50 + (stablecoinChange * 8)),
+        weight: 0.15,
+        detail: stablecoins?.state ? `${stablecoins.state}, ${stablecoinChange > 0 ? '+' : ''}${stablecoinChange}% over 30 days` : null,
+        reason: bitcoin?.stablecoins?.reason ?? 'No stablecoin supply history',
+      },
+      {
+        key: 'globalLiquidity',
+        name: 'Global liquidity impulse',
+        score: Number.isFinite(liquidity?.score) ? liquidity.score : null,
+        weight: 0.2,
+        detail: liquidity?.regime ?? null,
+        reason: globalLiquidity?.reason ?? 'The global liquidity model did not publish',
+      },
+      {
+        key: 'dollar',
+        name: 'Dollar (inverted)',
+        score: Number.isFinite(dollar?.score) ? 100 - dollar.score : null,
+        weight: 0.17,
+        detail: dollar?.regime ? `${dollar.regime} dollar` : null,
+        reason: usdStrength?.reason ?? 'The dollar model did not publish',
+      },
+    ],
+    meaning: { high: 'constructive for bitcoin', low: 'a headwind for bitcoin' },
+  });
+}
+
+/**
+ * The FX section's conclusion, on a "firm dollar" axis.
+ *
+ * Speculative positioning is left out on purpose. A crowded net-long dollar
+ * describes support today and fragility tomorrow, so which way it points
+ * depends on the horizon - the same reason perpetual funding is inverted
+ * rather than counted straight in the bitcoin verdict, and the same reason
+ * MVRV valuation is excluded from it. The COT panel publishes it beside this,
+ * where the reader supplies the horizon.
+ */
+export function buildFxVerdict({ usdStrength, usdBreadth, rateDivergence } = {}) {
+  const published = (model) => (model?.status === 'calculated' || model?.status === 'provisional' ? model : null);
+  const strength = published(usdStrength);
+  const divergence = published(rateDivergence);
+
+  return buildVerdict({
+    title: 'Dollar conditions',
+    version: 'fx-verdict-v1',
+    bands: [
+      { max: 35, label: 'Soft dollar' },
+      { max: 65, label: 'Rangebound dollar' },
+      { max: Infinity, label: 'Firm dollar' },
+    ],
+    signals: [
+      {
+        key: 'strength',
+        name: 'Broad dollar model',
+        score: Number.isFinite(strength?.score) ? strength.score : null,
+        weight: 0.45,
+        detail: strength?.regime ?? null,
+        reason: usdStrength?.reason ?? 'The broad-dollar model did not publish',
+      },
+      {
+        // How many crosses agree, rather than how far the index moved: a
+        // dollar rising against one currency is a story about that currency.
+        key: 'breadth',
+        name: 'Cross-rate breadth',
+        score: Number.isFinite(usdBreadth?.pct20d) ? usdBreadth.pct20d : null,
+        weight: 0.3,
+        detail: usdBreadth ? `${usdBreadth.strong20d} of ${usdBreadth.total} crosses over 20 sessions` : null,
+        reason: 'No FX cross published 20-session momentum',
+      },
+      {
+        key: 'rateDivergence',
+        name: 'US yield advantage',
+        score: Number.isFinite(divergence?.score) ? divergence.score : null,
+        weight: 0.25,
+        detail: divergence?.state ?? null,
+        reason: rateDivergence?.reason ?? 'No foreign long rate published a usable spread',
+      },
+    ],
+    meaning: { high: 'a firm dollar', low: 'a soft dollar' },
+  });
 }

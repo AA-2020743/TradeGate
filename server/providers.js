@@ -11,6 +11,7 @@ import { getAllEquityHistorySymbols, getCoreEquityHistorySymbols } from './equit
 import { buildBackfillRows, calculateConsensusHistory, calculateMacroVerdict, calculateModelConsensus, calculateModelCorrelationMatrix, calculateWeightOverlap, evaluateMacroAlerts } from './macroConsensus.js';
 import { calculateDataSurprise, calculateLiquidityPayoff, calculateNominalDecomposition, calculateRateDivergence, calculateReserveScarcity, calculateTermPremium } from './macroRates.js';
 import { calculateGrowthNowcast, calculateInflationNowcast, calculateLiquidityCalendar, calculateRatePath, calculateRegimeTransitions, calculateYieldCurveModel, seriesPoints } from './macroModels.js';
+import { buildCryptoVerdict, buildFxVerdict } from './verdict.js';
 import { cryptoHistoryGranularity, describeSeriesFreshness, isCryptoHistoryStale, isCotReportStale, isDailyCloseStale, isFredSeriesStale, isPbocObservationStale, monthsBetween } from './freshness.js';
 import { percentileRank } from './statistics.js';
 
@@ -1358,13 +1359,18 @@ export async function getBitcoinCycleWorkspace() {
       bitcoinDerivativesMemo = { funding, positioning };
       return { funding, positioning, memoized: false };
     };
-    const [priceResult, barsResult, onchainResult, derivativesResult, stablecoinsResult] = await Promise.allSettled([
+    const [priceResult, barsResult, onchainResult, derivativesResult, stablecoinsResult, macroResult] = await Promise.allSettled([
       getYahooHistory('BTC-USD', '10y'),
       getYahooOhlcHistory('BTC-USD', '5y'),
       onchainLoader(),
       derivativesLoader(),
       fetchJson('https://stablecoins.llama.fi/stablecoincharts/all'),
+      // Bitcoin's verdict leans on global liquidity and the dollar. The
+      // snapshot is cached and already shared with the other workspaces, so
+      // this costs a cache read rather than another round of FRED requests.
+      getLiquiditySnapshot(),
     ]);
+    const macroLegs = macroResult.status === 'fulfilled' ? macroResult.value : null;
     const onchainData = onchainResult.status === 'fulfilled' ? onchainResult.value : bitcoinOnchainMemo;
     const derivativesData = derivativesResult.status === 'fulfilled' ? derivativesResult.value : bitcoinDerivativesMemo;
     const mvrvRaw = onchainData?.mvrvZ ?? [];
@@ -1502,6 +1508,11 @@ export async function getBitcoinCycleWorkspace() {
       status: calculatedCount ? 'calculated' : 'unavailable',
       calculatedCount,
       totalLegs: legs.length,
+      verdict: buildCryptoVerdict({
+        bitcoin: { technicals, leverage, stablecoins },
+        globalLiquidity: macroLegs?.globalLiquidity ?? null,
+        usdStrength: macroLegs?.usdStrength ?? null,
+      }),
       phase,
       technicals,
       rangeModels,
@@ -1897,8 +1908,12 @@ function momentumPercent(points, sessions = 20) {
 
 export async function getFxWorkspace() {
   return withCache('analytics:fx-workspace', 15 * 60_000, async () => {
-    const positioningResult = await Promise.allSettled([getMarketPositioning()]);
+    const [positioningSettled, macroSettled] = await Promise.allSettled([getMarketPositioning(), getLiquiditySnapshot()]);
+    const positioningResult = [positioningSettled];
     const positioning = positioningResult[0].status === 'fulfilled' ? positioningResult[0].value.model : null;
+    // The dollar verdict leans on the broad-dollar model and the US yield
+    // advantage, both of which the cached liquidity snapshot already holds.
+    const macroForFx = macroSettled.status === 'fulfilled' ? macroSettled.value : null;
     const toPoints = (points) => (points ?? []).filter((point) => Number.isFinite(point.value)).map((point) => ({ timestamp: point.timestamp, value: point.value }));
     const symbols = [...new Set([...FX_PAIRS.map((pair) => pair.yahooSymbol), ...FX_LINKS.map((link) => link.yahooSymbol), 'EEM'])];
     const seriesMap = new Map();
@@ -2013,6 +2028,11 @@ export async function getFxWorkspace() {
       positioningErrors: positioningResult[0].status === 'fulfilled'
         ? positioningResult[0].value.errors ?? []
         : [positioningResult[0].reason?.message ?? 'The CFTC request failed.'],
+      verdict: buildFxVerdict({
+        usdStrength: macroForFx?.usdStrength ?? null,
+        usdBreadth,
+        rateDivergence: macroForFx?.rateDivergence ?? null,
+      }),
       usdCot: usdContract ? { name: 'US Dollar Index', venue: 'ICE Futures U.S.', netNoncomm: usdContract.netNoncomm, weeklyChange: usdContract.weeklyChange, percentile: usdContract.percentile, crowd: usdContract.crowd, stance: usdContract.stance, asOf: usdContract.asOf } : null,
       pairs,
       links,

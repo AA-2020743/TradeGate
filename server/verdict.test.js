@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { buildVerdict } from './verdict.js';
+import { buildCryptoVerdict, buildVerdict } from './verdict.js';
 
 const signal = (key, name, score, weight, extra = {}) => ({ key, name, score, weight, ...extra });
 
@@ -131,4 +131,94 @@ test('several reasons for low confidence read as a sentence, not a stammer', () 
   assert.equal(verdict.confidence, 'low');
   assert.doesNotMatch(verdict.confidenceReason, /, and .*, and /);
   assert.match(verdict.confidenceReason, / and /);
+});
+
+test('the crypto verdict inverts funding and the dollar, and follows stablecoin supply', () => {
+  const base = {
+    bitcoin: {
+      technicals: { status: 'calculated', score: 72, stance: 'Strong' },
+      stablecoins: { status: 'calculated', change30dPercent: 2.1, state: 'Dry powder building' },
+      leverage: { status: 'calculated', percentile: 50, annualizedPercent: 10 },
+    },
+    globalLiquidity: { status: 'calculated', score: 68, regime: 'Expansion' },
+    usdStrength: { status: 'calculated', score: 40, regime: 'Soft' },
+  };
+  const withFunding = (percentile) => buildCryptoVerdict({ ...base, bitcoin: { ...base.bitcoin, leverage: { status: 'calculated', percentile, annualizedPercent: percentile / 5 } } });
+  const withDollar = (score) => buildCryptoVerdict({ ...base, usdStrength: { status: 'calculated', score, regime: 'x' } });
+  const withStables = (change) => buildCryptoVerdict({ ...base, bitcoin: { ...base.bitcoin, stablecoins: { status: 'calculated', change30dPercent: change, state: 'x' } } });
+
+  // Crowded leverage is fragile, so an extreme funding percentile must lower
+  // the verdict, not raise it.
+  assert.ok(withFunding(95).score < withFunding(10).score);
+  // A strong dollar is a headwind.
+  assert.ok(withDollar(85).score < withDollar(15).score);
+  // Expanding stablecoin supply is capital arriving.
+  assert.ok(withStables(4).score > withStables(-3).score);
+});
+
+test('the crypto verdict leaves out the legs whose direction depends on a horizon', () => {
+  const verdict = buildCryptoVerdict({
+    bitcoin: {
+      technicals: { status: 'calculated', score: 60 },
+      leverage: { status: 'calculated', percentile: 50 },
+      stablecoins: { status: 'calculated', change30dPercent: 0 },
+      // Present and calculated, but deliberately not counted: a high MVRV is
+      // bearish over a cycle and bullish over a quarter, a drawdown is
+      // restrictive to a trend follower and an opportunity to a contrarian,
+      // and high realized volatility accompanies both capitulation and melt-up.
+      valuation: { status: 'calculated', percentile: 95, band: 'Late cycle' },
+      drawdown: { status: 'calculated', drawdownPct: -40 },
+      realizedVolatility: { status: 'calculated', percentile: 88 },
+    },
+    globalLiquidity: { status: 'calculated', score: 60 },
+    usdStrength: { status: 'calculated', score: 50 },
+  });
+  const counted = [...verdict.supporting, ...verdict.opposing, ...verdict.missing].map((entry) => entry.key);
+  for (const excluded of ['valuation', 'drawdown', 'realizedVolatility']) {
+    assert.ok(!counted.includes(excluded), `${excluded} must not vote on a directional axis`);
+  }
+});
+
+test('one heavy dissenter holds confidence back even when outvoted', () => {
+  // Counting readings understates a single heavy dissenter: two-of-three is a
+  // 67% majority that still leaves a third of the verdict arguing the other
+  // way, and that used to pass as high confidence.
+  const verdict = buildVerdict({
+    signals: [
+      signal('a', 'Broad dollar model', 78, 0.45),
+      signal('b', 'Cross-rate breadth', 34, 0.3),
+      signal('c', 'US yield advantage', 55, 0.25),
+    ],
+  });
+  assert.equal(verdict.dissentWeight, 30);
+  assert.notEqual(verdict.confidence, 'high');
+  assert.match(verdict.confidenceReason, /30% of the weight argues the other way/);
+});
+
+test('unanimous readings carry no dissent and are not held back', () => {
+  const verdict = buildVerdict({
+    signals: [
+      signal('a', 'Broad dollar model', 78, 0.45),
+      signal('b', 'Cross-rate breadth', 83, 0.3),
+      signal('c', 'US yield advantage', 72, 0.25),
+    ],
+  });
+  assert.equal(verdict.dissentWeight, 0);
+  assert.equal(verdict.confidence, 'high');
+  assert.deepEqual(verdict.opposing, []);
+});
+
+test('an acronym survives the mid-sentence lowercasing in a headline', () => {
+  const verdict = buildVerdict({
+    signals: [
+      signal('a', 'US yield advantage', 78, 0.4),
+      signal('b', 'Broad dollar model', 74, 0.35),
+      signal('c', 'Cross-rate breadth', 30, 0.25),
+    ],
+  });
+  assert.match(verdict.headline, /US yield advantage/);
+  assert.doesNotMatch(verdict.headline, /us yield advantage/);
+  // Ordinary names still read as part of the sentence.
+  assert.match(verdict.headline, /broad dollar model/);
+  assert.match(verdict.headline, /cross-rate breadth/);
 });
