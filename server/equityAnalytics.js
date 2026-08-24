@@ -1036,6 +1036,19 @@ export function calculateDrawdownProfile(points, { minimumObservations = 250 } =
     return { version, status: 'unavailable', reason: `Needs ${minimumObservations} sessions to rank a drawdown against its own history; ${history.length} available.`, observations: history.length };
   }
 
+  // A drawdown is a ratio to a running peak, so it means nothing on a series
+  // that reaches zero or goes negative - and a zero peak makes it NaN, which
+  // reached both the published percentage and the sentence describing it.
+  const nonPositive = history.filter((point) => point.value <= 0).length;
+  if (nonPositive) {
+    return {
+      version,
+      status: 'unavailable',
+      reason: `Drawdown is measured against a running peak, which requires positive closes; ${nonPositive} of ${history.length} observations are zero or negative.`,
+      observations: history.length,
+    };
+  }
+
   let peak = -Infinity;
   let peakDate = null;
   const drawdowns = history.map((point) => {

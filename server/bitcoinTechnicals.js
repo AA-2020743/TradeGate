@@ -555,7 +555,7 @@ export function calculateVolatilityAdjustedMomentum(points, { window = 90, annua
   const returns = closes.slice(1).map((value, index) => Math.log(value / closes[index]));
   const deviation = standardDeviation(returns);
   if (!deviation) {
-    return unavailable(version, 'Realized volatility over the window is zero, so a volatility-adjusted reading is undefined.', { observations: rows.length });
+    return unavailable(version, 'Realized volatility over the window is zero, so there is nothing to divide by.', { observations: rows.length });
   }
   const totalReturn = (closes.at(-1) / closes[0]) - 1;
   const annualizedVolatility = deviation * Math.sqrt(annualizationDays);

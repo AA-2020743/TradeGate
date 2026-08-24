@@ -345,7 +345,9 @@ export function calculateTechnicalSnapshot(inputPoints, options = {}) {
   const rsi = calculateRsi(values);
   const macd = calculateMacd(values);
   const momentumBase = values[Math.max(0, values.length - 21)];
-  const momentumPercent = ((latest / momentumBase) - 1) * 100;
+  // A zero base makes this 0/0. An all-zero series is not hypothetical: a
+  // provider returning zeros used to publish score: NaN straight to the page.
+  const momentumPercent = momentumBase > 0 ? ((latest / momentumBase) - 1) * 100 : null;
   const recentValues = values.slice(-21);
   const returns = recentValues.slice(1).map((value, index) => {
     const base = recentValues[index];
@@ -368,8 +370,12 @@ export function calculateTechnicalSnapshot(inputPoints, options = {}) {
   const trendCoverage = movingAverages.length / TREND_AVERAGES;
   const observedTrend = mean(movingAverages.map((average) => latest >= average ? 100 : 0));
   const trendScore = observedTrend === null ? 50 : 50 + ((observedTrend - 50) * trendCoverage);
-  const macdPercent = macd ? (macd.histogram / latest) * 100 : 0;
-  const momentumScore = clamp(50 + (momentumPercent * 2.5) + (macdPercent * 40));
+  const macdPercent = macd && latest > 0 ? (macd.histogram / latest) * 100 : null;
+  // With neither leg measurable there is nothing to say about momentum, so it
+  // scores neutral rather than inheriting whichever leg happened to survive.
+  const momentumScore = momentumPercent === null && macdPercent === null
+    ? 50
+    : clamp(50 + ((momentumPercent ?? 0) * 2.5) + ((macdPercent ?? 0) * 40));
   const rsiScore = rsi === null ? 50 : clamp(((rsi - 30) / 40) * 100);
   const volatilityScore = volatility === null ? 50 : clamp(100 - volatility);
   const score = Math.round((trendScore * 0.4) + (momentumScore * 0.35) + (rsiScore * 0.2) + (volatilityScore * 0.05));
