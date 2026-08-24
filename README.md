@@ -67,19 +67,30 @@ An unrecognized route or symbol falls back to the overview and rewrites the addr
 
 Create `.env` from `.env.example` and set the server-side keys:
 
+Every key is optional: the platform runs fully keyless, and a model that
+cannot reach a feed reports `unavailable` with a reason rather than
+substituting a value. Keys buy reliability and, in FRED's case, capability.
+
 ```dotenv
 HOST=127.0.0.1
 PORT=8787
+FRED_API_KEY=your_fred_key
+COINGECKO_API_KEY=your_coingecko_demo_key
+COINGECKO_API_PLAN=demo
+CFTC_APP_TOKEN=your_socrata_app_token
 TWELVE_DATA_API_KEY=your_twelve_data_key
 TWELVE_MINUTE_CREDIT_LIMIT=8
 TWELVE_DAILY_CREDIT_LIMIT=760
 TWELVE_MAX_INTERACTIVE_WAIT_MS=10000
 TWELVE_QUOTE_REFRESH_MS=900000
-FRED_API_KEY=your_fred_key
 DATABASE_URL=postgresql://tradegate_app:password@127.0.0.1:5432/tradegate
 DATABASE_SSL=false
 API_RATE_LIMIT=120
+API_WRITE_RATE_LIMIT=20
 API_RATE_WINDOW_MS=60000
+LOG_LEVEL=info
+ALERT_WEBHOOK_URL=
+ALERT_WEBHOOK_SEVERITIES=high
 INGESTION_ENABLED=true
 MARKET_REFRESH_MS=900000
 MACRO_REFRESH_MS=21600000
@@ -88,8 +99,17 @@ HISTORY_REFRESH_MS=86400000
 
 Never prefix these values with `VITE_`; doing so would expose them in the browser bundle. `.env` is ignored by Git.
 
-- Twelve Data: create a key at `https://twelvedata.com/`.
-- FRED: request a key at `https://fred.stlouisfed.org/docs/api/api_key.html`.
+| Key | Free? | What it changes |
+| --- | --- | --- |
+| `FRED_API_KEY` | Yes, instant | The highest-value key. Without it the macro ingestion job does not run at all. It is also the only route to ALFRED point-in-time vintages, which is what lets the regime history be scored against what was actually known on each date rather than against revised figures. Request one at `https://fred.stlouisfed.org/docs/api/api_key.html`. |
+| `COINGECKO_API_KEY` | Yes, Demo tier | Moves bitcoin quotes, history, and the global aggregates off the shared anonymous pool, which is the first to start returning 429/403 under load. Set `COINGECKO_API_PLAN=pro` only for a paid key. |
+| `CFTC_APP_TOKEN` | Yes | Gives Commitments of Traders requests their own rate budget. Socrata issues an App Token *and* a Secret Token; only the App Token belongs in the environment - it is sent as a plain `X-App-Token` header on anonymous reads of a public dataset, so it identifies a rate bucket rather than authenticating anyone. The Secret Token is for OAuth flows this platform never performs. |
+| `TWELVE_DATA_API_KEY` | Yes, limited | Redundancy and intraday freshness for equity quotes. Yahoo already covers this keylessly, so it adds resilience rather than new capability. Create one at `https://twelvedata.com/`. |
+
+Some inputs have no free tier at all and are left `unavailable` rather than
+approximated: spot Bitcoin ETF flows, dealer gamma and options positioning,
+Coin Metrics community data, AAII sentiment, Standing Repo Facility take-up,
+and economist-forecast surprise data.
 
 ## Ubuntu VPS Deployment
 
@@ -171,6 +191,8 @@ All calculated outputs include a version, effective date, observation count, sou
 ### `technical-v1`
 
 The technical score uses one year of provider close history. It combines moving-average alignment, 20-session momentum, MACD, RSI, and 20-session annualized volatility. It requires at least 30 valid observations and returns no model when history is insufficient.
+
+Moving-average alignment checks price against the 20-, 50-, and 200-day averages. A history too short to have all three is scored on the checks it can answer, then shrunk toward neutral in proportion to how many that was, and `components.trendCoverage` reports the fraction. Without that shrink a single available average swung the full trend weight, and the same latest bar scored 20 points apart on a short history and a long one. Annualized volatility needs positive prices at both ends of each log return; where none are measurable it publishes `null` and scores neutral rather than reporting 0%, which would have read as the calmest possible tape.
 
 ### `us-liquidity-v1`
 
