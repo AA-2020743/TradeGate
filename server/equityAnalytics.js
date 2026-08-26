@@ -9,8 +9,11 @@ function clamp(value, minimum = 0, maximum = 100) {
 const pearson = pearsonCorrelation;
 
 function percentChange(values, periods) {
-  if (values.length <= periods || values.at(-(periods + 1)) === 0) return null;
-  return ((values.at(-1) / values.at(-(periods + 1))) - 1) * 100;
+  const base = values.at(-(periods + 1));
+  // A non-positive base makes the ratio meaningless, not merely undefined:
+  // percent change from -50 to -25 computes as -50% when the move was upward.
+  if (values.length <= periods || !Number.isFinite(base) || base <= 0) return null;
+  return ((values.at(-1) / base) - 1) * 100;
 }
 
 function movingAverage(values, periods) {
@@ -832,8 +835,16 @@ export function calculateSectorRotation(sectors, benchmarkPoints) {
     if (!technical) return [];
     const return20 = percentChange(alignedSectorValues, 20);
     const return60 = percentChange(alignedSectorValues, 60);
-    const relative20 = return20 - percentChange(alignedBenchmarkValues, 20);
-    const relative60 = return60 - percentChange(alignedBenchmarkValues, 60);
+    const benchmark20 = percentChange(alignedBenchmarkValues, 20);
+    const benchmark60 = percentChange(alignedBenchmarkValues, 60);
+    // percentChange refuses an unusable base by returning null, and `null - 5`
+    // is -5 in JavaScript rather than an error - so a sector whose provider
+    // returned zeros published the exact negation of the benchmark's return as
+    // its own excess, a plausible number with nothing behind it. The trail
+    // below already checked its four legs; the current position did not.
+    if (![return20, return60, benchmark20, benchmark60].every(Number.isFinite)) return [];
+    const relative20 = return20 - benchmark20;
+    const relative60 = return60 - benchmark60;
     const relativeScore = clamp(50 + (relative20 * 6) + (relative60 * 2));
     const score = Math.round((technical.score * 0.55) + (relativeScore * 0.45));
     const quadrant = rrgQuadrant(relative20, relative60);

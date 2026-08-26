@@ -331,7 +331,11 @@ export function calculateCrossMarketRelationship(leftPoints, rightPoints) {
 
 export function calculateTechnicalSnapshot(inputPoints, options = {}) {
   const points = inputPoints
-    .filter((point) => Number.isFinite(point.value) && point.timestamp)
+    // A zero or negative close is not a price. technical-v1 measures stretch
+    // from moving averages, distance from a 52-week high and a momentum ratio,
+    // all of which assume a positive series - and a run of zero closes halves
+    // the 200-day average and reports the tape as far above trend.
+    .filter((point) => Number.isFinite(point.value) && point.value > 0 && point.timestamp)
     .sort((left, right) => new Date(left.timestamp) - new Date(right.timestamp));
   const values = points.map((point) => point.value);
   if (values.length < 30) return null;

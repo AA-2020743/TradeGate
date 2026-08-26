@@ -1869,9 +1869,13 @@ test('a shallow history cannot swing the trend weight the way a deep one can', (
   assert.equal(shallow.regime, deep.regime);
 });
 
-test('volatility that cannot be measured is withheld rather than published as zero', () => {
-  // A spread series crossing zero: log returns need positive prices at both
-  // ends, so nothing is measurable here.
+test('a series that is not a price series is refused outright', () => {
+  // technical-v1 measures stretch from moving averages, distance from a
+  // 52-week high and a momentum ratio, all of which assume positive prices. A
+  // spread crossing zero is not that, and partially publishing it was the
+  // wrong answer: a run of zero closes also halved the 200-day average and
+  // reported the tape as far above trend. Non-positive values are dropped, and
+  // a series made entirely of them has nothing left to publish.
   const bars = [];
   for (let index = 0; index < 40; index += 1) {
     bars.push({
@@ -1879,12 +1883,17 @@ test('volatility that cannot be measured is withheld rather than published as ze
       value: -0.5 + (Math.sin(index / 5) * 0.2),
     });
   }
-  const snapshot = calculateTechnicalSnapshot(bars);
+  assert.equal(calculateTechnicalSnapshot(bars), null);
 
-  assert.equal(snapshot.indicators.annualizedVolatility20d, null);
-  // Unknown scores neutral. Awarding the calm score its maximum would have
-  // read as the quietest possible tape.
-  assert.equal(snapshot.components.volatilityQuality, 50);
+  // A price series with a corrupt region keeps the usable part rather than
+  // being thrown away wholesale.
+  const withBadTicks = Array.from({ length: 200 }, (_, index) => ({
+    timestamp: new Date(Date.UTC(2020, 0, 1) + (index * 86_400_000)).toISOString(),
+    value: index < 100 ? 0 : 100 + index,
+  }));
+  const salvaged = calculateTechnicalSnapshot(withBadTicks);
+  assert.equal(salvaged.observations, 100);
+  assert.ok(Number.isFinite(salvaged.score));
 });
 
 test('a liquidity driver publishes the window it actually measured', () => {

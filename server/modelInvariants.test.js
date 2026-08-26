@@ -329,3 +329,58 @@ test('no source file reports a composite vintage from its freshest input', async
   }
   assert.deepEqual(offenders, []);
 });
+
+/**
+ * A member with no usable data must be excluded or marked, never scored.
+ *
+ * The NaN sweeps above cannot catch this class. A helper that refuses by
+ * returning null, used directly in arithmetic, produces a finite number rather
+ * than NaN - `null - 5` is -5 in JavaScript - so a sector whose provider
+ * returned zeros published the exact negation of the benchmark's return as its
+ * own excess. A plausible number with nothing behind it is worse than NaN,
+ * because nothing downstream can tell it is wrong.
+ */
+test('a collection member with unusable prices is dropped, not scored', async () => {
+  const equity = await import('./equityAnalytics.js');
+  const day = (index) => new Date(Date.UTC(2024, 0, 1) + (index * 86_400_000)).toISOString().slice(0, 10);
+  const series = (valueAt, count = 200) => Array.from({ length: count }, (_, index) => ({ date: day(index), value: valueAt(index) }));
+  const benchmark = series((index) => 100 + (index * 0.25));
+
+  // "Unusable" means unusable *in the windows the model reads*. A series with
+  // an old corrupt region but a clean recent 60 sessions is legitimately
+  // scoreable on those sessions, so it does not belong here - the case that
+  // matters is bad data inside the window.
+  const unusable = {
+    zeros: () => series(() => 0),
+    negatives: () => series((index) => -50 - index),
+    recentZeros: () => series((index) => (index < 120 ? 100 + index : 0)),
+  };
+
+  const failures = [];
+  for (const [name, build] of Object.entries(unusable)) {
+    const sectors = [
+      { symbol: 'GOOD', name: 'Healthy', points: series((index) => 100 + (index * 0.3)) },
+      { symbol: 'BAD', name: `Unusable (${name})`, points: build() },
+    ];
+
+    const rotation = equity.calculateSectorRotation(sectors, benchmark);
+    const scoredBad = (rotation.sectors ?? []).find((sector) => sector.symbol === 'BAD');
+    if (scoredBad && Number.isFinite(scoredBad.score)) {
+      failures.push(`calculateSectorRotation(${name}) scored BAD at ${scoredBad.score}, relative20 ${scoredBad.relative20}`);
+    }
+
+    const dispersion = equity.calculateSectorDispersion(sectors, benchmark);
+    const badReturn = (dispersion.returns ?? []).find((entry) => entry.symbol === 'BAD');
+    if (badReturn && Number.isFinite(badReturn.return)) {
+      failures.push(`calculateSectorDispersion(${name}) published a return for BAD: ${badReturn.return}`);
+    }
+
+    // The healthy member must survive - excluding everything is not a fix.
+    const scoredGood = (rotation.sectors ?? []).find((sector) => sector.symbol === 'GOOD');
+    if (!scoredGood || !Number.isFinite(scoredGood.score)) {
+      failures.push(`calculateSectorRotation(${name}) dropped the healthy member too`);
+    }
+  }
+
+  assert.deepEqual(failures, []);
+});
