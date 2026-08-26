@@ -55,6 +55,30 @@ async function getStoredTechnicalSnapshot(symbol) {
   };
 }
 
+/**
+ * Why no technical read could be produced.
+ *
+ * "Unavailable" on its own sends a reader to check their configuration when
+ * the real answer is that ingestion stopped writing days ago, or that the live
+ * fallback was refused upstream. Both legs are named, because they need
+ * different fixes.
+ */
+export function describeMissingTechnical(technical, liveFailure, now = Date.now()) {
+  const storedAt = technical?.asOf ? new Date(technical.asOf).getTime() : Number.NaN;
+  // Complete days elapsed, matching describeSeriesFreshness. Rounding would
+  // call a seven-and-a-half-day-old observation eight days old.
+  const storedAgeDays = Number.isFinite(storedAt) ? Math.max(0, Math.floor((now - storedAt) / 86_400_000)) : null;
+  const stored = technical?.stored
+    ? `the stored history ends ${String(technical.asOf ?? '').slice(0, 10)}${storedAgeDays === null ? '' : `, ${storedAgeDays} ${storedAgeDays === 1 ? 'day' : 'days'} old and past the freshness tolerance`}`
+    : technical?.configured === false
+      ? 'no database is configured, so there is no stored history'
+      : 'the database holds no history for this symbol';
+  const live = liveFailure
+    ? `and the live fallback did not fill in: ${liveFailure}`
+    : 'and the live fallback returned a history too short to score';
+  return `${stored}, ${live}`;
+}
+
 export async function getEquityDashboard(requestedSymbol = 'SPY') {
   const symbol = requestedSymbol.toUpperCase();
   const index = indexCatalog.find((item) => item.symbol === symbol);
@@ -72,9 +96,16 @@ export async function getEquityDashboard(requestedSymbol = 'SPY') {
   const liquidity = liquidityResult.status === 'fulfilled' ? liquidityResult.value : null;
   const riskAppetite = riskAppetiteResult.status === 'fulfilled' ? riskAppetiteResult.value : null;
   let usableTechnical = technical?.stale ? null : technical?.model;
+  let technicalSource = usableTechnical ? technical?.source ?? 'stored history' : null;
+  const liveFailure = liveTechnicalResult.status === 'rejected'
+    ? liveTechnicalResult.reason?.message ?? 'the live history request failed'
+    : liveTechnicalResult.value?.points?.length ? null : 'the live history request returned no observations';
   if (!usableTechnical && liveTechnicalResult.status === 'fulfilled' && liveTechnicalResult.value?.points?.length) {
     usableTechnical = calculateTechnicalSnapshot(liveTechnicalResult.value.points);
+    if (usableTechnical) technicalSource = `live ${liveTechnicalResult.value.source ?? 'provider'} history`;
   }
+
+  const technicalReason = usableTechnical ? null : describeMissingTechnical(technical, liveFailure);
   // A partial breadth read is kept. The signal models mark themselves
   // provisional when they lean on one, which is more useful than publishing
   // nothing at all on a slightly incomplete universe.
@@ -138,7 +169,9 @@ export async function getEquityDashboard(requestedSymbol = 'SPY') {
     version: 'equity-dashboard-v1',
     ...dashboardVintage,
     index,
-    technical,
+    technical: technical
+      ? { ...technical, usedSource: technicalSource, reason: technicalReason }
+      : { symbol, source: null, configured: false, stored: false, stale: false, asOf: null, model: null, usedSource: null, reason: technicalReason },
     verdict,
     regime,
     drawdown,
