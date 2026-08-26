@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { oldestAsOf, resolveVintage } from './vintage.js';
+import { oldestAsOf, resolveVintage, screenVintage } from './vintage.js';
 
 test('a composite reports the vintage of its stalest input, not its freshest', () => {
   // The dashboard used to publish the newest of its input dates, so a fresh
@@ -70,4 +70,35 @@ test('oldestAsOf answers for callers that only need the date', () => {
   assert.equal(oldestAsOf([]), null);
   assert.equal(oldestAsOf(), null);
   assert.equal(oldestAsOf([null, 'not a date']), null);
+});
+
+test('a screen dates itself by the session it screened, not by its worst constituent', () => {
+  // This inverts the composite rule on purpose. A composite's oldest input
+  // binds because every input feeds one number; a screen's rows are
+  // independent, so one delisted name must not date the whole screen to the
+  // day it stopped trading.
+  const universe = [
+    ...Array.from({ length: 498 }, () => '2026-08-21'),
+    '2026-08-20',
+    '2026-02-20',
+  ];
+  const vintage = screenVintage(universe);
+  assert.equal(vintage.screenedSession, '2026-08-21');
+  assert.equal(vintage.oldestConstituentBar, '2026-02-20');
+  // The lag is published rather than hidden, which is what makes taking the
+  // newest date defensible here.
+  assert.equal(vintage.staleConstituents, 2);
+  assert.equal(vintage.spreadDays, 182);
+});
+
+test('a fully current screen reports no lag, and an empty one invents nothing', () => {
+  const current = screenVintage(Array.from({ length: 500 }, () => '2026-08-21'));
+  assert.equal(current.staleConstituents, 0);
+  assert.equal(current.spreadDays, 0);
+
+  for (const empty of [screenVintage([]), screenVintage(), screenVintage([null, undefined, ''])]) {
+    assert.equal(empty.screenedSession, null);
+    assert.equal(empty.spreadDays, null);
+    assert.equal(empty.staleConstituents, 0);
+  }
 });

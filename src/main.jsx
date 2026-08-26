@@ -1730,8 +1730,13 @@ function ScreenerDashboard({ data }) {
       <div className="model-tabs"><button className="active">Calculated universe</button></div>
     </section>
     <DataDisclosure data={data} message={`Every metric is calculated from Yahoo batch spark one-year daily closes over the Wikipedia S&P 500 list. ${screener?.calculatedCount ?? 0} of ${screener?.universeSize ?? 0} constituents returned usable history.`} />
+    {screener?.vintage?.screenedSession ? <p className="watchlist-summary screener-vintage">
+      Screening the {screener.vintage.screenedSession} session{screener.vintage.staleConstituents
+        ? ` · ${screener.vintage.staleConstituents} ${screener.vintage.staleConstituents === 1 ? 'name has' : 'names have'} not printed since, the oldest ${screener.vintage.spreadDays} days back`
+        : ' · every constituent printed that session'}
+    </p> : null}
     {screener?.breadth && Number.isFinite(screener.breadth.above50Pct) ? <p className="watchlist-summary">{screener.breadth.near52wHighCount} of {screener.breadth.calculated} names within 5% of their 52-week high ({screener.breadth.near52wHighPct}%) · {screener.breadth.above50Pct}% above their 50-day average{Number.isFinite(screener.breadth.persistentTrendPct) ? ` · ${screener.breadth.persistentTrendCount} of ${screener.breadth.qualityCovered} riding a persistent 90-session uptrend (${screener.breadth.persistentTrendPct}%)` : ''} · momentum expressed net of SPY over the same windows</p> : null}
-    <section className="macro-section-heading"><div><p className="section-kicker">SCREENS · CALCULATED</p><h2>{definition.label}</h2></div><span className="data-pill">{filtered.length ? `Top ${filtered.length} of ${rows.length}${sort ? ` · by ${SCREENER_COLUMNS.find((column) => column.key === sort.key)?.label ?? sort.key}` : ''}` : 'No matches'}</span></section>
+    <section className="macro-section-heading"><div><StatusKicker label="SCREENS" published={screener?.status === 'calculated'} /><h2>{definition.label}</h2></div><span className="data-pill">{filtered.length ? `Top ${filtered.length} of ${rows.length}${sort ? ` · by ${SCREENER_COLUMNS.find((column) => column.key === sort.key)?.label ?? sort.key}` : ''}` : 'No matches'}</span></section>
     <section className="screener-controls-row">
       <div className="window-buttons">{sectors.map((sector) => <button className={sectorFilter === sector ? 'selected' : ''} key={sector} onClick={() => setSectorFilter(sector)}>{sector === 'All' ? 'All sectors' : sector}</button>)}</div>
     </section>

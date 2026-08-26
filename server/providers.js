@@ -12,6 +12,7 @@ import { buildBackfillRows, calculateConsensusHistory, calculateMacroVerdict, ca
 import { calculateDataSurprise, calculateLiquidityPayoff, calculateNominalDecomposition, calculateRateDivergence, calculateReserveScarcity, calculateTermPremium } from './macroRates.js';
 import { calculateGrowthNowcast, calculateInflationNowcast, calculateLiquidityCalendar, calculateRatePath, calculateRegimeTransitions, calculateYieldCurveModel, seriesPoints } from './macroModels.js';
 import { buildCryptoVerdict, buildFxVerdict, buildMetalsVerdict } from './verdict.js';
+import { resolveVintage, screenVintage } from './vintage.js';
 import { cryptoHistoryGranularity, describeSeriesFreshness, isCryptoHistoryStale, isCotReportStale, isDailyCloseStale, isFredSeriesStale, isPbocObservationStale, monthsBetween } from './freshness.js';
 import { percentileRank } from './statistics.js';
 
@@ -877,15 +878,23 @@ async function getSparkBatch(symbols, { range = '1y', interval = '1d' } = {}) {
   const payload = await fetchJson(url, 0, 2, BROWSER_HEADERS);
   const rows = payload?.spark?.result ?? [];
   const out = new Map();
+  // The daily path returns bare close arrays, which is what every caller
+  // expects, so the bar dates ride alongside rather than inside them. Without
+  // them the screener had no idea how current its own data was and stamped
+  // itself with the wall clock.
+  const latest = new Map();
   for (const row of rows) {
     const response = row?.response?.[0];
     const rawCloses = response?.indicators?.quote?.[0]?.close ?? [];
     const values = rawCloses.map((close) => asNumber(close)).filter((value) => value !== null);
     if (interval === '1d' ? values.length >= 210 : values.length >= 60) {
       out.set(row.symbol, interval === '1d' ? values : { closes: values, timestamps: response?.timestamp ?? [] });
+      const stamps = response?.timestamp ?? [];
+      const lastStamp = asNumber(stamps.at(-1));
+      if (lastStamp !== null) latest.set(row.symbol, new Date(lastStamp * 1000).toISOString().slice(0, 10));
     }
   }
-  return out;
+  return { series: out, latest };
 }
 
 async function getIntradayCloses(symbols, range = '5d', interval = '30m') {
@@ -893,7 +902,7 @@ async function getIntradayCloses(symbols, range = '5d', interval = '30m') {
   const aligned = new Map();
   for (const result of settled) {
     if (result.status !== 'fulfilled') continue;
-    for (const [symbol, payload] of result.value) {
+    for (const [symbol, payload] of result.value.series) {
       const byTimestamp = new Map();
       payload.timestamps.forEach((timestamp, index) => {
         const close = payload.closes[index];
@@ -911,13 +920,15 @@ async function getSparkCloses(symbols) {
   const batches = [];
   for (let index = 0; index < normalized.length; index += 20) batches.push(normalized.slice(index, index + 20));
   const merged = new Map();
+  const latestBySymbol = new Map();
   let failures = 0;
   for (let waveStart = 0; waveStart < batches.length; waveStart += 4) {
     const wave = batches.slice(waveStart, waveStart + 4);
     const settled = await Promise.allSettled(wave.map((batch) => getSparkBatch(batch)));
     for (const result of settled) {
       if (result.status === 'fulfilled') {
-        for (const [key, value] of result.value) merged.set(key, value);
+        for (const [key, value] of result.value.series) merged.set(key, value);
+        for (const [key, value] of result.value.latest) latestBySymbol.set(key, value);
       } else {
         failures += 1;
       }
@@ -925,6 +936,7 @@ async function getSparkCloses(symbols) {
     if (waveStart + 4 < batches.length) await wait(500);
   }
   if (!merged.size) throw new Error(`All ${batches.length} spark batches failed (${failures} failures)`);
+  merged.latestBySymbol = latestBySymbol;
   return merged;
 }
 
@@ -1028,9 +1040,9 @@ export async function getEquityRiskAppetite() {
 
     let vixTermStructure = { status: 'unavailable', reason: `Yahoo VIX index histories are required: ${vixResult.reason?.message ?? vixResult.reason}` };
     if (vixResult.status === 'fulfilled') {
-      const vix = vixResult.value.get('^VIX');
-      const vix9d = vixResult.value.get('^VIX9D');
-      const vix3m = vixResult.value.get('^VIX3M');
+      const vix = vixResult.value.series.get('^VIX');
+      const vix9d = vixResult.value.series.get('^VIX9D');
+      const vix3m = vixResult.value.series.get('^VIX3M');
       const ratios = alignedRatioSeries(vix ?? [], vix3m ?? []);
       const ratio = ratios.at(-1) ?? null;
       vixTermStructure = Number.isFinite(ratio) ? {
@@ -1321,8 +1333,23 @@ export async function getEquityScreener() {
     const above50Count = scored.filter((row) => row.above50 === true).length;
     const persistentTrendCount = scored.filter((row) => Number.isFinite(row.trendQuality) && row.trendQuality > 0 && row.trendR2 >= 0.5).length;
     const qualityCovered = scored.filter((row) => Number.isFinite(row.trendQuality)).length;
+    // A screen is a list of independently scored names, not one composite, so
+    // its vintage is the newest session the universe reached - the session
+    // being screened. That is the opposite rule from a composite, where the
+    // oldest input binds, and it only holds because per-name lag is published
+    // beside it rather than hidden: a constituent that stopped printing shows
+    // up in staleConstituents instead of silently dragging every date back.
+    const vintage = screenVintage([...(closesByKey.latestBySymbol ?? new Map()).entries()]
+      .filter(([symbol]) => closesByKey.has(symbol))
+      .map(([, date]) => date));
+    const screenedSession = vintage.screenedSession;
+
     return {
-      asOf: new Date().toISOString(),
+      asOf: screenedSession ?? new Date().toISOString().slice(0, 10),
+      // Whether that date came from the data or from the clock, so a reader is
+      // never left guessing which they are looking at.
+      asOfSource: screenedSession ? 'newest constituent bar' : 'request time; no bar dates were returned',
+      vintage,
       version: 'screener-v1',
       status: 'calculated',
       calculatedCount: scored.length,

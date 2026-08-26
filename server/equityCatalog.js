@@ -122,7 +122,14 @@ export function attachSeriesCoverage(items, coverageRows, now = Date.now()) {
     return {
       ...item,
       coverage: {
-        status: observations >= 200 ? stale ? 'stale' : 'ready' : observations >= 30 ? 'partial' : 'pending',
+        // Staleness outranks thinness. Checking it only above 200 observations
+        // meant a 150-session history that stopped a year ago reported
+        // "partial" - the same status as a 150-session history still printing
+        // daily - and the interface renders this status without the stale flag
+        // beside it, so the difference was invisible.
+        status: stale ? 'stale'
+          : observations >= 200 ? 'ready'
+            : observations >= 30 ? 'partial' : 'pending',
         observations,
         startsAt: row?.startsAt ?? null,
         endsAt: row?.endsAt ?? null,

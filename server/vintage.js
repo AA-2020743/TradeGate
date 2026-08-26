@@ -46,3 +46,28 @@ export function resolveVintage(inputs) {
 export function oldestAsOf(dates) {
   return resolveVintage((dates ?? []).map((asOf) => ({ asOf }))).asOf;
 }
+
+/**
+ * The vintage of a *screen* - a list of independently scored names, rather
+ * than a composite of inputs.
+ *
+ * This deliberately inverts the rule above. For a composite the oldest input
+ * binds, because every input contributes to one number. A screen's rows are
+ * independent, so its vintage is the newest session the universe reached: the
+ * session being screened. That only holds because the lag is published beside
+ * it - a delisted constituent shows up as a stale count rather than dragging
+ * the whole screen back six months.
+ */
+export function screenVintage(barDates) {
+  const dates = (barDates ?? []).filter((date) => typeof date === 'string' && date).sort();
+  const screenedSession = dates.at(-1) ?? null;
+  const oldest = dates[0] ?? null;
+  return {
+    screenedSession,
+    oldestConstituentBar: oldest,
+    staleConstituents: screenedSession ? dates.filter((date) => date !== screenedSession).length : 0,
+    spreadDays: screenedSession && oldest
+      ? Math.round((Date.parse(`${screenedSession}T00:00:00.000Z`) - Date.parse(`${oldest}T00:00:00.000Z`)) / DAY_MS)
+      : null,
+  };
+}

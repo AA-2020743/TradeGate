@@ -261,3 +261,6 @@ html[data-theme='dark'] .screener-search { background: #1a221d; border-color: #3
 .verdict-margin, .verdict-reason { margin: 0.85rem 0 0; font-size: 0.85rem; line-height: 1.5; opacity: 0.82; }
 .verdict-missing-line { opacity: 0.65; }
 .verdict-missing { margin: 0.7rem 0 0; padding-left: 1.1rem; font-size: 0.85rem; line-height: 1.6; opacity: 0.75; }
+
+/* Which session a screen reflects, and which names did not reach it. */
+.screener-vintage { opacity: 0.72; }
