@@ -1,4 +1,5 @@
 import { mean, median, medianSpacingDays, ordinal, standardDeviation } from './statistics.js';
+import { resolveVintage } from './vintage.js';
 const TRADING_DAYS = 252;
 const DAY_MS = 86_400_000;
 
@@ -1301,7 +1302,9 @@ export function calculatePositioningModel(reports) {
   return {
     version: 'positioning-cot-v1',
     status: calculatedCount ? 'calculated' : 'unavailable',
-    asOf: contracts.map((contract) => contract.asOf).sort().at(-1) ?? null,
+    // The oldest contract, not the newest: a gold report that stopped in March
+    // must not be hidden by FX contracts that printed this week.
+    ...resolveVintage(contracts.map((contract) => ({ name: contract.name, asOf: contract.asOf }))),
     coverage: Math.round((calculatedCount / Math.max(reports.length, 1)) * 100),
     contracts,
     methodology: 'CFTC Commitments of Traders, legacy futures-only report. Net non-commercial position with three-year percentile rank; weekly change versus the prior Tuesday report.',

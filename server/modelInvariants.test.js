@@ -311,3 +311,21 @@ test('every published composite is reconstructible from the drivers it shows', a
 
   assert.deepEqual(failures, []);
 });
+
+/**
+ * No composite may report a vintage newer than its own stalest input. The
+ * obvious spelling - sort the dates and take the last - is the wrong one, and
+ * it was in four models at once.
+ */
+test('no source file reports a composite vintage from its freshest input', async () => {
+  const { readFileSync, readdirSync } = await import('node:fs');
+  const offenders = [];
+  for (const file of readdirSync('./server').filter((name) => name.endsWith('.js') && !name.endsWith('.test.js'))) {
+    const source = readFileSync(`./server/${file}`, 'utf8');
+    source.split('\n').forEach((line, index) => {
+      // An asOf taken from the newest of several dates.
+      if (/asOf[^\n]*\.sort\(\)\.at\(-1\)/.test(line)) offenders.push(`${file}:${index + 1} ${line.trim().slice(0, 90)}`);
+    });
+  }
+  assert.deepEqual(offenders, []);
+});

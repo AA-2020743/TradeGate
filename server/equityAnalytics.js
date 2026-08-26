@@ -1,5 +1,6 @@
 import { calculateChangeCorrelations, calculateTechnicalSnapshot, pearsonCorrelation } from './analytics.js';
 import { mean, median, ordinal, percentileRank, standardDeviation } from './statistics.js';
+import { resolveVintage } from './vintage.js';
 
 function clamp(value, minimum = 0, maximum = 100) {
   return Math.min(maximum, Math.max(minimum, value));
@@ -242,13 +243,16 @@ export function calculateSectorBreadthProxy(inputs, { minimumObservations = 60 }
     : null;
   const topRisk = participation === null ? null : Math.round(clamp(100 - participation));
   const bottomScore = participation === null ? null : Math.round(clamp(((100 - participation) * 0.7) + (Math.max(thrust20 ?? 0, 0) * 3)));
-  const asOf = stats.map((stat) => stat.asOf).filter(Boolean).sort().at(-1) ?? null;
+  // The stalest constituent sets the vintage; the freshest one hides the rest.
+  const vintage = resolveVintage(stats.map((stat) => ({ name: stat.symbol ?? stat.name, asOf: stat.asOf })));
+  const { asOf } = vintage;
   const missing = [
     ...(above200.eligible < universeSize ? [`${universeSize - above200.eligible} of ${universeSize} ETFs lack 200 sessions for the long-cycle line`] : []),
     ...(above50.eligible < universeSize ? [`${universeSize - above50.eligible} of ${universeSize} ETFs lack 50 sessions`] : []),
   ];
 
   return {
+    ...vintage,
     version: 'sector-breadth-proxy-v2',
     status: participation === null ? 'unavailable' : missing.length ? 'provisional' : 'calculated',
     reason: participation === null ? 'No ETF in the universe carries enough history for a moving-average line.' : null,
@@ -792,7 +796,7 @@ export function calculateBasketRotation(pairs, historiesBySymbol) {
   return {
     version: 'style-rotation-v1',
     status: calculatedCount ? 'calculated' : 'unavailable',
-    asOf: calculated.map((pair) => pair.asOf).filter(Boolean).sort().at(-1) ?? null,
+    ...resolveVintage(calculated.map((pair) => ({ name: pair.left ?? pair.key, asOf: pair.asOf }))),
     pairs: calculated,
     methodology: `Equal-weight basket returns over 20 and 60 synchronized sessions; the spread is left-basket minus right-basket return. A spread inside ${BASKET_SPREAD_MINIMUM} point either way is treated as noise. Leadership is named from the 60-session spread, but when the 20-session spread is decisively the other way the pair is reported as changing hands rather than as the older window alone would have it.`,
   };
@@ -897,7 +901,7 @@ export function calculateSectorRotation(sectors, benchmarkPoints) {
   return {
     version: 'sector-rotation-v1',
     status: calculated.length >= Math.ceil(sectors.length * 0.7) ? 'calculated' : calculated.length ? 'partial' : 'unavailable',
-    asOf: calculated.map((sector) => sector.asOf).sort().at(-1) ?? null,
+    ...resolveVintage(calculated.map((sector) => ({ name: sector.symbol ?? sector.name, asOf: sector.asOf }))),
     benchmark: 'SPY',
     methodology: `20- and 60-session total-price momentum relative to SPY, combined with technical-v1. The relative-rotation quadrant reads the 60-session excess return as how strong a sector already is and the 20-session one as whether that strength is building. Each sector is also placed where it sat ${ROTATION_LOOKBACK_SESSIONS} sessions ago, so a sector rotating into leadership is distinguishable from one rolling out of it; the shift is the change in 20-session excess return over that window. A trail of up to ${ROTATION_TRAIL_POINTS} points spaced ${ROTATION_LOOKBACK_SESSIONS} sessions apart carries the arc it travelled, oldest first; points the history cannot reach back far enough to place are dropped rather than repeated.`,
     rotationLookbackSessions: ROTATION_LOOKBACK_SESSIONS,

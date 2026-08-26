@@ -13,6 +13,7 @@ import {
 import { getEarningsRevisionBreadth, getEquityLongHistory, getEquityRiskAppetite, getLiquiditySnapshot, getMarketHistory, getTechnicalSnapshot } from './providers.js';
 import { isDailyCloseStale } from './freshness.js';
 import { buildVerdictFromModel } from './verdict.js';
+import { resolveVintage } from './vintage.js';
 
 const unavailableBreadth = {
   version: 'equity-breadth-v1',
@@ -51,33 +52,6 @@ async function getStoredTechnicalSnapshot(symbol) {
     stale,
     asOf,
     model: stale ? null : calculatedModel,
-  };
-}
-
-/**
- * The vintage of a composite built from several inputs.
- *
- * A composite is only as current as its stalest binding input. Publishing the
- * newest let one fresh leg mask another that had stopped updating, which is
- * the same fault the macro regime carried. Inputs also arrive in different
- * formats - an ISO timestamp from a technical snapshot, a plain date from a
- * FRED-backed model - so they are compared as instants rather than as strings,
- * where "2026-08-20" would sort before "2026-08-20T00:00:00.000Z".
- */
-export function resolveVintage(inputs) {
-  const dated = (inputs ?? []).flatMap((entry) => {
-    if (typeof entry?.asOf !== 'string' || !entry.asOf) return [];
-    const at = Date.parse(entry.asOf.length === 10 ? `${entry.asOf}T00:00:00.000Z` : entry.asOf);
-    return Number.isFinite(at) ? [{ ...entry, at }] : [];
-  }).sort((left, right) => left.at - right.at);
-
-  const oldest = dated[0] ?? null;
-  return {
-    asOf: oldest?.asOf ?? null,
-    // Which input is holding the composite back, and how far apart the inputs
-    // are - a wide spread is itself worth seeing.
-    asOfSource: oldest?.name ?? null,
-    asOfSpreadDays: dated.length > 1 ? Math.round((dated.at(-1).at - dated[0].at) / 86_400_000) : null,
   };
 }
 

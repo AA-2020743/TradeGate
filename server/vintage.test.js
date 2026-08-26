@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { resolveVintage } from './equities.js';
+import { oldestAsOf, resolveVintage } from './vintage.js';
 
 test('a composite reports the vintage of its stalest input, not its freshest', () => {
   // The dashboard used to publish the newest of its input dates, so a fresh
@@ -48,4 +48,26 @@ test('a composite with no dated inputs says so rather than inventing a vintage',
   assert.deepEqual(vintage, { asOf: null, asOfSource: null, asOfSpreadDays: null });
   assert.deepEqual(resolveVintage([]), { asOf: null, asOfSource: null, asOfSpreadDays: null });
   assert.deepEqual(resolveVintage(), { asOf: null, asOfSource: null, asOfSpreadDays: null });
+});
+
+test('a stalled member sets the vintage instead of hiding behind current ones', () => {
+  // The obvious thing to write is dates.sort().at(-1) - the newest - and four
+  // models here did. It let one fresh leg hide another that had stopped: a
+  // positioning model whose gold contract last printed in March still claimed
+  // today's date because the FX contracts beside it were current.
+  const vintage = resolveVintage([
+    { name: 'Euro FX', asOf: '2026-08-18' },
+    { name: 'Gold', asOf: '2026-03-11' },
+    { name: 'Japanese Yen', asOf: '2026-08-18' },
+  ]);
+  assert.equal(vintage.asOf, '2026-03-11');
+  assert.equal(vintage.asOfSource, 'Gold');
+  assert.equal(vintage.asOfSpreadDays, 160);
+});
+
+test('oldestAsOf answers for callers that only need the date', () => {
+  assert.equal(oldestAsOf(['2026-08-18', '2026-03-11', '2026-08-20']), '2026-03-11');
+  assert.equal(oldestAsOf([]), null);
+  assert.equal(oldestAsOf(), null);
+  assert.equal(oldestAsOf([null, 'not a date']), null);
 });
