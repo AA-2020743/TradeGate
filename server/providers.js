@@ -12,6 +12,7 @@ import { buildBackfillRows, calculateConsensusHistory, calculateMacroVerdict, ca
 import { calculateDataSurprise, calculateLiquidityPayoff, calculateNominalDecomposition, calculateRateDivergence, calculateReserveScarcity, calculateTermPremium } from './macroRates.js';
 import { calculateGrowthNowcast, calculateInflationNowcast, calculateLiquidityCalendar, calculateRatePath, calculateRegimeTransitions, calculateYieldCurveModel, seriesPoints } from './macroModels.js';
 import { buildCryptoVerdict, buildFxVerdict, buildMetalsVerdict } from './verdict.js';
+import { calculateRatioValuation, compareIncomeContribution, rankHardMoneyStrength } from './hardMoney.js';
 import { resolveVintage, screenVintage } from './vintage.js';
 import { cryptoHistoryGranularity, describeSeriesFreshness, isCryptoHistoryStale, isCotReportStale, isDailyCloseStale, isFredSeriesStale, isPbocObservationStale, monthsBetween } from './freshness.js';
 import { percentileRank } from './statistics.js';
@@ -1370,6 +1371,90 @@ export async function getEquityScreener() {
       },
       sectorLeadership,
       methodology: 'Universe is Wikipedia\'s S&P 500 constituent list with GICS sector attribution from the same table; metrics come from Yahoo batch spark one-year daily closes. The composite score cross-sectionally ranks 20-session momentum (45%), distance above the 200-day average (35%), and the inverse of 20-day annualized volatility (20%). RSI-14 uses standard Wilder smoothing on the same closes. Momentum is also expressed as excess return versus SPY over identical windows. Sector leadership aggregates each GICS sector\'s share of 20-session advancers and its average momentum. Distance from the 52-week high uses the trailing 252-session peak. Trend quality fits an ordinary least-squares line to the last 90 log closes: the annualized slope is the fitted daily drift compounded over 252 sessions, and the quality reading multiplies that slope by the fit\'s R-squared so that only trends the price actually respects rank highly.',
+    };
+  });
+}
+
+// Total-return index symbols carry dividends reinvested; the plain index does
+// not. Both are read so the difference can be published rather than assumed.
+const HARD_MONEY_SYMBOLS = {
+  gold: 'GC=F',
+  silver: 'SI=F',
+  platinum: 'PL=F',
+  spxPrice: '^GSPC',
+  spxTotal: '^SP500TR',
+  ndxPrice: '^NDX',
+  ndxTotal: '^XNDX',
+  bitcoin: 'BTC-USD',
+};
+
+/**
+ * Every asset here priced in gold, with the dividend question answered
+ * separately for the two equity indices.
+ */
+export async function getHardMoneyValuation() {
+  return withCache('analytics:hard-money', 6 * 60 * 60_000, async () => {
+    const keys = Object.keys(HARD_MONEY_SYMBOLS);
+    const settled = await Promise.allSettled(keys.map((key) => getYahooHistory(HARD_MONEY_SYMBOLS[key], '10y')));
+    const points = new Map();
+    const errors = [];
+    settled.forEach((result, index) => {
+      const key = keys[index];
+      if (result.status === 'fulfilled' && result.value?.length) {
+        points.set(key, result.value.map((point) => ({ date: String(point.timestamp).slice(0, 10), value: point.value })));
+      } else {
+        errors.push(`${HARD_MONEY_SYMBOLS[key]} (${key}) did not return a usable history: ${result.reason?.message ?? 'no observations'}`);
+      }
+    });
+
+    const gold = points.get('gold') ?? [];
+    if (!gold.length) {
+      return {
+        asOf: new Date().toISOString(),
+        version: 'hard-money-v1',
+        status: 'unavailable',
+        reason: `Gold is the denominator for every ratio here and ${HARD_MONEY_SYMBOLS.gold} did not return a history.`,
+        ratios: [],
+        errors,
+      };
+    }
+
+    const priced = (key, name, numeratorKey, numeratorName, denominatorKey = 'gold', denominatorName = 'gold', note = null) => calculateRatioValuation({
+      key,
+      name,
+      numerator: points.get(numeratorKey) ?? [],
+      denominator: points.get(denominatorKey) ?? [],
+      numeratorName,
+      denominatorName,
+      note,
+    });
+
+    const spxPrice = priced('spxPrice', 'S&P 500 (price) in gold', 'spxPrice', 'the S&P 500 price index', 'gold', 'gold', 'Price only: dividends are not in this series.');
+    const spxTotal = priced('spxTotal', 'S&P 500 (total return) in gold', 'spxTotal', 'the S&P 500 total-return index', 'gold', 'gold', 'Dividends reinvested.');
+    const ndxPrice = priced('ndxPrice', 'Nasdaq-100 (price) in gold', 'ndxPrice', 'the Nasdaq-100 price index', 'gold', 'gold', 'Price only: dividends are not in this series.');
+    const ndxTotal = priced('ndxTotal', 'Nasdaq-100 (total return) in gold', 'ndxTotal', 'the Nasdaq-100 total-return index', 'gold', 'gold', 'Dividends reinvested.');
+    const bitcoin = priced('bitcoinGold', 'Bitcoin in gold', 'bitcoin', 'bitcoin');
+    // Silver and platinum against gold: the classic within-metals ratios, on
+    // the same footing as everything else here.
+    const silver = priced('silverGold', 'Silver in gold', 'silver', 'silver');
+    const platinum = priced('platinumGold', 'Platinum in gold', 'platinum', 'platinum');
+
+    const ratios = [spxPrice, spxTotal, ndxPrice, ndxTotal, bitcoin, silver, platinum];
+    const calculated = ratios.filter((ratio) => ratio.status !== 'unavailable');
+
+    return {
+      ...resolveVintage(calculated.map((ratio) => ({ name: ratio.name, asOf: ratio.asOf }))),
+      version: 'hard-money-v1',
+      status: calculated.length ? (calculated.length === ratios.length ? 'calculated' : 'provisional') : 'unavailable',
+      reason: calculated.length ? undefined : 'No pair had enough shared history with gold.',
+      ratios,
+      income: {
+        spx: compareIncomeContribution(spxPrice, spxTotal),
+        ndx: compareIncomeContribution(ndxPrice, ndxTotal),
+      },
+      crossAsset: rankHardMoneyStrength(ratios),
+      errors,
+      methodology: 'Each asset is divided by front gold futures on dates where both publish, so the ratio answers what the asset buys in metal rather than in dollars. Equity indices are read twice, once on price and once on total return, because the difference between them in gold terms is the real contribution of dividends. Gold is a volatile denominator, so each horizon publishes the asset move, the gold move and the ratio move separately - a falling ratio can be gold strength rather than asset weakness, and only the three together separate them.',
     };
   });
 }

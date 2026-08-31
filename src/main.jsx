@@ -739,6 +739,58 @@ function VolatilityTermPanel({ volatility }) {
  * return that came from its largest holdings rather than from the market - and
  * an index can sit at a new high while most of its members are falling.
  */
+/**
+ * Every asset priced in gold.
+ *
+ * A dollar price mixes how the asset did with what happened to the unit it is
+ * quoted in. Dividing by gold removes the second, so this answers a different
+ * question: not "did it go up" but "does it buy more of the oldest monetary
+ * asset than it used to". The two can point opposite ways, and the gap between
+ * them is the part of a dollar gain that was the currency moving.
+ */
+function HardMoneyPanel({ hardMoney }) {
+  const status = hardMoney?.status ?? 'unavailable';
+  const published = status !== 'unavailable';
+  const cross = hardMoney?.crossAsset;
+  const yearOf = (ratio) => (ratio?.horizons ?? []).find((horizon) => horizon.key === 'year' && horizon.status === 'calculated') ?? null;
+
+  return <article className={`panel ${published ? '' : 'preview-section'}`}>
+    <div className="panel-title">
+      <div>
+        <StatusKicker label="PRICED IN GOLD" published={published} />
+        <h3>{published && cross?.status === 'calculated' ? `${cross.strongest.name} leads in hard-money terms` : 'Awaiting shared history with gold'}</h3>
+      </div>
+      {published ? <span className="data-pill">{(hardMoney.ratios ?? []).filter((ratio) => ratio.status !== 'unavailable').length} of {(hardMoney.ratios ?? []).length} pairs</span> : null}
+    </div>
+
+    {published ? <>
+      <div className="hardmoney-head"><span>Asset</span><span>1Y in USD</span><span>1Y in gold</span><span>Own history</span></div>
+      {(hardMoney.ratios ?? []).map((ratio) => {
+        const year = yearOf(ratio);
+        const diverging = year && year.nominalPercent > 0 && year.realPercent < 0;
+        return <div className={`hardmoney-row ${diverging ? 'hardmoney-diverging' : ''}`} key={ratio.key}>
+          <span><b>{ratio.name}</b>{ratio.note ? <small>{ratio.note}</small> : null}</span>
+          {year
+            ? <>
+              <b>{year.nominalPercent > 0 ? '+' : ''}{year.nominalPercent}%</b>
+              <b className={year.realPercent >= 0 ? 'positive' : 'negative'}>{year.realPercent > 0 ? '+' : ''}{year.realPercent}%</b>
+              <strong>{Number.isFinite(ratio.percentile) ? `${ordinal(ratio.percentile)} pct` : 'unranked'}</strong>
+            </>
+            : <small className="hardmoney-missing">{ratio.reason ?? 'No shared history'}</small>}
+        </div>;
+      })}
+
+      {['spx', 'ndx'].map((key) => hardMoney.income?.[key]?.status && hardMoney.income[key].status !== 'unavailable'
+        ? <p className="hardmoney-income" key={key}><b>{key.toUpperCase()} — dividends:</b> {hardMoney.income[key].read}</p>
+        : null)}
+
+      {cross?.status === 'calculated' ? <p className="hardmoney-cross">{cross.read}</p> : null}
+    </> : <div className="equity-empty">{hardMoney?.reason ?? 'A gold history and at least one asset history are required.'}</div>}
+
+    <p className="model-footnote">{hardMoney?.methodology ?? ''}</p>
+  </article>;
+}
+
 function ConcentrationPanel({ concentration }) {
   const status = concentration?.status ?? 'unavailable';
   const published = status !== 'unavailable';
@@ -1176,6 +1228,7 @@ function MetalsDashboard({ data }) {
     <section className="metals-intro">
       <div><p className="eyebrow">PRECIOUS METALS RESEARCH</p><h1>Where monetary metal meets market structure.</h1><p className="intro">Technical, macro, physical, and positioning signals for metals and their equity proxies.</p></div>
       <VerdictBanner verdict={workspace?.verdict} />
+      <HardMoneyPanel hardMoney={data.hardMoney} />
       <div className="metals-pulse">{workspace?.status !== 'calculated' && <PreviewBadge />}<div><b>{workspace?.calculatedCount ? `${workspace.calculatedCount} of ${workspace.universeSize} series calculated` : 'Awaiting provider histories'}</b><small>technical-v1 · COMEX futures · COT</small></div></div>
     </section>
     <DataDisclosure data={data} message={workspace?.status === 'calculated' ? 'Spot metals prices come from front COMEX/CME futures via Yahoo Finance; scores, momentum, volatility, and RSI are technical-v1 calculations. ETF flows, physical-market indicators, and producer costs remain previews until dedicated feeds are connected.' : 'The metals workspace publishes once futures and miner histories are available.'} />

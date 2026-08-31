@@ -294,6 +294,18 @@ The model publishes the spread over 20, 60 and 252 sessions (positive means the 
 
 Three limits are published with it. These are two ETFs, so the ratio carries their fee and rebalancing differences as well as the concentration signal — a good relative measure and a poor absolute one. The equal-weight fund rebalances quarterly, so it is not a pure average member in between. And the closes are aligned by position rather than by date, because the batch endpoint returns them without dates, so the observation counts and any mismatch are published rather than hidden.
 
+### `hard-money-v1`
+
+Every tracked asset priced in gold: the S&P 500 and Nasdaq-100 (each read twice, on price and on total return), bitcoin, silver and platinum.
+
+A dollar price mixes two things — how the asset did, and what happened to the unit it is quoted in. Dividing by gold removes the second, so the ratio answers a different question: not "did this go up" but "does it buy more of the oldest monetary asset than it used to". Over long horizons the two answers can point opposite ways.
+
+Each horizon publishes the asset's own move, gold's own move, and the ratio move separately. The wedge between the dollar move and the gold move is the denominator's contribution — deliberately **not** called debasement, because gold rising on its own demand looks identical here and the ratio cannot establish a cause.
+
+Two readings come out of it. *Within* an asset, where its gold ratio sits in its own history says whether today is expensive or cheap on that measure. *Across* assets, ranking those percentiles says which is winning in hard-money terms, and anything up in dollars but down in gold over the same window is flagged, because that is where the dollar chart and the gold chart disagree about direction.
+
+The equity indices are read on price **and** total return because the difference is not cosmetic: a price index can be flat in gold terms over a decade while the same index with dividends reinvested is well ahead — and that gap is the real return, delivered as income rather than as price.
+
 ### Equity calculation engines
 
 `equity-regime-v1` dynamically changes factor weights, alert thresholds, and expected holding periods. It requires price trend, momentum, and volatility, and remains provisional below 75% driver coverage. `equity-top-risk-v1` and `equity-bottom-signal-v1` require both technical and constituent-breadth confirmation and do not publish from price and liquidity alone.

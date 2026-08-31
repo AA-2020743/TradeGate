@@ -288,3 +288,28 @@ html[data-theme='dark'] .screener-search { background: #1a221d; border-color: #3
 .concentration-row:last-of-type { border-bottom: none; }
 .concentration-missing { grid-column: 2 / -1; opacity: 0.6; font-size: 0.8em; }
 .concentration-flag { margin: 0.85rem 0 0; font-size: 0.86rem; line-height: 1.5; }
+
+/* Assets priced in gold: the dollar move, the gold move, and the rank. */
+.hardmoney-head, .hardmoney-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1.6fr) repeat(3, minmax(0, 0.8fr));
+  gap: 0.7rem;
+  align-items: baseline;
+}
+.hardmoney-head {
+  margin-top: 0.9rem;
+  padding-bottom: 0.4rem;
+  font-size: 0.72rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  opacity: 0.55;
+  border-bottom: 1px solid var(--hairline, rgba(255, 255, 255, 0.08));
+}
+.hardmoney-row { padding: 0.5rem 0; border-bottom: 1px solid var(--hairline, rgba(255, 255, 255, 0.06)); }
+.hardmoney-row:last-of-type { border-bottom: none; }
+.hardmoney-row > span { display: flex; flex-direction: column; min-width: 0; }
+.hardmoney-row > span small { opacity: 0.58; font-size: 0.74em; }
+/* Up in dollars, down in gold: the case where the two charts disagree. */
+.hardmoney-diverging { box-shadow: inset 2px 0 0 var(--verdict-accent, #d2705f); padding-left: 0.5rem; }
+.hardmoney-missing { grid-column: 2 / -1; opacity: 0.6; font-size: 0.8em; }
+.hardmoney-income, .hardmoney-cross { margin: 0.8rem 0 0; font-size: 0.85rem; line-height: 1.55; opacity: 0.85; }
