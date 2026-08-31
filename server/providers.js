@@ -1,7 +1,7 @@
 import { config } from './config.js';
 import { withCache } from './cache.js';
 import { settle, unwrap } from './settled.js';
-import { calculateBreadthDivergence } from './equityAnalytics.js';
+import { calculateBreadthConcentration, calculateBreadthDivergence } from './equityAnalytics.js';
 import { calculateBitcoinTechnicals, calculateMovingAverageStack } from './bitcoinTechnicals.js';
 import { calculateRevisionBreadth, calculateThrustLog } from './equityAnalytics.js';
 import { calculateBitcoinRangeModels } from './bitcoinOhlc.js';
@@ -1154,6 +1154,10 @@ export async function getEquityRiskAppetite() {
             slope50,
             read: slope50 === null ? 'Insufficient history' : slope50 > 0.5 ? 'Equal-weight leading — broad tape' : slope50 < -0.5 ? 'Cap-weight leading — narrowing tape' : 'Balanced',
             reason: slope50 === null ? 'RSP/SPY history shorter than the 50-session window.' : undefined,
+            // The single slope says which way the gap is moving. This says how
+            // large it is, over what horizon, and whether the index level is
+            // hiding what the average member is doing.
+            concentration: calculateBreadthConcentration(rsp, spy),
           };
         }
 

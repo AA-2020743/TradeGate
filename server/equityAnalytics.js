@@ -1527,3 +1527,142 @@ export function calculateExpectedMove(points, { horizons = [5, 21, 63], lookback
     methodology: 'Sigma is the standard deviation of daily log returns over the estimation window, scaled by the square root of the horizon. The band is a one-sigma range centred on the current price, not a forecast and not a bound. It carries no drift term, so a strongly trending market breaks it asymmetrically and the hit rate falls below what volatility alone would imply - which is the calibration doing its job rather than failing. Calibration re-estimates sigma from data available at the start of each historical window and steps forward in non-overlapping blocks, so the sample count reflects independent evidence rather than reused observations. A one-sigma band on equity returns usually holds more often than 68.3%, not less: the return distribution is peaked as well as fat-tailed, so it is the shoulders that are thin. The band understates risk through the size of the moves that escape it rather than their frequency, which is why the median and worst breach are reported beside the hit rate.',
   };
 }
+
+const CONCENTRATION_WINDOWS = [
+  { key: 'short', sessions: 20, label: '20 sessions' },
+  { key: 'medium', sessions: 60, label: '60 sessions' },
+  { key: 'long', sessions: 252, label: '252 sessions' },
+];
+const CONCENTRATION_RANK_WINDOW = 756;
+// Below this the two are doing the same thing and naming a leader is noise.
+const CONCENTRATION_NOISE_POINTS = 0.75;
+
+/**
+ * What the cap-weighted index is not telling you.
+ *
+ * A cap-weighted index is a portfolio of its members weighted by size; an
+ * equal-weight version of the same members is the average member. The gap
+ * between them is therefore not a curiosity - it is the part of the index
+ * return that came from its largest holdings rather than from the market.
+ *
+ * The distinction matters for evaluating a tape because the headline index can
+ * make new highs while most of its members are falling, and it will not look
+ * broken while that happens. Reading the two together separates "the market is
+ * rising" from "a handful of very large companies are rising".
+ *
+ * Three honest limits, all published with the model. These are two ETFs, so
+ * the ratio carries their fee and rebalancing differences as well as the
+ * concentration signal - it is a good relative measure and a poor absolute
+ * one. The equal-weight fund rebalances quarterly, so it is not a pure average
+ * member between rebalances. And the closes are aligned by position rather
+ * than by date, because the batch endpoint returns closes without them, so a
+ * missing bar on one side shifts the pairing; the observation counts are
+ * published so a mismatch is visible.
+ */
+export function calculateBreadthConcentration(equalWeightCloses, capWeightCloses, {
+  windows = CONCENTRATION_WINDOWS,
+  rankWindow = CONCENTRATION_RANK_WINDOW,
+  noisePoints = CONCENTRATION_NOISE_POINTS,
+} = {}) {
+  const version = 'equity-concentration-v1';
+  const equal = (equalWeightCloses ?? []).filter((value) => Number.isFinite(value) && value > 0);
+  const cap = (capWeightCloses ?? []).filter((value) => Number.isFinite(value) && value > 0);
+  const shortest = Math.min(equal.length, cap.length);
+  const longestWindow = Math.max(...windows.map((window) => window.sessions));
+
+  if (shortest <= Math.min(...windows.map((window) => window.sessions))) {
+    return {
+      version,
+      status: 'unavailable',
+      reason: `Needs more than ${Math.min(...windows.map((window) => window.sessions))} aligned sessions of both the equal-weight and cap-weighted history; ${shortest} available.`,
+      observations: shortest,
+      windows: [],
+    };
+  }
+
+  // Trimmed from the front so both end on the same session.
+  const equalAligned = equal.slice(equal.length - shortest);
+  const capAligned = cap.slice(cap.length - shortest);
+  const ratio = equalAligned.map((value, index) => value / capAligned[index]);
+
+  const measured = windows.flatMap((window) => {
+    if (shortest <= window.sessions) {
+      return [{ ...window, status: 'unavailable', reason: `Needs ${window.sessions + 1} sessions; ${shortest} available.` }];
+    }
+    const capReturn = percentChange(capAligned, window.sessions);
+    const equalReturn = percentChange(equalAligned, window.sessions);
+    if (!Number.isFinite(capReturn) || !Number.isFinite(equalReturn)) {
+      return [{ ...window, status: 'unavailable', reason: 'One of the two histories has no usable base for this window.' }];
+    }
+    // Positive means the cap-weighted index outran the average member, which
+    // is leadership concentrating into the largest holdings.
+    const spread = capReturn - equalReturn;
+    return [{
+      ...window,
+      status: 'calculated',
+      capReturnPercent: Math.round(capReturn * 100) / 100,
+      equalReturnPercent: Math.round(equalReturn * 100) / 100,
+      spreadPoints: Math.round(spread * 100) / 100,
+      leader: Math.abs(spread) < noisePoints ? 'neither' : spread > 0 ? 'cap-weighted' : 'equal-weight',
+    }];
+  });
+
+  const published = measured.filter((window) => window.status === 'calculated');
+  if (!published.length) {
+    return { version, status: 'unavailable', reason: 'No window could be measured from the aligned histories.', observations: shortest, windows: measured };
+  }
+
+  // Where today's ratio sits against its own past: a wide gap that is normal
+  // for this pair is a different finding from one that is unprecedented.
+  const rankSlice = ratio.slice(-rankWindow);
+  const ratioPercentile = percentileRank(rankSlice, ratio.at(-1));
+
+  // How far each sits below its own high over the longest window available.
+  const drawdownOf = (values) => {
+    const slice = values.slice(-Math.min(values.length, longestWindow));
+    const peak = Math.max(...slice);
+    return peak > 0 ? ((slice.at(-1) / peak) - 1) * 100 : null;
+  };
+  const capDrawdown = drawdownOf(capAligned);
+  const equalDrawdown = drawdownOf(equalAligned);
+  const drawdownGap = Number.isFinite(capDrawdown) && Number.isFinite(equalDrawdown)
+    ? Math.round((equalDrawdown - capDrawdown) * 100) / 100
+    : null;
+
+  const medium = published.find((window) => window.key === 'medium') ?? published.at(-1);
+  const narrowing = published.filter((window) => window.leader === 'cap-weighted').length;
+  const broadening = published.filter((window) => window.leader === 'equal-weight').length;
+  const state = narrowing > broadening ? 'Narrowing'
+    : broadening > narrowing ? 'Broadening'
+      : 'Balanced';
+
+  // The case the model exists for: the index near its high while the average
+  // member is not. Nothing about the index level shows this.
+  const maskedWeakness = Number.isFinite(capDrawdown) && Number.isFinite(equalDrawdown)
+    && capDrawdown > -3 && equalDrawdown < -8;
+
+  return {
+    version,
+    status: published.length === windows.length ? 'calculated' : 'provisional',
+    observations: shortest,
+    equalWeightObservations: equal.length,
+    capWeightObservations: cap.length,
+    // A large mismatch means position alignment paired different sessions.
+    alignmentDroppedSessions: Math.abs(equal.length - cap.length),
+    ratio: Math.round(ratio.at(-1) * 10_000) / 10_000,
+    ratioPercentile,
+    rankedAgainst: rankSlice.length,
+    windows: measured,
+    state,
+    capDrawdownPercent: Number.isFinite(capDrawdown) ? Math.round(capDrawdown * 100) / 100 : null,
+    equalDrawdownPercent: Number.isFinite(equalDrawdown) ? Math.round(equalDrawdown * 100) / 100 : null,
+    drawdownGapPoints: drawdownGap,
+    maskedWeakness,
+    read: `${state}: over ${medium.label} the cap-weighted index returned ${medium.capReturnPercent > 0 ? '+' : ''}${medium.capReturnPercent}% against ${medium.equalReturnPercent > 0 ? '+' : ''}${medium.equalReturnPercent}% for the average member, a gap of ${Math.abs(medium.spreadPoints)} points ${medium.leader === 'neither' ? 'that is inside the noise band' : `in favour of the ${medium.leader}`}.${
+      medium.leader === 'cap-weighted' ? ' That part of the index return came from its largest holdings rather than from the market.' : medium.leader === 'equal-weight' ? ' The average member is outrunning the index, so the advance does not depend on its largest holdings.' : ''
+    }${maskedWeakness ? ` The index sits ${Math.abs(capDrawdown).toFixed(1)}% from its high while the average member is ${Math.abs(equalDrawdown).toFixed(1)}% below its own - the index level is not showing what most of the market is doing.` : ''}${
+      ratioPercentile === null ? ' The ratio has no usable range to rank today against.' : ` Today's ratio sits at the ${ordinal(ratioPercentile)} percentile of the last ${rankSlice.length} sessions.`
+    }`,
+    methodology: 'Equal-weight against cap-weighted closes for the same index. The spread is the cap-weighted return minus the equal-weight return over each window: positive means the index outran its average member, which is leadership concentrating into the largest holdings. Both are ETFs, so the ratio carries their fee and rebalancing differences as well as the concentration signal - it is a good relative measure and a poor absolute one, and the equal-weight fund rebalances quarterly rather than continuously. Closes are aligned by position because the batch endpoint returns them without dates, so a missing bar on one side shifts the pairing; the two observation counts and the size of any mismatch are published. A gap inside the noise band is reported as neither side leading rather than as a small lead.',
+  };
+}

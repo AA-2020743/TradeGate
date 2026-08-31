@@ -731,6 +731,47 @@ function VolatilityTermPanel({ volatility }) {
  * windows, so the reader sees the hit rate the band earned rather than the
  * 68.3% it assumes — and, when it broke, by how much.
  */
+/**
+ * What the index level is not telling you.
+ *
+ * A cap-weighted index is its members weighted by size; the equal-weight
+ * version is the average member. The gap between them is the part of the index
+ * return that came from its largest holdings rather than from the market - and
+ * an index can sit at a new high while most of its members are falling.
+ */
+function ConcentrationPanel({ concentration }) {
+  const status = concentration?.status ?? 'unavailable';
+  const published = status !== 'unavailable';
+  return <article className={`panel ${published ? '' : 'preview-section'}`}>
+    <div className="panel-title">
+      <div>
+        <StatusKicker label="INDEX CONCENTRATION" published={published} />
+        <h3>{published ? `${concentration.state} participation` : 'Awaiting equal-weight and cap-weighted history'}</h3>
+      </div>
+      {published && Number.isFinite(concentration.ratioPercentile)
+        ? <span className="data-pill">{ordinal(concentration.ratioPercentile)} pct of {concentration.rankedAgainst}</span>
+        : null}
+    </div>
+    {published ? <>
+      <div className="concentration-head"><span>Window</span><span>Index</span><span>Average member</span><span>Gap</span></div>
+      {(concentration.windows ?? []).map((window) => window.status === 'calculated'
+        ? <div className="concentration-row" key={window.key}>
+          <span>{window.label}</span>
+          <b>{window.capReturnPercent > 0 ? '+' : ''}{window.capReturnPercent}%</b>
+          <b>{window.equalReturnPercent > 0 ? '+' : ''}{window.equalReturnPercent}%</b>
+          <strong className={window.leader === 'cap-weighted' ? 'negative' : window.leader === 'equal-weight' ? 'positive' : ''}>
+            {window.spreadPoints > 0 ? '+' : ''}{window.spreadPoints}
+          </strong>
+        </div>
+        : <div className="concentration-row" key={window.key}><span>{window.label}</span><small className="concentration-missing">{window.reason}</small></div>)}
+      {concentration.maskedWeakness ? <p className="concentration-flag">
+        The index sits {Math.abs(concentration.capDrawdownPercent).toFixed(1)}% from its high while the average member is {Math.abs(concentration.equalDrawdownPercent).toFixed(1)}% below its own.
+      </p> : null}
+    </> : <div className="equity-empty">{concentration?.reason ?? 'Equal-weight and cap-weighted histories are required.'}</div>}
+    <p className="model-footnote">{published ? concentration.read : ''} {concentration?.methodology ?? ''}</p>
+  </article>;
+}
+
 function ExpectedMovePanel({ expectedMove }) {
   const status = expectedMove?.status ?? 'unavailable';
   const published = status !== 'unavailable';
@@ -887,6 +928,7 @@ function EquitiesDashboard({ platformData }) {
       <DrawdownProfilePanel drawdown={dashboard?.drawdown} />
       <VolatilityTermPanel volatility={dashboard?.volatility} />
       <ExpectedMovePanel expectedMove={dashboard?.expectedMove} />
+      <ConcentrationPanel concentration={platformData?.equityRisk?.equalWeight?.concentration} />
       <RevisionBreadthPanel revisions={dashboard?.revisions} />
       <ThrustLogPanel breadth={dashboard?.breadth} />
     </section>

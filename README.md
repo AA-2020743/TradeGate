@@ -286,6 +286,14 @@ Confidence is held back by the weakest link, and dissent is measured by weight r
 
 Where a section already publishes a weighted model, the verdict is built from **that model's own drivers** rather than from a second set of weights. Two composites over overlapping inputs drift: the equity dashboard briefly carried both, and its banner and its regime panel landed in different bands about one page load in twelve. Feeding the drivers through makes the two numbers identical by construction. For the same reason every composite now rounds each driver *before* weighting, so the drivers a reader sees add up to the score printed beside them.
 
+### `equity-concentration-v1`
+
+A cap-weighted index is its members weighted by size; the equal-weight version of the same members is the average member. The gap between them is the part of the index return that came from its largest holdings rather than from the market — which matters because an index can sit at a new high while most of its members are falling, and nothing about the index level shows that.
+
+The model publishes the spread over 20, 60 and 252 sessions (positive means the index outran its average member), where today's ratio sits in its own history, and each side's drawdown from its own high. When the index is within 3% of its high while the average member is more than 8% below its own, it says so explicitly.
+
+Three limits are published with it. These are two ETFs, so the ratio carries their fee and rebalancing differences as well as the concentration signal — a good relative measure and a poor absolute one. The equal-weight fund rebalances quarterly, so it is not a pure average member in between. And the closes are aligned by position rather than by date, because the batch endpoint returns them without dates, so the observation counts and any mismatch are published rather than hidden.
+
 ### Equity calculation engines
 
 `equity-regime-v1` dynamically changes factor weights, alert thresholds, and expected holding periods. It requires price trend, momentum, and volatility, and remains provisional below 75% driver coverage. `equity-top-risk-v1` and `equity-bottom-signal-v1` require both technical and constituent-breadth confirmation and do not publish from price and liquidity alone.

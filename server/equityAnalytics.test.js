@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { calculateBasketRotation, calculateExpectedMove, calculateBottomSignal, calculateBreadth, calculateBreadthDivergence, calculateCaptureProfile, calculateDrawdownProfile, calculateEquityRegime, calculateMacroSensitivities, calculateRevisionBreadth, calculateSectorBreadthProxy, calculateSectorDispersion, calculateSectorRotation, calculateTopRisk, calculateVolatilityTermStructure, rrgQuadrant } from './equityAnalytics.js';
+import { calculateBasketRotation, calculateBreadthConcentration, calculateExpectedMove, calculateBottomSignal, calculateBreadth, calculateBreadthDivergence, calculateCaptureProfile, calculateDrawdownProfile, calculateEquityRegime, calculateMacroSensitivities, calculateRevisionBreadth, calculateSectorBreadthProxy, calculateSectorDispersion, calculateSectorRotation, calculateTopRisk, calculateVolatilityTermStructure, rrgQuadrant } from './equityAnalytics.js';
 
 function technicalFixture(overrides = {}) {
   return {
@@ -1234,4 +1234,61 @@ test('a trending market breaks the drift-free band more often, and the calibrati
   assert.ok(longest(drifting).heldPercent < longest(steady).heldPercent,
     `trending held ${longest(drifting).heldPercent}%, driftless held ${longest(steady).heldPercent}%`);
   assert.match(drifting.methodology, /no drift term/);
+});
+
+test('concentration measures the index against its average member, with the right sign', () => {
+  const sessions = 400;
+  const cap = Array.from({ length: sessions }, (_, index) => 100 * Math.exp(index * 0.0006));
+  const narrow = Array.from({ length: sessions }, (_, index) => 100 * Math.exp(index * 0.00015));
+  const broad = Array.from({ length: sessions }, (_, index) => 100 * Math.exp(index * 0.0011));
+
+  const narrowing = calculateBreadthConcentration(narrow, cap);
+  const broadening = calculateBreadthConcentration(broad, cap);
+
+  // Positive spread means the index outran its average member, which is
+  // leadership concentrating into the largest holdings.
+  assert.equal(narrowing.state, 'Narrowing');
+  assert.ok(narrowing.windows.every((window) => window.spreadPoints > 0));
+  assert.equal(broadening.state, 'Broadening');
+  assert.ok(broadening.windows.every((window) => window.spreadPoints < 0));
+});
+
+test('concentration flags an index at its high while the average member is not', () => {
+  // The case the model exists for: nothing about the index level shows this.
+  const sessions = 400;
+  const cap = Array.from({ length: sessions }, (_, index) => 100 * Math.exp(index * 0.0007));
+  const sick = Array.from({ length: sessions }, (_, index) => (index < 300
+    ? 100 * Math.exp(index * 0.0012)
+    : 100 * Math.exp(300 * 0.0012) * (1 - ((index - 300) * 0.0013))));
+
+  const result = calculateBreadthConcentration(sick, cap);
+  assert.equal(result.maskedWeakness, true);
+  assert.ok(result.capDrawdownPercent > -1, 'the index is at its high');
+  assert.ok(result.equalDrawdownPercent < -10, 'the average member is not');
+  assert.match(result.read, /not showing what most of the market is doing/);
+});
+
+test('concentration reports neither side leading inside the noise band', () => {
+  const sessions = 400;
+  const cap = Array.from({ length: sessions }, (_, index) => 100 * Math.exp(index * 0.0006));
+  const almostIdentical = Array.from({ length: sessions }, (_, index) => 100 * Math.exp(index * 0.00061));
+
+  const result = calculateBreadthConcentration(almostIdentical, cap);
+  const medium = result.windows.find((window) => window.key === 'medium');
+  assert.equal(medium.leader, 'neither');
+  assert.equal(result.state, 'Balanced');
+  assert.match(result.read, /inside the noise band/);
+});
+
+test('concentration refuses a history too short, and reports an alignment mismatch', () => {
+  const short = Array.from({ length: 15 }, (_, index) => 100 + index);
+  assert.equal(calculateBreadthConcentration(short, short).status, 'unavailable');
+
+  // Closes are paired by position, so a length mismatch means different
+  // sessions were paired. The size of it is published rather than hidden.
+  const long = Array.from({ length: 300 }, (_, index) => 100 * Math.exp(index * 0.0005));
+  const missingBars = long.slice(7);
+  const result = calculateBreadthConcentration(missingBars, long);
+  assert.equal(result.alignmentDroppedSessions, 7);
+  assert.equal(result.observations, 293);
 });
