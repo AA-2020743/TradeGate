@@ -313,3 +313,50 @@ html[data-theme='dark'] .screener-search { background: #1a221d; border-color: #3
 .hardmoney-diverging { box-shadow: inset 2px 0 0 var(--verdict-accent, #d2705f); padding-left: 0.5rem; }
 .hardmoney-missing { grid-column: 2 / -1; opacity: 0.6; font-size: 0.8em; }
 .hardmoney-income, .hardmoney-cross { margin: 0.8rem 0 0; font-size: 0.85rem; line-height: 1.55; opacity: 0.85; }
+
+/* Accumulation rule: the tier, what produced it, and what it would have paid. */
+.dca-head, .dca-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1.5fr) minmax(0, 0.6fr) minmax(0, 1fr) minmax(0, 0.5fr) minmax(0, 0.8fr);
+  gap: 0.7rem;
+  align-items: baseline;
+}
+.dca-head {
+  margin-top: 0.9rem;
+  padding-bottom: 0.4rem;
+  font-size: 0.72rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  opacity: 0.55;
+  border-bottom: 1px solid var(--hairline, rgba(255, 255, 255, 0.12));
+}
+.dca-row { padding: 0.5rem 0; border-bottom: 1px solid var(--hairline, rgba(255, 255, 255, 0.06)); }
+.dca-row:last-of-type { border-bottom: none; }
+.dca-row > span { display: flex; flex-direction: column; min-width: 0; }
+.dca-row > span small, .dca-row > small { opacity: 0.58; font-size: 0.78em; }
+.dca-missing { grid-column: 2 / -1; opacity: 0.6; font-size: 0.8em; }
+.dca-gauge { display: flex; align-items: center; gap: 0.7rem; margin-top: 0.9rem; }
+.dca-gauge i { flex: 1; display: block; height: 6px; border-radius: 3px; background: rgba(255, 255, 255, 0.09); overflow: hidden; }
+.dca-gauge i b { display: block; height: 100%; background: var(--verdict-accent, #d2705f); }
+.dca-gauge span { font-size: 0.78rem; opacity: 0.7; white-space: nowrap; }
+.dca-components { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 0.7rem; margin-top: 0.8rem; }
+.dca-component { display: flex; flex-direction: column; min-width: 0; }
+.dca-component span { font-size: 0.72rem; letter-spacing: 0.05em; text-transform: uppercase; opacity: 0.55; }
+.dca-component b { font-size: 1.05rem; }
+.dca-component small { opacity: 0.62; font-size: 0.78rem; line-height: 1.4; }
+.dca-ladder { display: flex; flex-wrap: wrap; gap: 0.4rem; margin-top: 0.9rem; }
+.dca-ladder span {
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+  padding: 0.35rem 0.55rem;
+  border: 1px solid var(--hairline, rgba(255, 255, 255, 0.09));
+  border-radius: 6px;
+  opacity: 0.45;
+  min-width: 0;
+}
+.dca-ladder span.active { opacity: 1; border-color: var(--verdict-accent, #d2705f); }
+.dca-ladder b { font-size: 0.9rem; }
+.dca-ladder small { font-size: 0.72rem; }
+.dca-ladder i { font-size: 0.68rem; font-style: normal; opacity: 0.6; }
+.dca-read { margin: 0.8rem 0 0; font-size: 0.85rem; line-height: 1.55; opacity: 0.85; }

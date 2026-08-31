@@ -13,6 +13,7 @@ import { calculateDataSurprise, calculateLiquidityPayoff, calculateNominalDecomp
 import { calculateGrowthNowcast, calculateInflationNowcast, calculateLiquidityCalendar, calculateRatePath, calculateRegimeTransitions, calculateYieldCurveModel, seriesPoints } from './macroModels.js';
 import { buildCryptoVerdict, buildFxVerdict, buildMetalsVerdict } from './verdict.js';
 import { calculateRatioValuation, compareIncomeContribution, rankHardMoneyStrength } from './hardMoney.js';
+import { allocateAcrossAssets, calculateAccumulationSchedule, describeLadder } from './accumulation.js';
 import { resolveVintage, screenVintage } from './vintage.js';
 import { cryptoHistoryGranularity, describeSeriesFreshness, isCryptoHistoryStale, isCotReportStale, isDailyCloseStale, isFredSeriesStale, isPbocObservationStale, monthsBetween } from './freshness.js';
 import { percentileRank } from './statistics.js';
@@ -1455,6 +1456,65 @@ export async function getHardMoneyValuation() {
       crossAsset: rankHardMoneyStrength(ratios),
       errors,
       methodology: 'Each asset is divided by front gold futures on dates where both publish, so the ratio answers what the asset buys in metal rather than in dollars. Equity indices are read twice, once on price and once on total return, because the difference between them in gold terms is the real contribution of dividends. Gold is a volatile denominator, so each horizon publishes the asset move, the gold move and the ratio move separately - a falling ratio can be gold strength rather than asset weakness, and only the three together separate them.',
+    };
+  });
+}
+
+const ACCUMULATION_SYMBOLS = [
+  { key: 'bitcoin', symbol: 'BTC-USD', name: 'Bitcoin', klass: 'Crypto' },
+  { key: 'gold', symbol: 'GC=F', name: 'Gold', klass: 'Metals' },
+  { key: 'silver', symbol: 'SI=F', name: 'Silver', klass: 'Metals' },
+  { key: 'platinum', symbol: 'PL=F', name: 'Platinum', klass: 'Metals' },
+  { key: 'spx', symbol: '^GSPC', name: 'S&P 500', klass: 'Equities' },
+  { key: 'ndx', symbol: '^NDX', name: 'Nasdaq-100', klass: 'Equities' },
+];
+
+/**
+ * The same accumulation rule applied to crypto, metals and equities.
+ *
+ * One engine rather than three, because the rule is about where an asset sits
+ * in its own history and that question does not change with the asset class.
+ * Price indices are used for the equity legs: the schedule counts units bought
+ * per dollar contributed, and a total-return index already assumes dividends
+ * were reinvested, which would mix the reinvestment into the contribution.
+ */
+export async function getAccumulationSchedules() {
+  return withCache('analytics:accumulation', 6 * 60 * 60_000, async () => {
+    const settled = await Promise.allSettled(ACCUMULATION_SYMBOLS.map((asset) => getYahooHistory(asset.symbol, '10y')));
+    const errors = [];
+    const schedules = ACCUMULATION_SYMBOLS.map((asset, index) => {
+      const result = settled[index];
+      if (result.status !== 'fulfilled' || !result.value?.length) {
+        errors.push(`${asset.symbol} (${asset.name}) did not return a usable history: ${result.reason?.message ?? 'no observations'}`);
+        return { key: asset.key, name: asset.name, klass: asset.klass, status: 'unavailable', reason: `${asset.symbol} did not return a history, so ${asset.name} cannot be ranked against itself.` };
+      }
+      return {
+        klass: asset.klass,
+        symbol: asset.symbol,
+        ...calculateAccumulationSchedule({
+          key: asset.key,
+          name: asset.name,
+          points: result.value.map((point) => ({ date: String(point.timestamp).slice(0, 10), value: point.value })),
+        }),
+      };
+    });
+
+    const published = schedules.filter((schedule) => schedule.status !== 'unavailable');
+    return {
+      ...resolveVintage(published.map((schedule) => ({ name: schedule.name, asOf: schedule.asOf }))),
+      version: 'accumulation-v1',
+      status: published.length ? (published.length === schedules.length ? 'calculated' : 'provisional') : 'unavailable',
+      reason: published.length ? undefined : 'No asset returned enough history to be ranked against itself.',
+      schedules,
+      ladder: describeLadder(),
+      byClass: ['Crypto', 'Metals', 'Equities'].map((klass) => ({
+        klass,
+        allocation: allocateAcrossAssets(schedules.filter((schedule) => schedule.klass === klass)),
+      })),
+      allocation: allocateAcrossAssets(schedules),
+      errors,
+      disclaimer: 'This is a spending rule, not advice and not a forecast. It scales a contribution by where an asset sits in its own price history; it never signals a sale, never goes to zero, and carries no view on whether the asset should be held at all.',
+      methodology: 'Each asset is scored on three price-derived components - stretch above its one-year mean, position against its three-year high, and one-year momentum - each ranked against that asset\u2019s own history so the scale means the same thing across assets. The weighted rank places the asset in one of five tiers whose multiples average exactly 1.0, so an evenly spread risk history spends the same as a flat schedule. The backtest re-runs the rule weekly using only the data available at each step and compares cost per unit, not ending value.',
     };
   });
 }

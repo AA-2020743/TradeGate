@@ -306,6 +306,24 @@ Two readings come out of it. *Within* an asset, where its gold ratio sits in its
 
 The equity indices are read on price **and** total return because the difference is not cosmetic: a price index can be flat in gold terms over a decade while the same index with dividends reinvested is well ahead — and that gap is the real return, delivered as income rather than as price.
 
+### `accumulation-v1`
+
+A dynamic dollar-cost-averaging rule for bitcoin, gold, silver, platinum, the S&P 500 and the Nasdaq-100 — one engine, because the question it asks (where is this asset in its own history?) does not change with the asset class.
+
+Flat dollar-cost averaging buys the same amount every period and therefore buys the most units when price is low purely by accident. This makes that accident deliberate: three price-derived components — stretch above the one-year mean, position against the three-year running high, and one-year momentum — are each ranked against that asset's own history, so an 80th percentile reading means the same thing for bitcoin as for platinum. The weighted rank places the asset in one of five tiers, each a multiple of a baseline contribution.
+
+**The multiples average exactly 1.0** (1.75× / 1.4× / 1× / 0.6× / 0.25×). That is a constraint, not a coincidence: without it the schedule would beat a flat one simply by deploying more capital, and every comparison below would be measuring the budget rather than the rule. Nothing goes to zero either — an accumulation rule that stops buying at a high and never restarts is a market call wearing a schedule's clothing.
+
+Windows are stated in calendar days and converted to sessions from each asset's own observation density. A fixed session count would make "one year" mean 365 sessions for bitcoin and 365 sessions for the S&P — seventeen calendar months for the market that trades five days a week. Note that the median gap between rows is one day for *both* markets, so median spacing is the wrong statistic here; the density over the actual span is the right one.
+
+The rule is backtested against a flat schedule on the asset's own history, weekly, recomputing the tier from data available at each step only. The legs are compared on **cost per unit**, not ending value, because the tiered leg deploys a different amount of capital. The capital ratio is published alongside, so a cost advantage that came from spending more is visible rather than hidden. One asset over one history is one path: buying weakness beats a flat schedule in a market that mean-reverts and roughly ties it in one that only trends, and the backtest measures which of those the asset has been — not which it will be.
+
+Realized volatility is deliberately excluded. High volatility marks both blow-off tops and capitulation lows, so its direction depends on an unstated horizon; giving it a sign would assert a view the measure cannot support. The three components that *are* used are not independent — all three rise together in a sustained advance — so agreement between them is one piece of evidence seen three ways, which is why the ladder is gentle rather than 5× to 0×.
+
+The cross-asset split (each asset's multiple over the sum of the multiples) is published separately from the per-asset tiers, because it adds an assumption the tiers do not make: that the baselines were equal to begin with. It is not a portfolio weight and says nothing about position sizing.
+
+This is a spending rule, not advice and not a forecast. It never signals a sale and carries no view on whether an asset should be held at all.
+
 ### Equity calculation engines
 
 `equity-regime-v1` dynamically changes factor weights, alert thresholds, and expected holding periods. It requires price trend, momentum, and volatility, and remains provisional below 75% driver coverage. `equity-top-risk-v1` and `equity-bottom-signal-v1` require both technical and constituent-breadth confirmation and do not publish from price and liquidity alone.

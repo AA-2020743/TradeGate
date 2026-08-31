@@ -791,6 +791,92 @@ function HardMoneyPanel({ hardMoney }) {
   </article>;
 }
 
+const TIER_TONE = { deep: 'positive', discount: 'positive', baseline: '', extended: 'negative', stretched: 'negative' };
+
+/**
+ * The accumulation rule, shown as a rule rather than as a recommendation.
+ *
+ * Every number a reader needs to disagree with it is on the panel: the risk
+ * read, the components behind it, the multiple that read produces, how far the
+ * read has to move to change the multiple, and what the rule would have paid
+ * against a flat schedule over the asset's own history.
+ */
+function AccumulationPanel({ accumulation, only = null, title = 'ACCUMULATION RULE' }) {
+  const status = accumulation?.status ?? 'unavailable';
+  const all = accumulation?.schedules ?? [];
+  const schedules = only ? all.filter((schedule) => schedule.key === only) : all;
+  const scored = schedules.filter((schedule) => schedule.status !== 'unavailable');
+  const published = status !== 'unavailable' && scored.length > 0;
+  const sorted = [...scored].sort((left, right) => left.risk - right.risk);
+  const single = only ? scored[0] ?? null : null;
+
+  const headline = !published
+    ? 'Awaiting a decade of price history'
+    : single
+      ? `${single.tier.label}: contribute ${single.multiple}\u00d7 the baseline`
+      : sorted.length === 1 || sorted[0].multiple === sorted.at(-1).multiple
+        ? `All ${sorted.length} assets sit in the ${sorted[0].tier.label.toLowerCase()} tier at ${sorted[0].multiple}\u00d7`
+        : `Buy ${sorted[0].name} at ${sorted[0].multiple}\u00d7, ${sorted.at(-1).name} at ${sorted.at(-1).multiple}\u00d7`;
+
+  // The kicker reports the state of what this panel is actually showing: a
+  // single-asset view is calculated when that asset is, even if a sibling
+  // asset elsewhere in the payload could not be ranked.
+  const shownStatus = single ? single.status : scored.length === all.length && status !== 'unavailable' ? 'calculated' : scored.length ? 'provisional' : 'unavailable';
+
+  return <article className={`panel ${published ? '' : 'preview-section'}`}>
+    <div className="panel-title">
+      <div>
+        <p className="section-kicker">{title} · {shownStatus.toUpperCase()}</p>
+        <h3>{headline}</h3>
+      </div>
+      {published ? <span className="data-pill">{single ? `${ordinal(single.risk)} pct risk` : `${scored.length} of ${schedules.length} assets`}</span> : null}
+    </div>
+
+    {published ? <>
+      {single ? <>
+        <div className="dca-gauge"><i><b style={{ width: `${Math.min(Math.max(single.risk, 0), 100)}%` }}></b></i><span>{single.risk}/100 risk</span></div>
+        <div className="dca-components">
+          {single.components.map((component) => <div className="dca-component" key={component.key}>
+            <span>{component.label}</span>
+            {Number.isFinite(component.percentile)
+              ? <><b>{ordinal(component.percentile)}</b><small>{component.description}</small></>
+              : <><b>&mdash;</b><small>{component.reason}</small></>}
+          </div>)}
+        </div>
+      </> : <>
+        <div className="dca-head"><span>Asset</span><span>Risk</span><span>Tier</span><span>Buy</span><span>Cost vs flat</span></div>
+        {schedules.map((schedule) => schedule.status === 'unavailable'
+          ? <div className="dca-row" key={schedule.key}><span><b>{schedule.name}</b></span><small className="dca-missing">{schedule.reason}</small></div>
+          : <div className="dca-row" key={schedule.key}>
+            <span><b>{schedule.name}</b><small>{schedule.klass}</small></span>
+            <b>{ordinal(schedule.risk)}</b>
+            <b className={TIER_TONE[schedule.tier.key]}>{schedule.tier.label}</b>
+            <strong>{schedule.multiple}&times;</strong>
+            <small>{schedule.backtest?.status === 'calculated'
+              ? `${Math.abs(schedule.backtest.costAdvantagePercent)}% ${schedule.backtest.costAdvantagePercent <= 0 ? 'cheaper' : 'dearer'}`
+              : 'not backtested'}</small>
+          </div>)}
+      </>}
+
+      <div className="dca-ladder">{(accumulation.ladder ?? []).map((tier) => <span className={sorted.some((schedule) => schedule.tier.key === tier.key) ? 'active' : ''} key={tier.key}>
+        <b>{tier.multiple}&times;</b><small>{tier.label}</small><i>{tier.range}</i>
+      </span>)}</div>
+
+      <p className="dca-read">{single ? single.read : accumulation.allocation?.read}</p>
+
+      {single?.backtest?.status === 'calculated' ? <p className="dca-read">
+        Run weekly over {single.backtest.buys} purchases from {single.backtest.from}, the rule paid {Math.abs(single.backtest.costAdvantagePercent)}% {single.backtest.costAdvantagePercent <= 0 ? 'less' : 'more'} per unit than a flat schedule, deploying {single.backtest.capitalRatio}&times; the capital.
+      </p> : null}
+
+      {!single ? (accumulation.byClass ?? []).filter((entry) => entry.allocation?.status === 'calculated').map((entry) => <p className="dca-read" key={entry.klass}>
+        <b>{entry.klass}:</b> {entry.allocation.read}
+      </p>) : null}
+    </> : <div className="equity-empty">{schedules[0]?.reason ?? accumulation?.reason ?? 'A decade of daily closes is required before an asset can be ranked against itself.'}</div>}
+
+    <p className="model-footnote"><b>{accumulation?.disclaimer}</b> {accumulation?.methodology ?? ''}</p>
+  </article>;
+}
+
 function ConcentrationPanel({ concentration }) {
   const status = concentration?.status ?? 'unavailable';
   const published = status !== 'unavailable';
@@ -981,6 +1067,7 @@ function EquitiesDashboard({ platformData }) {
       <VolatilityTermPanel volatility={dashboard?.volatility} />
       <ExpectedMovePanel expectedMove={dashboard?.expectedMove} />
       <ConcentrationPanel concentration={platformData?.equityRisk?.equalWeight?.concentration} />
+      <AccumulationPanel accumulation={platformData?.accumulation} only="spx" title="S&amp;P 500 ACCUMULATION" />
       <RevisionBreadthPanel revisions={dashboard?.revisions} />
       <ThrustLogPanel breadth={dashboard?.breadth} />
     </section>
@@ -1229,6 +1316,7 @@ function MetalsDashboard({ data }) {
       <div><p className="eyebrow">PRECIOUS METALS RESEARCH</p><h1>Where monetary metal meets market structure.</h1><p className="intro">Technical, macro, physical, and positioning signals for metals and their equity proxies.</p></div>
       <VerdictBanner verdict={workspace?.verdict} />
       <HardMoneyPanel hardMoney={data.hardMoney} />
+      <AccumulationPanel accumulation={data.accumulation} />
       <div className="metals-pulse">{workspace?.status !== 'calculated' && <PreviewBadge />}<div><b>{workspace?.calculatedCount ? `${workspace.calculatedCount} of ${workspace.universeSize} series calculated` : 'Awaiting provider histories'}</b><small>technical-v1 · COMEX futures · COT</small></div></div>
     </section>
     <DataDisclosure data={data} message={workspace?.status === 'calculated' ? 'Spot metals prices come from front COMEX/CME futures via Yahoo Finance; scores, momentum, volatility, and RSI are technical-v1 calculations. ETF flows, physical-market indicators, and producer costs remain previews until dedicated feeds are connected.' : 'The metals workspace publishes once futures and miner histories are available.'} />
@@ -2268,6 +2356,7 @@ function CryptoDashboard({ data }) {
     <BitcoinRangeSection rangeModels={btc?.rangeModels} />
     <section className="macro-section-heading"><div><p className="section-kicker">DOLLAR TRANSMISSION · {transmission?.status?.toUpperCase() ?? 'UNAVAILABLE'}</p><h2>{transmission?.linkSign === 0 ? 'The dollar link is too weak to move bitcoin' : `${tailwindLabel} for bitcoin`}</h2></div><span className="data-pill">Favorability read</span></section>
     <section className="crypto-grid">
+      <AccumulationPanel accumulation={data.accumulation} only="bitcoin" title="BITCOIN ACCUMULATION" />
       <article className={`crypto-tailwind-panel panel ${hasDollarInputs ? '' : 'preview-section'}`}><div className="panel-title"><div><p className="section-kicker">IS THE DOLLAR A TAILWIND?</p><h3>{tailwindLabel}</h3></div><span className="data-pill">{Number.isFinite(tailwindScore) ? `${tailwindScore > 0 ? '+' : ''}${tailwindScore} signal` : 'Unavailable'}</span></div>
         <div className="btc-cycle-grid">
           <div className="btc-cycle-cell"><small>Broad-dollar momentum</small><b>{formatPercent(usdMomentum)}</b><span>20-session change · {usdStrength?.regime ?? 'regime unavailable'}</span></div>
