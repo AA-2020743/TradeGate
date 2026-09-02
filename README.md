@@ -445,14 +445,71 @@ Only ports 80 and 443 need to be public. Do not expose port 8787 through the VPS
 ## Updating Production
 
 ```bash
-cd /home/tradegate/TradeGate
-sudo -u tradegate git pull --ff-only
-sudo -u tradegate npm ci
-sudo -u tradegate npm run db:migrate
-sudo -u tradegate npm run build
-sudo systemctl restart tradegate
-curl http://127.0.0.1:8787/api/health
+sudo -u tradegate -H /home/tradegate/TradeGate/deploy/update.sh
 ```
+
+`deploy/update.sh` fetches, fast-forwards, installs from the lockfile, migrates
+(skipped when `DATABASE_URL` is unset, since keyless mode has nothing to
+migrate), builds, restarts the unit, and then polls `/api/health` until the
+service answers rather than racing it with a fixed sleep. Any step failing
+stops the deploy.
+
+The `-H` matters: without it `sudo -u` leaves `$HOME` pointing at the invoking
+user, so git reads the wrong `.gitconfig` and npm writes its cache into the
+wrong home directory.
+
+### If the deploy asks for a GitHub login, or fails with HTTP 401
+
+```
+error: RPC failed; HTTP 401 curl 22 The requested URL returned error: 401
+fatal: expected flush after ref listing
+```
+
+**This repository is public, so fetching it needs no credentials at all.** A
+401 therefore does not mean a login is missing — it means git found a stale
+credential somewhere and sent it, and GitHub rejected it. (An anonymous request
+for a public repo is served without complaint; only a *bad* credential draws a
+401.) The usual sources, in the order worth checking:
+
+```bash
+# 1. A token baked into the remote URL by an earlier clone.
+sudo -u tradegate -H git -C /home/tradegate/TradeGate remote -v
+
+# 2. A stored credential, usually an expired personal access token.
+sudo -u tradegate -H cat /home/tradegate/.git-credentials 2>/dev/null
+sudo -u tradegate -H git -C /home/tradegate/TradeGate config --get-all credential.helper
+
+# 3. A rewrite rule pointing at a dead token.
+sudo -u tradegate -H git config --global --get-regexp 'url\..*\.insteadOf'
+```
+
+Fixes, matched to what you found:
+
+```bash
+# Remote carries a token: point it back at the anonymous URL.
+sudo -u tradegate -H git -C /home/tradegate/TradeGate \
+  remote set-url origin https://github.com/AA-2020743/TradeGate.git
+
+# Stored credential is expired: drop the github.com entry.
+sudo -u tradegate -H git credential reject <<< $'protocol=https\nhost=github.com\n'
+sudo -u tradegate -H sed -i '/github\.com/d' /home/tradegate/.git-credentials
+
+# Confirm the fetch works with no credentials in play.
+sudo -u tradegate -H env GIT_TERMINAL_PROMPT=0 \
+  git -c credential.helper= ls-remote --heads https://github.com/AA-2020743/TradeGate.git main
+```
+
+That last command printing a commit hash means the deploy will fetch cleanly.
+`deploy/update.sh` runs its fetch exactly that way — helper chain emptied and
+`GIT_TERMINAL_PROMPT=0` — so a stale credential cannot be offered and the
+script fails with a message instead of blocking forever on a username prompt
+no one is there to answer.
+
+If you later make the repository private, the fetch does need credentials, and
+the right mechanism for an unattended server is a read-only **deploy key**
+(`ssh-keygen -t ed25519`, add the public half under the repo's Deploy keys,
+switch the remote to `git@github.com:AA-2020743/TradeGate.git`) rather than a
+personal access token, which expires and takes the deploy down when it does.
 
 ## Production Commands
 
