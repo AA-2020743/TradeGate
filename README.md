@@ -465,6 +465,45 @@ error: RPC failed; HTTP 401 curl 22 The requested URL returned error: 401
 fatal: expected flush after ref listing
 ```
 
+**First, check whether it is an authentication problem at all.** Run the trace:
+
+```bash
+env GIT_TERMINAL_PROMPT=0 GIT_CURL_VERBOSE=1 git -c credential.helper= ls-remote origin 2>&1 \
+  | grep -Ei 'Send header: (GET|Authorization)|Recv header: HTTP|netrc|fatal'
+```
+
+If it shows a **200 followed by a 401**, like this:
+
+```
+=> Send header: GET /AA-2020743/TradeGate.git/info/refs?service=git-upload-pack HTTP/2
+<= Recv header: HTTP/2 200
+<= Recv header: HTTP/2 401
+fatal: could not read Username for 'https://github.com'
+fatal: expected flush after ref listing
+```
+
+then **no credential is missing and none was rejected**. The ref listing
+succeeded — that is the 200. Git then failed to parse the smart-HTTP response
+(`expected flush after ref listing`), fell back to the *dumb* HTTP protocol,
+and GitHub does not serve the dumb protocol anonymously — that is the 401, and
+the username prompt is git asking for the credential the fallback needs. The
+401 is a symptom of the parse failure, not its cause, which is why every
+credential you check comes back clean.
+
+The usual trigger is HTTP/2 negotiation between the host's curl build and
+GitHub. Pin HTTP/1.1 for github.com:
+
+```bash
+git config --global http.https://github.com.version HTTP/1.1
+```
+
+`deploy/update.sh` retries the fetch over HTTP/1.1 automatically before it
+blames anything, so the deploy completes and then tells you to make the pin
+permanent.
+
+If instead the trace shows a **401 on the first request**, it really is a
+credential or URL problem, and the rest of this section applies.
+
 **GitHub answers a request for a repository it will not serve you with 401,
 never 404.** That is deliberate — a 404 would leak whether a private repository
 exists to anyone guessing URLs. The consequence is that *"your credential was

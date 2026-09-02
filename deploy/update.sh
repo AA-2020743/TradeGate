@@ -65,6 +65,12 @@ diagnose_fetch_failure() {
   case "$status" in
     200)
       echo
+      echo "A 200 on the ref listing followed by a 401 is NOT an auth problem:"
+      echo "git could not parse the smart-HTTP response, fell back to the dumb"
+      echo "protocol, and the dumb protocol is not served anonymously. Fix the"
+      echo "parse failure and the 401 goes with it:"
+      echo "  git config --global http.https://github.com.version HTTP/1.1"
+      echo
       echo "The repository IS reachable anonymously, so the URL is right and no"
       echo "credential is needed. Something local is injecting a rejected one, or"
       echo "sending the request somewhere other than where curl just sent it."
@@ -116,15 +122,36 @@ diagnose_fetch_failure() {
 
 step "Fetching $BRANCH without credentials (the repository is public)"
 export GIT_TERMINAL_PROMPT=0
-if ! git -c credential.helper= fetch --prune origin "$BRANCH"; then
-  diagnose_fetch_failure
-  exit 1
+FETCH="git -c credential.helper="
+if ! $FETCH fetch --prune origin "$BRANCH" 2>&1 | tee /tmp/tradegate-fetch.log; then :; fi
+if ! git rev-parse --verify --quiet "origin/$BRANCH" > /dev/null || grep -qs 'expected flush after ref listing\|could not read Username\|RPC failed' /tmp/tradegate-fetch.log; then
+  # A 200 on the ref listing followed by a 401 is not an authentication
+  # problem. It means the smart-HTTP response arrived in a form this git could
+  # not parse, git fell back to the dumb protocol, and the dumb protocol is not
+  # served anonymously - so the 401 is a symptom of the parse failure, not its
+  # cause. The usual trigger is HTTP/2 negotiation between this curl build and
+  # GitHub, and pinning HTTP/1.1 for github.com resolves it.
+  echo
+  echo "Fetch failed. Retrying once over HTTP/1.1 before blaming credentials."
+  if git -c credential.helper= -c http.version=HTTP/1.1 fetch --prune origin "$BRANCH"; then
+    echo
+    echo "----------------------------------------------------------------------"
+    echo "That worked, so the fault was HTTP/2 negotiation, not authentication."
+    echo "Make it permanent for this host and the retry stops being needed:"
+    echo
+    echo "  git config --global http.https://github.com.version HTTP/1.1"
+    echo "----------------------------------------------------------------------"
+    FETCH="git -c credential.helper= -c http.version=HTTP/1.1"
+  else
+    diagnose_fetch_failure
+    exit 1
+  fi
 fi
 
 # --ff-only refuses rather than creating a merge commit on the server. A
 # deploy checkout that has diverged is a problem to look at, not to paper over.
 step "Fast-forwarding the working tree"
-git -c credential.helper= merge --ff-only "origin/$BRANCH"
+git merge --ff-only "origin/$BRANCH"
 
 step "Installing dependencies from the lockfile"
 npm ci
