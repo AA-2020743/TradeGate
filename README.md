@@ -465,25 +465,45 @@ error: RPC failed; HTTP 401 curl 22 The requested URL returned error: 401
 fatal: expected flush after ref listing
 ```
 
-**This repository is public, so fetching it needs no credentials at all.** A
-401 therefore does not mean a login is missing — it means git found a stale
-credential somewhere and sent it, and GitHub rejected it. (An anonymous request
-for a public repo is served without complaint; only a *bad* credential draws a
-401.) The usual sources, in the order worth checking:
+**GitHub answers a request for a repository it will not serve you with 401,
+never 404.** That is deliberate — a 404 would leak whether a private repository
+exists to anyone guessing URLs. The consequence is that *"your credential was
+rejected"* and *"there is no such repository"* are the **same response**, which
+is why this error sends people hunting for a token that was never the problem:
+
+| Remote URL | Response |
+| --- | --- |
+| `AA-2020743/TradeGate.git` | 200 — served anonymously, no credential needed |
+| `AA-2020743/tradegate.git` (wrong case) | 200 — GitHub is case-insensitive here |
+| `AA-2020743/TradeGate-typo.git` | **401** |
+| `AA2020743/TradeGate.git` (missing hyphen) | **401** |
+
+TradeGate is public, so a correct URL needs no credential at all. Run
+`deploy/update.sh` and it distinguishes the two cases for you: on a fetch
+failure it prints the URL git *actually requested*, probes it anonymously, and
+names the cause. Or check by hand:
 
 ```bash
-# 1. A token baked into the remote URL by an earlier clone.
-sudo -u tradegate -H git -C /home/tradegate/TradeGate remote -v
+# The URL git actually uses. `git remote -v` shows the configured URL; --get-url
+# applies insteadOf rewrites, which is the one failure that leaves the
+# configured URL looking perfectly correct while the request goes elsewhere.
+git -C /home/tradegate/TradeGate ls-remote --get-url origin
 
-# 2. A stored credential, usually an expired personal access token.
-sudo -u tradegate -H cat /home/tradegate/.git-credentials 2>/dev/null
-sudo -u tradegate -H git -C /home/tradegate/TradeGate config --get-all credential.helper
-
-# 3. A rewrite rule pointing at a dead token.
-sudo -u tradegate -H git config --global --get-regexp 'url\..*\.insteadOf'
+# 200 = public and reachable, no credential required.
+# 401 = wrong URL, or genuinely private.
+curl -sS -o /dev/null -w '%{http_code}\n' \
+  https://github.com/AA-2020743/TradeGate.git/info/refs?service=git-upload-pack
 ```
 
-Fixes, matched to what you found:
+**If the probe returns 200**, the URL is right and no credential is needed, so
+something local is injecting a rejected one:
+
+```bash
+sudo -u tradegate -H git -C /home/tradegate/TradeGate remote -v          # token in the URL
+sudo -u tradegate -H cat /home/tradegate/.git-credentials 2>/dev/null    # stored, expired PAT
+sudo -u tradegate -H git config --global --get-regexp 'url\..*\.insteadOf'
+sudo -u tradegate -H git config --get-all http.extraHeader
+```
 
 ```bash
 # Remote carries a token: point it back at the anonymous URL.
@@ -491,19 +511,17 @@ sudo -u tradegate -H git -C /home/tradegate/TradeGate \
   remote set-url origin https://github.com/AA-2020743/TradeGate.git
 
 # Stored credential is expired: drop the github.com entry.
-sudo -u tradegate -H git credential reject <<< $'protocol=https\nhost=github.com\n'
 sudo -u tradegate -H sed -i '/github\.com/d' /home/tradegate/.git-credentials
-
-# Confirm the fetch works with no credentials in play.
-sudo -u tradegate -H env GIT_TERMINAL_PROMPT=0 \
-  git -c credential.helper= ls-remote --heads https://github.com/AA-2020743/TradeGate.git main
 ```
 
-That last command printing a commit hash means the deploy will fetch cleanly.
-`deploy/update.sh` runs its fetch exactly that way — helper chain emptied and
-`GIT_TERMINAL_PROMPT=0` — so a stale credential cannot be offered and the
-script fails with a message instead of blocking forever on a username prompt
-no one is there to answer.
+**If the probe returns 401**, the URL is not reaching the repository. Compare it
+against `https://github.com/AA-2020743/TradeGate.git` and reset it with
+`git remote set-url`.
+
+`deploy/update.sh` fetches with the credential helper chain emptied
+(`-c credential.helper=`) so no stale token can be offered, and with
+`GIT_TERMINAL_PROMPT=0` so it fails with a message instead of blocking forever
+on a username prompt no one is there to answer.
 
 If you later make the repository private, the fetch does need credentials, and
 the right mechanism for an unattended server is a read-only **deploy key**

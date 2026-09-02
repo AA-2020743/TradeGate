@@ -32,9 +32,76 @@ cd "$REPO_DIR"
 
 step() { printf '\n\033[1m==> %s\033[0m\n' "$1"; }
 
+# GitHub answers a request for a repository it will not serve you with 401,
+# never 404 - that is deliberate, so a private repository's existence does not
+# leak to someone guessing URLs. The consequence is that "401" and "no such
+# repository" are the same response, and a wrong remote URL is indistinguishable
+# from a credentials problem unless you go and check. This does the checking.
+diagnose_fetch_failure() {
+  echo
+  echo "----------------------------------------------------------------------"
+  echo "The fetch failed. Working out why before you go looking for a token."
+  echo "----------------------------------------------------------------------"
+
+  # --get-url applies any insteadOf rewrite, which `git remote -v` does not.
+  # A rewrite rule is the one failure that makes the configured URL look
+  # perfectly correct while the request goes somewhere else entirely.
+  local configured resolved status
+  configured="$(git config --get remote.origin.url || echo '<unset>')"
+  resolved="$(git ls-remote --get-url origin 2>/dev/null || echo "$configured")"
+
+  echo "Configured remote : $configured"
+  echo "Actually requested: $resolved"
+  [ "$configured" != "$resolved" ] && echo "  ^ these differ, so an insteadOf rewrite is redirecting the fetch."
+
+  case "$resolved" in
+    *@github.com*) echo "  ^ the URL carries a username or token. That is what gets rejected." ;;
+  esac
+
+  status="$(curl -sS -o /dev/null -w '%{http_code}' --max-time 20 \
+    "${resolved%.git}.git/info/refs?service=git-upload-pack" 2>/dev/null || echo '000')"
+  echo "Anonymous probe   : HTTP $status"
+
+  case "$status" in
+    200)
+      echo
+      echo "The repository IS reachable anonymously, so the URL is right and no"
+      echo "credential is needed. Something local is still injecting one. Check:"
+      echo "  git config --get-all credential.helper"
+      echo "  git config --global --get-regexp 'url\..*\.insteadOf'"
+      echo "  git config --get-all http.extraHeader"
+      echo "  env | grep -i 'proxy\|GIT_'"
+      ;;
+    401|403)
+      echo
+      echo "GitHub will not serve this URL anonymously. It returns 401 both for a"
+      echo "private repository and for one that does not exist, so the likeliest"
+      echo "cause is that the URL is wrong - a typo, the wrong owner, or a stale"
+      echo "path from an earlier clone. Compare it against the real one:"
+      echo "  git remote set-url origin https://github.com/AA-2020743/TradeGate.git"
+      echo "If the URL is correct and the repository is private, this server needs"
+      echo "a read-only deploy key rather than a token that expires."
+      ;;
+    000)
+      echo
+      echo "No HTTP response at all: DNS, egress firewall, or a proxy is blocking"
+      echo "github.com from this host. Try: curl -sSI https://github.com"
+      ;;
+    *)
+      echo
+      echo "Unexpected status. Try the request by hand to see the body:"
+      echo "  curl -sS '${resolved%.git}.git/info/refs?service=git-upload-pack' | head"
+      ;;
+  esac
+  echo "----------------------------------------------------------------------"
+}
+
 step "Fetching $BRANCH without credentials (the repository is public)"
 export GIT_TERMINAL_PROMPT=0
-git -c credential.helper= fetch --prune origin "$BRANCH"
+if ! git -c credential.helper= fetch --prune origin "$BRANCH"; then
+  diagnose_fetch_failure
+  exit 1
+fi
 
 # --ff-only refuses rather than creating a merge commit on the server. A
 # deploy checkout that has diverged is a problem to look at, not to paper over.
