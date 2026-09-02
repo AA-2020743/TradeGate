@@ -15,7 +15,7 @@ import { buildCryptoVerdict, buildFxVerdict, buildMetalsVerdict } from './verdic
 import { calculateRatioValuation, compareIncomeContribution, rankHardMoneyStrength } from './hardMoney.js';
 import { allocateAcrossAssets, calculateAccumulationSchedule, describeLadder } from './accumulation.js';
 import { resolveVintage, screenVintage } from './vintage.js';
-import { cryptoHistoryGranularity, describeSeriesFreshness, isCryptoHistoryStale, isCotReportStale, isDailyCloseStale, isFredSeriesStale, isPbocObservationStale, monthsBetween } from './freshness.js';
+import { cryptoHistoryGranularity, describeSeriesFreshness, isCryptoHistoryStale, isCotReportStale, isDailyCloseStale, isFredSeriesAbandoned, isFredSeriesStale, isPbocObservationStale, monthsBetween } from './freshness.js';
 import { percentileRank } from './statistics.js';
 
 /** The provider layer's spelling of the shared percentile. */
@@ -102,6 +102,7 @@ async function getPbocAssets() {
     date: observation.date,
     stored: false,
     stale: isPbocObservationStale(observation.date),
+    abandoned: isPbocObservationStale(observation.date),
     laggedMonths: monthsBetween(observation.date),
     history,
   };
@@ -2290,6 +2291,7 @@ async function getFredSeries(series) {
     date: observation.date,
     stored: false,
     stale: isFredSeriesStale(series.id, observation.date),
+    abandoned: isFredSeriesAbandoned(series.id, observation.date),
     freshness: describeSeriesFreshness(series.id, observation.date),
     history: observations.map((item) => ({
       date: item.date,
@@ -2320,6 +2322,7 @@ async function getFredCsvSeries(series) {
     date: observation.date,
     stored: false,
     stale: isFredSeriesStale(series.id, observation.date),
+    abandoned: isFredSeriesAbandoned(series.id, observation.date),
     freshness: describeSeriesFreshness(series.id, observation.date),
     history,
   };
@@ -2584,8 +2587,19 @@ export async function getLiquiditySnapshot(options = {}) {
     const results = await Promise.allSettled([...FRED_SERIES.map((series) => config.fredApiKey ? getFredSeries(series) : getFredCsvSeries(series)), getPbocAssets()]);
     const liveSeries = results.flatMap((result) => result.status === 'fulfilled' ? [result.value] : []);
     const series = mergeFredSeries(liveSeries, storedSeries);
-    const modelSeries = series.filter((item) => !item.stale);
-    const staleSeries = series.filter((item) => item.stale);
+    // Stale is not the same as unusable, and treating them as the same was
+    // taking the whole macro page down. A series past its tolerance still has
+    // real history: a 91-day change measured over its own last observations is
+    // a genuine change, just an old one, and every model here anchors its
+    // windows to the series' own latest print rather than to the wall clock.
+    // Deleting it instead turned one late monthly release - the BoJ's, whose
+    // leg is mandatory in the global pool - into a total outage of global
+    // liquidity, the macro regime read, and every verdict downstream of them.
+    // So only an abandoned series is removed; a stale one keeps feeding the
+    // models that read history, and its age is published with them.
+    const modelSeries = series.filter((item) => !item.abandoned);
+    const abandonedSeries = series.filter((item) => item.abandoned);
+    const staleSeries = series.filter((item) => item.stale && !item.abandoned);
     const staleLiveSeries = liveSeries.filter((item) => item.stale);
     // Which series each settled result belongs to is recoverable by index, and
     // without it every failure read "Upstream request failed with 403" - five
@@ -2609,7 +2623,7 @@ export async function getLiquiditySnapshot(options = {}) {
       const value = result.value;
       return {
         ...base,
-        state: value.stale ? 'stale' : value.freshness?.state ?? 'current',
+        state: value.abandoned ? 'abandoned' : value.stale ? 'stale' : value.freshness?.state ?? 'current',
         covered: usedKeys.has(definition.key),
         asOf: value.date ?? null,
         stored: Boolean(value.stored),
@@ -2621,8 +2635,11 @@ export async function getLiquiditySnapshot(options = {}) {
     const errors = failedSeries.map((item) => `${item.id} (${item.name}) could not be fetched: ${item.reason}${item.covered ? ' - a stored observation is standing in.' : ''}`);
     if (!config.fredApiKey && !storedSeries.length && !series.length) errors.push('FRED is unreachable and no stored observations are available');
     if (staleLiveSeries.length) errors.push(`Latest FRED responses are stale: ${staleLiveSeries.map((item) => item.id).join(', ')}`);
-    if (staleSeries.length) errors.push(`FRED series are stale and excluded from models: ${staleSeries.map((item) => item.id).join(', ')}`);
-    const values = Object.fromEntries(modelSeries.map((item) => [item.key, item.value * item.multiplier]));
+    if (staleSeries.length) errors.push(`FRED series are past their publication tolerance; their history still feeds the models but the readings they carry are dated: ${staleSeries.map((item) => `${item.id} (${item.freshness?.ageDays ?? '?'}d)`).join(', ')}`);
+    if (abandonedSeries.length) errors.push(`FRED series have stopped publishing and are excluded from models: ${abandonedSeries.map((item) => item.id).join(', ')}`);
+    // Spot readings stay strict. A stale series may inform a change over its
+    // own history, but its last value must never be printed as today's level.
+    const values = Object.fromEntries(series.filter((item) => !item.stale).map((item) => [item.key, item.value * item.multiplier]));
     const model = calculateUsLiquidityModel(modelSeries);
     const globalLiquidity = calculateGlobalLiquidityModel(modelSeries);
     const liquidityRunway = calculateLiquidityRunway(modelSeries);
@@ -2823,6 +2840,7 @@ export async function getLiquiditySnapshot(options = {}) {
         name: 'FRED',
         storedFallbacks: series.filter((item) => item.stored).length,
         staleSeries: staleSeries.length,
+        abandonedSeries: abandonedSeries.length,
         failedSeries: failedSeries.length,
         requestedSeries: seriesHealth.length,
       },

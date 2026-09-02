@@ -793,6 +793,13 @@ function HardMoneyPanel({ hardMoney }) {
 
 const TIER_TONE = { deep: 'positive', discount: 'positive', baseline: '', extended: 'negative', stretched: 'negative' };
 
+/** Gold trades near 4,000 and bitcoin near 90,000; both need to stay readable. */
+function formatLevel(value) {
+  if (!Number.isFinite(value)) return '\u2014';
+  const digits = Math.abs(value) >= 1000 ? 0 : Math.abs(value) >= 10 ? 2 : 4;
+  return `$${value.toLocaleString('en-US', { minimumFractionDigits: digits, maximumFractionDigits: digits })}`;
+}
+
 /**
  * The accumulation rule, shown as a rule rather than as a recommendation.
  *
@@ -834,7 +841,23 @@ function AccumulationPanel({ accumulation, only = null, title = 'ACCUMULATION RU
 
     {published ? <>
       {single ? <>
-        <div className="dca-gauge"><i><b style={{ width: `${Math.min(Math.max(single.risk, 0), 100)}%` }}></b></i><span>{single.risk}/100 risk</span></div>
+        <div className="dca-gauge"><i><b style={{ width: `${Math.min(Math.max(single.risk, 0), 100)}%` }}></b></i><span>{single.risk}/100 risk &middot; {formatLevel(single.price)}</span></div>
+
+        {/* The question a schedule is actually asked: what price changes what I
+            buy. The percentile alone answers where you are, not what happens next. */}
+        {(single.priceLadder ?? []).length ? <>
+          <div className="dca-ladder-head"><span>Buy</span><span>Tier</span><span>Risk</span><span>At price</span><span>Move</span></div>
+          {single.priceLadder.map((step) => <div className={`dca-ladder-row ${step.current ? 'current' : ''}`} key={step.key}>
+            <strong>{step.multiple}&times;</strong>
+            <b className={TIER_TONE[step.key]}>{step.label}</b>
+            <small>{step.range}</small>
+            <b>{step.price === null ? <span className="dca-unreachable" title={step.reason}>out of reach</span> : formatLevel(step.price)}</b>
+            <small className={step.movePercent > 0 ? 'negative' : step.movePercent < 0 ? 'positive' : ''}>
+              {step.current ? 'you are here' : step.movePercent === null ? '\u2014' : `${step.movePercent > 0 ? '+' : ''}${step.movePercent}%`}
+            </small>
+          </div>)}
+        </> : null}
+
         <div className="dca-components">
           {single.components.map((component) => <div className="dca-component" key={component.key}>
             <span>{component.label}</span>
@@ -858,11 +881,13 @@ function AccumulationPanel({ accumulation, only = null, title = 'ACCUMULATION RU
           </div>)}
       </>}
 
-      <div className="dca-ladder">{(accumulation.ladder ?? []).map((tier) => <span className={sorted.some((schedule) => schedule.tier.key === tier.key) ? 'active' : ''} key={tier.key}>
+      {single ? null : <div className="dca-ladder">{(accumulation.ladder ?? []).map((tier) => <span className={sorted.some((schedule) => schedule.tier.key === tier.key) ? 'active' : ''} key={tier.key}>
         <b>{tier.multiple}&times;</b><small>{tier.label}</small><i>{tier.range}</i>
-      </span>)}</div>
+      </span>)}</div>}
 
       <p className="dca-read">{single ? single.read : accumulation.allocation?.read}</p>
+
+      {single?.limits ? <p className="dca-limit">{single.limits}</p> : null}
 
       {single?.backtest?.status === 'calculated' ? <p className="dca-read">
         Run weekly over {single.backtest.buys} purchases from {single.backtest.from}, the rule paid {Math.abs(single.backtest.costAdvantagePercent)}% {single.backtest.costAdvantagePercent <= 0 ? 'less' : 'more'} per unit than a flat schedule, deploying {single.backtest.capitalRatio}&times; the capital.
@@ -1316,6 +1341,7 @@ function MetalsDashboard({ data }) {
       <div><p className="eyebrow">PRECIOUS METALS RESEARCH</p><h1>Where monetary metal meets market structure.</h1><p className="intro">Technical, macro, physical, and positioning signals for metals and their equity proxies.</p></div>
       <VerdictBanner verdict={workspace?.verdict} />
       <HardMoneyPanel hardMoney={data.hardMoney} />
+      <AccumulationPanel accumulation={data.accumulation} only="gold" title="GOLD ACCUMULATION" />
       <AccumulationPanel accumulation={data.accumulation} />
       <div className="metals-pulse">{workspace?.status !== 'calculated' && <PreviewBadge />}<div><b>{workspace?.calculatedCount ? `${workspace.calculatedCount} of ${workspace.universeSize} series calculated` : 'Awaiting provider histories'}</b><small>technical-v1 · COMEX futures · COT</small></div></div>
     </section>

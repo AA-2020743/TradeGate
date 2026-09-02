@@ -83,12 +83,24 @@ export function buildVerdict({
     .filter((signal) => !Number.isFinite(signal?.score))
     .map((signal) => ({ key: signal?.key ?? null, name: signal?.name ?? 'Unnamed input', reason: signal?.reason ?? null }));
 
-  if (scored.length < minimumSignals || coverage < minimumCoverage) {
+  // Name the requirement that actually failed. Stating both as one sentence
+  // read as a contradiction whenever only one of them was the problem: "needs
+  // 3 readings covering 50% of the weight; 2 available covering 80%" looks
+  // like 80% was refused for being under 50%, when the count was the blocker
+  // and the coverage was fine.
+  const tooFew = scored.length < minimumSignals;
+  const tooThin = coverage < minimumCoverage;
+  if (tooFew || tooThin) {
+    const shortfall = tooFew && tooThin
+      ? `only ${scored.length} of the ${signals.length} inputs reported, covering ${Math.round(coverage * 100)}% of the weight - short of both the ${minimumSignals}-reading minimum and the ${Math.round(minimumCoverage * 100)}% coverage floor`
+      : tooFew
+        ? `${scored.length} of the ${signals.length} inputs reported and a verdict needs at least ${minimumSignals}. The ${scored.length} that did report cover ${Math.round(coverage * 100)}% of the weight, so it is the number of independent readings that is short, not the weight behind them`
+        : `the ${scored.length === 1 ? 'single input that reported carries' : `${scored.length} inputs that reported carry`} only ${Math.round(coverage * 100)}% of the weight, against the ${Math.round(minimumCoverage * 100)}% a verdict needs`;
     return {
       version,
       title,
       status: 'unavailable',
-      reason: `A verdict needs ${minimumSignals} readings covering ${Math.round(minimumCoverage * 100)}% of the weight; ${scored.length} available covering ${Math.round(coverage * 100)}%.`,
+      reason: `${shortfall}.${missing.length ? ` Missing: ${missing.map((entry) => entry.name).join(', ')}.` : ''}`,
       coverage: Math.round(coverage * 100),
       score: null,
       call: null,

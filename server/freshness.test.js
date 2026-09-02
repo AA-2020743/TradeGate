@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { cryptoHistoryGranularity, describeSeriesFreshness, isCryptoHistoryStale, isDailyCloseStale, isFredSeriesStale } from './freshness.js';
+import { abandonedAfterDays, cryptoHistoryGranularity, describeSeriesFreshness, isCryptoHistoryStale, isDailyCloseStale, isFredSeriesAbandoned, isFredSeriesStale, maxObservationAgeDays, normalPublicationGapDays } from './freshness.js';
 
 const now = new Date('2026-08-21T12:00:00.000Z').getTime();
 
@@ -78,26 +78,44 @@ test('the same age reads differently for a monthly series', () => {
   assert.equal(weekly.state, 'stale');
 });
 
-test('past the tolerance a series is stale and says it left the models', () => {
-  const result = describeSeriesFreshness('VIXCLS', '2026-08-01', daysAfter('2026-08-01', 7));
+test('a stale series says its value is dated, not that it was deleted', () => {
+  // Stale used to mean removed, which turned one late monthly print into a
+  // total macro outage. It now means the latest value is no longer current
+  // while the history behind it still feeds the models that measure change.
+  const result = describeSeriesFreshness('VIXCLS', '2026-08-01', daysAfter('2026-08-01', 12));
   assert.equal(result.state, 'stale');
-  assert.match(result.read, /excluded from the models/);
+  assert.match(result.read, /no longer treated as current/);
+  assert.match(result.read, /history still feeds/);
+  assert.doesNotMatch(result.read, /excluded from the models/);
 });
 
-test('the stale boundary agrees with the existing staleness check', () => {
-  for (const id of ['WALCL', 'VIXCLS', 'M2SL', 'NFCI', 'DTWEXBGS']) {
-    const { maxAgeDays } = describeSeriesFreshness(id, '2026-01-01', at('2026-01-01'));
-    const justInside = daysAfter('2026-06-01', maxAgeDays - 1);
-    const atLimit = daysAfter('2026-06-01', maxAgeDays);
-    assert.equal(describeSeriesFreshness(id, '2026-06-01', justInside).state !== 'stale', true, `${id} just inside`);
-    assert.equal(describeSeriesFreshness(id, '2026-06-01', atLimit).state, 'stale', `${id} at limit`);
+test('a series far enough past its tolerance is abandoned and does leave the models', () => {
+  const result = describeSeriesFreshness('VIXCLS', '2026-01-01', daysAfter('2026-01-01', 120));
+  assert.equal(result.state, 'abandoned');
+  assert.match(result.read, /excluded from the models/);
+  assert.equal(isFredSeriesAbandoned('VIXCLS', '2026-01-01', daysAfter('2026-01-01', 120)), true);
+});
+
+test('the described state and the staleness check never disagree about a series', () => {
+  // Two functions answering "is this stale?" with different rounding is how a
+  // panel ends up saying a series is fine while the loader has already dropped
+  // it. They are checked against each other across the whole boundary rather
+  // than at one hand-chosen day.
+  for (const id of ['WALCL', 'VIXCLS', 'M2SL', 'NFCI', 'DTWEXBGS', 'JPNASSETS']) {
+    const limit = maxObservationAgeDays(id);
+    for (const offset of [-2, -1, 0, 1, 2]) {
+      const now = daysAfter('2026-06-01', limit + offset);
+      const described = describeSeriesFreshness(id, '2026-06-01', now);
+      const stale = isFredSeriesStale(id, '2026-06-01', now);
+      assert.equal(['stale', 'abandoned'].includes(described.state), stale, `${id} at ${limit + offset} days`);
+    }
   }
 });
 
-test('an unknown series falls back to a tolerance and a derived gap', () => {
-  const result = describeSeriesFreshness('MADEUPSERIES', '2026-08-14', daysAfter('2026-08-14', 5));
-  assert.equal(result.maxAgeDays, 14);
-  assert.equal(result.expectedWithinDays, 7);
+test('an unknown series falls back to the business-daily release shape', () => {
+  const result = describeSeriesFreshness('MADEUPSERIES', '2026-08-14', daysAfter('2026-08-14', 4));
+  assert.equal(result.expectedWithinDays, 5);
+  assert.equal(result.maxAgeDays, 9);
   assert.equal(result.state, 'current');
 });
 
@@ -135,20 +153,49 @@ test('the H.10 FX series survive their own weekly release cycle', () => {
   }
 });
 
-test('every FRED tolerance leaves room above its own expected publication gap', () => {
-  // The H.10 bug was a tolerance set to the exact top of the normal cycle, so
-  // the series tripped it routinely. No series should be configured that way:
-  // the hard tolerance has to sit meaningfully above the gap the series is
-  // expected to keep, or "stale" means "between prints".
+test('no FRED tolerance sits inside the series own release cycle', () => {
+  // This invariant existed before and passed while six series were misconfigured,
+  // because it compared a hand-picked tolerance against a hand-picked "expected
+  // gap" - two numbers from the same guess. Both are now derived from the
+  // release calendar (cadence, publication lag, and whether the observation is
+  // dated at the start or the end of the period it covers), so the check has
+  // something real to test against.
   const ids = ['WALCL', 'WTREGEN', 'RRPONTSYD', 'M2SL', 'DGS2', 'DFII10', 'NFCI', 'BAMLH0A0HYM2',
     'VIXCLS', 'ECBASSETSW', 'JPNASSETS', 'DEXUSEU', 'DEXJPUS', 'DEXCHUS', 'DTWEXBGS', 'DGS10',
     'DGS3MO', 'T5YIFR', 'T5YIE', 'T10YIE', 'CPIAUCSL', 'THREEFYTP10', 'SOFR', 'IORB', 'PAYEMS',
-    'ICSA', 'INDPRO', 'RSAFS'];
-  const now = Date.parse('2026-08-24T12:00:00.000Z');
+    'ICSA', 'INDPRO', 'RSAFS', 'IRLTLT01DEM156N'];
   const tooTight = [];
   for (const id of ids) {
-    const { expectedWithinDays, maxAgeDays } = describeSeriesFreshness(id, '2026-08-24', now);
-    if (maxAgeDays < expectedWithinDays + 3) tooTight.push(`${id}: tolerance ${maxAgeDays} against an expected gap of ${expectedWithinDays}`);
+    const gap = normalPublicationGapDays(id);
+    const tolerance = maxObservationAgeDays(id);
+    if (tolerance < gap + 3) tooTight.push(`${id}: tolerance ${tolerance} against a normal gap of ${gap}`);
   }
   assert.deepEqual(tooTight, []);
+});
+
+test('a monthly series dated at the start of its month is not stale the week before its release', () => {
+  // The BoJ's total assets are monthly, dated at month start, and published
+  // about five days after the month closes. On 2 September the newest print is
+  // 1 July - 63 days old and entirely on schedule. The old 60-day tolerance
+  // called that stale, dropped the series, and took the global liquidity pool,
+  // the macro regime read and every verdict downstream of them with it, because
+  // the BoJ leg is mandatory in the pool.
+  const septemberSecond = Date.parse('2026-09-02T12:00:00.000Z');
+  assert.equal(isFredSeriesStale('JPNASSETS', '2026-07-01', septemberSecond), false);
+  assert.equal(describeSeriesFreshness('JPNASSETS', '2026-07-01', septemberSecond).state, 'current');
+
+  // Two months with no print is a real outage and must still be caught.
+  assert.equal(isFredSeriesStale('JPNASSETS', '2026-04-01', septemberSecond), true);
+
+  // The same trap applies to every monthly series dated this way.
+  for (const id of ['CPIAUCSL', 'PAYEMS', 'INDPRO', 'RSAFS', 'M2SL']) {
+    assert.ok(normalPublicationGapDays(id) > 60, `${id} is dated at month start and cannot have a sane gap under 60 days`);
+    assert.equal(isFredSeriesStale(id, '2026-07-01', septemberSecond), false, `${id} one release cycle behind`);
+  }
+});
+
+test('abandoned sits far enough past stale to be a different claim', () => {
+  for (const id of ['VIXCLS', 'WALCL', 'JPNASSETS', 'M2SL']) {
+    assert.ok(abandonedAfterDays(id) >= maxObservationAgeDays(id) * 2, `${id} abandons too close to stale`);
+  }
 });

@@ -233,6 +233,114 @@ export function riskAt(prepared, index) {
   return { status: 'calculated', risk, tier, coverage: round(coverage, 3), components };
 }
 
+/**
+ * The risk read the asset would carry at a different price today.
+ *
+ * Same windows, same history, same ranking - only the latest close is swapped.
+ * The three components all move with price (a higher close is further above
+ * the mean, closer to the high, and a stronger year), so the blended read is
+ * monotonic in price and can be inverted by search.
+ */
+export function riskAtPrice(prepared, price) {
+  if (prepared?.status !== 'ready' || !(price > 0)) return null;
+  const index = prepared.values.length - 1;
+  const { values, sessions } = prepared;
+  if (index < Math.max(sessions.trend, sessions.momentum)) return null;
+
+  // The candidate close is part of its own averages and its own running high,
+  // so both are rebuilt around it rather than reused from the real close.
+  let trendSum = 0;
+  for (let scan = index - sessions.trend + 1; scan < index; scan += 1) trendSum += values[scan];
+  const trendMean = (trendSum + price) / sessions.trend;
+
+  let priorHigh = -Infinity;
+  const highStart = index - sessions.drawdown + 1;
+  if (highStart >= 0) for (let scan = highStart; scan < index; scan += 1) if (values[scan] > priorHigh) priorHigh = values[scan];
+  const momentumBase = values[index - sessions.momentum];
+
+  const candidate = {
+    stretch: trendMean > 0 ? (price / trendMean) - 1 : null,
+    drawdown: Number.isFinite(priorHigh) ? (price / Math.max(priorHigh, price)) - 1 : null,
+    momentum: momentumBase > 0 ? (price / momentumBase) - 1 : null,
+  };
+
+  const start = Math.max(0, index - sessions.rank + 1);
+  const available = [];
+  for (const component of COMPONENTS) {
+    const value = candidate[component.key];
+    if (!Number.isFinite(value)) continue;
+    const window = prepared.series[component.key].slice(start, index).filter(Number.isFinite);
+    if (window.length < MINIMUM_RANK_OBSERVATIONS) continue;
+    const percentile = percentileRank([...window, value], value);
+    if (Number.isFinite(percentile)) available.push({ ...component, percentile });
+  }
+  const weight = available.reduce((total, component) => total + component.weight, 0);
+  const totalWeight = COMPONENTS.reduce((total, component) => total + component.weight, 0);
+  if (weight / totalWeight < MINIMUM_COVERAGE) return null;
+  return Math.round(available.reduce((total, component) => total + (component.percentile * component.weight), 0) / weight);
+}
+
+/**
+ * The price that moves the contribution, which is the question a schedule is
+ * actually asked. A percentile tells a reader where they are; it does not tell
+ * them what has to happen next, and the rule already knows.
+ *
+ * Found by bisection on price rather than by inverting the ranks, because the
+ * blend of three percentiles has no closed form. A boundary the price cannot
+ * reach - above its running high the drawdown component saturates and the read
+ * stops rising - is reported as unreachable instead of being extrapolated.
+ */
+export function tierPriceLadder(prepared, currentRisk) {
+  if (prepared?.status !== 'ready') return [];
+  const spot = prepared.values.at(-1);
+  const priceForTier = (tier, index) => {
+    const floor = index === 0 ? 0 : TIERS[index - 1].max + 1;
+    // The price that first lands inside this tier, approached from whichever
+    // side the asset is currently on.
+    const target = currentRisk > tier.max ? tier.max : floor;
+    const wanted = currentRisk > tier.max
+      ? (risk) => risk <= target
+      : (risk) => risk >= target;
+    let low = spot * 0.05;
+    let high = spot * 6;
+    if (!wanted(riskAtPrice(prepared, currentRisk > tier.max ? low : high) ?? currentRisk)) return null;
+    for (let step = 0; step < 60; step += 1) {
+      const mid = (low + high) / 2;
+      const risk = riskAtPrice(prepared, mid);
+      if (!Number.isFinite(risk)) return null;
+      if (currentRisk > tier.max ? risk <= target : risk >= target) {
+        if (currentRisk > tier.max) low = mid; else high = mid;
+      } else if (currentRisk > tier.max) high = mid; else low = mid;
+    }
+    // Rounding for display can cross the boundary the search just found: the
+    // read steps in whole percentiles, so the qualifying price and the next
+    // one differ by a fraction of a cent. Settle toward the side that still
+    // qualifies, so a published price always buys the tier it names.
+    const falling = currentRisk > tier.max;
+    const settled = falling ? low : high;
+    return falling ? Math.floor(settled * 1e6) / 1e6 : Math.ceil(settled * 1e6) / 1e6;
+  };
+
+  return TIERS.map((tier, index) => {
+    const floor = index === 0 ? 0 : TIERS[index - 1].max + 1;
+    const current = currentRisk >= floor && currentRisk <= tier.max;
+    if (current) {
+      return { key: tier.key, label: tier.label, multiple: tier.multiple, range: `${floor}\u2013${Number.isFinite(tier.max) ? tier.max : 100}`, current: true, price: round(spot, 6), movePercent: 0 };
+    }
+    const price = priceForTier(tier, index);
+    return {
+      key: tier.key,
+      label: tier.label,
+      multiple: tier.multiple,
+      range: `${floor}\u2013${Number.isFinite(tier.max) ? tier.max : 100}`,
+      current: false,
+      price: Number.isFinite(price) ? price : null,
+      movePercent: Number.isFinite(price) ? round(((price / spot) - 1) * 100) : null,
+      reason: Number.isFinite(price) ? undefined : 'No price reaches this tier from here: past its own running high the distance-to-high component stops rising, so the blended read has a ceiling.',
+    };
+  });
+}
+
 function boundariesFor(risk) {
   const index = TIERS.findIndex((tier) => risk <= tier.max);
   const below = TIERS[index - 1] ?? null;
@@ -344,6 +452,14 @@ export function calculateAccumulationSchedule({ key, name, points, baselineContr
     contribution,
     components: read.components,
     boundaries,
+    priceLadder: tierPriceLadder(prepared, read.risk),
+    // Published because it is the reading's main weakness. An asset that has
+    // spent its whole history extended has a risk distribution centred on
+    // extended, so a middling percentile there is not the same claim as a
+    // middling percentile for an asset that has ranged. The rank says where
+    // today sits among this asset's own past, and nothing about whether that
+    // past was cheap in absolute terms.
+    limits: 'Every component is ranked against this asset\u2019s own history, so the read is relative to how this asset has behaved and not to any absolute standard. An asset that has spent most of its history near its highs will show a mid-range risk while near its highs again.',
     windowDays: WINDOW_DAYS,
     sessions: prepared.sessions,
     sessionsPerYear: prepared.sessionsPerYear,
@@ -381,27 +497,35 @@ export function allocateAcrossAssets(schedules, { budget = 100 } = {}) {
       amount: round((schedule.multiple / totalMultiple) * budget, 2),
       equalSharePercent: round(100 / published.length, 1),
     }))
-    .sort((left, right) => right.sharePercent - left.sharePercent);
+    // Ties on the multiple are the normal case - five tiers, six assets - and
+    // whichever asset the sort happened to put first was being named as the
+    // cheapest. Risk breaks the tie, so the order means something and the
+    // extremes named below are the real ones.
+    .sort((left, right) => (right.sharePercent - left.sharePercent) || (left.risk - right.risk));
 
-  const cheapest = entries.at(-1);
-  const richest = entries[0];
-  const spread = richest.sharePercent - cheapest.sharePercent;
-  // Every asset in the same tier is a real and common outcome, and naming a
-  // "leader" out of an arbitrary sort order would invent a distinction the
-  // numbers do not contain.
+  const byRisk = [...entries].sort((left, right) => left.risk - right.risk);
+  const cheapest = byRisk[0];
+  const dearest = byRisk.at(-1);
   const even = published.every((schedule) => schedule.multiple === published[0].multiple);
+  const spread = entries[0].sharePercent - entries.at(-1).sharePercent;
+
+  const names = (list) => (list.length === 1
+    ? list[0].name
+    : `${list.slice(0, -1).map((entry) => entry.name).join(', ')} and ${list.at(-1).name}`);
+  const heaviestGroup = entries.filter((entry) => entry.multiple === entries[0].multiple);
+  const lightestGroup = entries.filter((entry) => entry.multiple === entries.at(-1).multiple);
 
   return {
     status: 'calculated',
     budget,
     entries,
-    tilt: round(spread, 1),
     even,
+    tilt: round(spread, 1),
+    cheapest: { key: cheapest.key, name: cheapest.name, risk: cheapest.risk },
+    dearest: { key: dearest.key, name: dearest.name, risk: dearest.risk },
     read: even
-      ? `All ${entries.length} assets sit in the same tier (${richest.tier}), so the rule splits the ${budget} budget evenly at ${entries[0].equalSharePercent}% each. Their risk reads still differ - ${entries.map((entry) => `${entry.name} at the ${ordinal(entry.risk)}`).join(', ')} - but not by enough to cross a tier boundary.`
-      : `Splitting a ${budget} budget by tier sends ${richest.sharePercent}% to ${richest.name} at the ${ordinal(richest.risk)} percentile of its own risk and ${cheapest.sharePercent}% to ${cheapest.name} at the ${ordinal(cheapest.risk)}, against ${entries[0].equalSharePercent}% each on an even split.${
-        spread < 5 ? ' The tilt is small: the assets are close on their own histories.' : ''
-      }`,
+      ? `All ${entries.length} assets sit in the same tier (${entries[0].tier}), so the rule splits the ${budget} budget evenly at ${entries[0].equalSharePercent}% each. Their risk reads still differ - ${cheapest.name} is cheapest against its own history at the ${ordinal(cheapest.risk)} percentile and ${dearest.name} dearest at the ${ordinal(dearest.risk)} - but not by enough to cross a tier boundary.`
+      : `Splitting a ${budget} budget by tier sends ${heaviestGroup[0].sharePercent}%${heaviestGroup.length > 1 ? ' each' : ''} to ${names(heaviestGroup)} in ${heaviestGroup[0].tier} and ${lightestGroup[0].sharePercent}%${lightestGroup.length > 1 ? ' each' : ''} to ${names(lightestGroup)} in ${lightestGroup[0].tier}, against ${entries[0].equalSharePercent}% each on an even split. ${cheapest.name} is the cheapest against its own history at the ${ordinal(cheapest.risk)} percentile, ${dearest.name} the dearest at the ${ordinal(dearest.risk)}.`,
     methodology: 'Shares are each asset’s multiple over the sum of the multiples, so an asset cheap against its own history draws more of the budget than one that is stretched against its own. This compares each asset only to itself: it carries no view on which asset is the better holding, and assumes the baselines were equal to begin with. It is not a portfolio weight and says nothing about position sizing or risk of ruin.',
   };
 }

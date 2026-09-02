@@ -3,7 +3,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
 import { config } from './config.js';
-import { isDailyCloseStale, isFredSeriesStale } from './freshness.js';
+import { isDailyCloseStale, isFredSeriesAbandoned, isFredSeriesStale } from './freshness.js';
 
 const { Pool } = pg;
 const pool = config.databaseUrl
@@ -427,6 +427,7 @@ export async function getStoredFredSeries() {
     value: series.history.at(-1)?.value ?? null,
     date: series.history.at(-1)?.date ?? null,
     stale: isFredSeriesStale(series.id, series.history.at(-1)?.date),
+    abandoned: isFredSeriesAbandoned(series.id, series.history.at(-1)?.date),
   }));
 }
 

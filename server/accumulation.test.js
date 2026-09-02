@@ -7,6 +7,7 @@ import {
   calculateAccumulationSchedule,
   prepareAccumulationSeries,
   riskAt,
+  riskAtPrice,
 } from './accumulation.js';
 
 /** Deterministic noise: the tests must not be able to pass or fail by luck. */
@@ -179,4 +180,76 @@ test('every published risk read reconstructs from the components it shows', () =
     const rebuilt = Math.round(available.reduce((sum, component) => sum + (component.percentile * component.weight), 0) / weight);
     assert.equal(read.risk, rebuilt, `the risk read at ${index} cannot be rebuilt from its own components`);
   }
+});
+
+test('the price ladder is consistent with the risk read it inverts', () => {
+  const points = cyclical();
+  const prepared = prepareAccumulationSeries(points);
+  const schedule = calculateAccumulationSchedule({ key: 'x', name: 'X', points });
+
+  // One quantity, one answer: the risk at today's close must not depend on
+  // whether it was read directly or through the price-inversion path.
+  assert.equal(riskAtPrice(prepared, schedule.price), schedule.risk);
+
+  const bands = Object.fromEntries(ACCUMULATION_TIERS.map((tier, index) => [
+    tier.key,
+    { floor: index === 0 ? 0 : ACCUMULATION_TIERS[index - 1].max + 1, ceiling: Number.isFinite(tier.max) ? tier.max : 100 },
+  ]));
+  for (const step of schedule.priceLadder) {
+    if (step.current) {
+      assert.equal(step.price, schedule.price);
+      continue;
+    }
+    if (step.price === null) {
+      assert.ok(step.reason, `${step.key} is unreachable and must say why`);
+      continue;
+    }
+    // A published price has to actually buy the tier it is printed against,
+    // including after being rounded for display.
+    const there = riskAtPrice(prepared, step.price);
+    assert.ok(there >= bands[step.key].floor && there <= bands[step.key].ceiling,
+      `${step.key} names ${step.price} but the read there is ${there}, outside ${bands[step.key].floor}-${bands[step.key].ceiling}`);
+  }
+});
+
+test('the risk read never falls as price rises', () => {
+  // The ladder is found by bisection, which is only valid because the blend of
+  // the three components is monotonic in price.
+  const prepared = prepareAccumulationSeries(cyclical());
+  const spot = prepared.values.at(-1);
+  const reads = [0.4, 0.7, 0.9, 1, 1.1, 1.5, 2.5].map((factor) => riskAtPrice(prepared, spot * factor));
+  assert.ok(reads.every(Number.isFinite));
+  for (let index = 1; index < reads.length; index += 1) {
+    assert.ok(reads[index] >= reads[index - 1], `risk fell from ${reads[index - 1]} to ${reads[index]} as price rose`);
+  }
+});
+
+test('a cheaper asset in a shared tier is not passed over for the one the sort happened to reach first', () => {
+  // Six assets across five tiers means ties are the normal case. The read used
+  // to name whichever tied asset sorted first, so a panel showing Gold at the
+  // 28th percentile announced Bitcoin at the 33rd as the cheapest holding, and
+  // the Nasdaq at the 41st as dearer than the S&P at the 54th.
+  const at = (key, name, risk, multiple, label) => ({ key, name, risk, multiple, status: 'calculated', tier: { key: label, label, multiple } });
+  const allocation = allocateAcrossAssets([
+    at('bitcoin', 'Bitcoin', 33, 1.4, 'Discounted'),
+    at('gold', 'Gold', 28, 1.4, 'Discounted'),
+    at('silver', 'Silver', 36, 1.4, 'Discounted'),
+    at('platinum', 'Platinum', 33, 1.4, 'Discounted'),
+    at('spx', 'S&P 500', 54, 1, 'Baseline'),
+    at('ndx', 'Nasdaq-100', 41, 1, 'Baseline'),
+  ]);
+  assert.equal(allocation.cheapest.key, 'gold');
+  assert.equal(allocation.dearest.key, 'spx');
+  assert.match(allocation.read, /Gold is the cheapest/);
+  assert.match(allocation.read, /S&P 500 the dearest/);
+  assert.ok(!/Bitcoin is the cheapest/.test(allocation.read));
+  // Tied assets still share a share, and the order among them is by risk.
+  const discounted = allocation.entries.filter((entry) => entry.multiple === 1.4);
+  assert.deepEqual(discounted.map((entry) => entry.key), ['gold', 'bitcoin', 'platinum', 'silver']);
+});
+
+test('a schedule publishes the limit of ranking an asset against only itself', () => {
+  const schedule = calculateAccumulationSchedule({ key: 'x', name: 'X', points: cyclical() });
+  assert.match(schedule.limits, /own history/);
+  assert.match(schedule.limits, /near its highs/);
 });

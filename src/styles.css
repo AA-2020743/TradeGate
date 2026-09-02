@@ -360,3 +360,31 @@ html[data-theme='dark'] .screener-search { background: #1a221d; border-color: #3
 .dca-ladder small { font-size: 0.72rem; }
 .dca-ladder i { font-size: 0.68rem; font-style: normal; opacity: 0.6; }
 .dca-read { margin: 0.8rem 0 0; font-size: 0.85rem; line-height: 1.55; opacity: 0.85; }
+
+/* The price ladder: what has to happen for the contribution to change. */
+.dca-ladder-head, .dca-ladder-row {
+  display: grid;
+  grid-template-columns: minmax(0, 0.5fr) minmax(0, 1fr) minmax(0, 0.6fr) minmax(0, 0.9fr) minmax(0, 0.8fr);
+  gap: 0.7rem;
+  align-items: baseline;
+}
+.dca-ladder-head {
+  margin-top: 1rem;
+  padding-bottom: 0.4rem;
+  font-size: 0.72rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  opacity: 0.55;
+  border-bottom: 1px solid var(--hairline, rgba(255, 255, 255, 0.12));
+}
+.dca-ladder-row { padding: 0.45rem 0; border-bottom: 1px solid var(--hairline, rgba(255, 255, 255, 0.06)); }
+.dca-ladder-row:last-of-type { border-bottom: none; }
+.dca-ladder-row small { opacity: 0.6; font-size: 0.8em; }
+.dca-ladder-row.current {
+  box-shadow: inset 2px 0 0 var(--verdict-accent, #d2705f);
+  padding-left: 0.5rem;
+  margin-left: -0.5rem;
+}
+.dca-ladder-row.current small { opacity: 0.9; }
+.dca-unreachable { opacity: 0.5; font-weight: 400; font-size: 0.85em; }
+.dca-limit { margin: 0.8rem 0 0; font-size: 0.8rem; line-height: 1.5; opacity: 0.62; font-style: italic; }

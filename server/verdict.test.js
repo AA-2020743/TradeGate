@@ -74,7 +74,10 @@ test('a verdict refuses when too little reported to reach one', () => {
     ],
   });
   assert.equal(verdict.status, 'unavailable');
-  assert.match(verdict.reason, /3 readings/);
+  assert.match(verdict.reason, /needs at least 3/);
+  // The count was short but the weight was not, and the sentence must not read
+  // as though 55% had been refused for being under 50%.
+  assert.match(verdict.reason, /not the weight behind them/);
   // The shape stays the same so a consumer never special-cases it.
   for (const key of ['call', 'headline', 'confidence', 'read', 'margin']) assert.equal(verdict[key], null);
   assert.deepEqual(verdict.supporting, []);
