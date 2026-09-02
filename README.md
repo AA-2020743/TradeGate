@@ -458,6 +458,21 @@ The `-H` matters: without it `sudo -u` leaves `$HOME` pointing at the invoking
 user, so git reads the wrong `.gitconfig` and npm writes its cache into the
 wrong home directory.
 
+The script re-executes itself from a private copy before touching the
+repository, because it lives in the repository it updates and a deploy that
+changes it would otherwise rewrite the file that is currently running. Bash
+reads a script lazily by byte offset, so replacing it mid-run makes the shell
+resume at an offset that now points into different text and execute whatever
+is there — a silent, arbitrary failure that only occurs on the deploys that
+change this file. Demonstrated with and without the guard: without it, bash
+resumed inside the replacement and tried to run a line of it as a command.
+
+If the merge stops on untracked files that the incoming commit also creates
+(the usual case being a hand-placed copy of this script from before it was
+tracked), the script names them and prints the `rm` for each rather than
+leaving you with git's message, which says what is in the way but not whether
+it is safe to delete.
+
 ### If the deploy asks for a GitHub login, or fails with HTTP 401
 
 ```

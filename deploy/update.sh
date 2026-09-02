@@ -23,7 +23,24 @@
 #
 set -euo pipefail
 
-REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# This script lives in the repository it updates, so a deploy replaces the file
+# that is currently executing. Bash reads a script lazily, by byte offset, as it
+# runs - so rewriting it mid-run makes the shell resume at an offset that now
+# points into different text and execute whatever happens to be there. The
+# failure is silent and arbitrary, and it only shows up on the deploys that
+# change this file, which is precisely when nobody is expecting it.
+#
+# So: re-exec from a private copy and let the original be replaced freely.
+if [ -z "${TRADEGATE_SELF_COPY:-}" ]; then
+  TRADEGATE_REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+  self="$(mktemp "${TMPDIR:-/tmp}/tradegate-update.XXXXXX")"
+  cat "${BASH_SOURCE[0]}" > "$self"
+  export TRADEGATE_SELF_COPY="$self" TRADEGATE_REPO_DIR
+  exec bash "$self" "$@"
+fi
+trap 'rm -f "$TRADEGATE_SELF_COPY"' EXIT
+
+REPO_DIR="$TRADEGATE_REPO_DIR"
 BRANCH="${BRANCH:-main}"
 HEALTH_URL="${HEALTH_URL:-http://127.0.0.1:8787/api/health}"
 SERVICE="${SERVICE:-tradegate}"
@@ -151,7 +168,33 @@ fi
 # --ff-only refuses rather than creating a merge commit on the server. A
 # deploy checkout that has diverged is a problem to look at, not to paper over.
 step "Fast-forwarding the working tree"
-git merge --ff-only "origin/$BRANCH"
+# An untracked file that the incoming commit also creates blocks the merge.
+# git's own message names the files but not why they are in the way, and the
+# common case here is a hand-placed copy of this very script from before it was
+# tracked - which is safe to delete, unlike an untracked file someone meant to
+# keep. Say which is which rather than leaving that judgement to the reader.
+if ! git merge --ff-only "origin/$BRANCH"; then
+  collisions="$(git ls-files --others --exclude-standard \
+    | grep -Fxf <(git diff --name-only HEAD "origin/$BRANCH") 2>/dev/null || true)"
+  if [ -n "$collisions" ]; then
+    echo
+    echo "----------------------------------------------------------------------"
+    echo "These untracked files are also created by the incoming commit, so the"
+    echo "merge will not overwrite them:"
+    echo
+    printf '  %s\n' $collisions
+    echo
+    echo "If you placed them by hand before they were tracked - this script was"
+    echo "distributed that way - they are safe to delete and the merge will then"
+    echo "restore the tracked copies:"
+    echo
+    for file in $collisions; do echo "  rm $REPO_DIR/$file"; done
+    echo
+    echo "If any of them is work you meant to keep, move it aside instead."
+    echo "----------------------------------------------------------------------"
+  fi
+  exit 1
+fi
 
 step "Installing dependencies from the lockfile"
 npm ci
