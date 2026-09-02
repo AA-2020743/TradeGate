@@ -66,11 +66,29 @@ diagnose_fetch_failure() {
     200)
       echo
       echo "The repository IS reachable anonymously, so the URL is right and no"
-      echo "credential is needed. Something local is still injecting one. Check:"
-      echo "  git config --get-all credential.helper"
-      echo "  git config --global --get-regexp 'url\..*\.insteadOf'"
-      echo "  git config --get-all http.extraHeader"
-      echo "  env | grep -i 'proxy\|GIT_'"
+      echo "credential is needed. Something local is injecting a rejected one, or"
+      echo "sending the request somewhere other than where curl just sent it."
+      echo
+      echo "Config contributing to this, and the file each setting came from:"
+      git config --list --show-origin 2>/dev/null \
+        | grep -Ei 'credential|http\.|url\.|proxy' || echo "  (none)"
+      # curl's netrc support is on by default in some git builds, so a stale
+      # login here is sent without any git config mentioning it - which makes it
+      # the hardest of these to find by reading configuration.
+      for netrc in "$HOME/.netrc" "$HOME/.netrc.gpg" /etc/netrc; do
+        if [ -f "$netrc" ] && grep -qs 'github\.com' "$netrc"; then
+          echo
+          echo "  !! $netrc has a github.com entry. curl reads this automatically,"
+          echo "     so it is sent even though no git config mentions it."
+        fi
+      done
+      echo
+      echo "If nothing above explains it, have git show the exchange itself:"
+      echo "  GIT_TERMINAL_PROMPT=0 GIT_CURL_VERBOSE=1 \\"
+      echo "    git -c credential.helper= ls-remote origin 2>&1 \\"
+      echo "    | grep -Ei 'Send header: (GET|Authorization)|Recv header: HTTP|netrc|fatal'"
+      echo "That prints the exact URL requested, the status returned, and any"
+      echo "Authorization header sent."
       ;;
     401|403)
       echo

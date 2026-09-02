@@ -496,14 +496,31 @@ curl -sS -o /dev/null -w '%{http_code}\n' \
 ```
 
 **If the probe returns 200**, the URL is right and no credential is needed, so
-something local is injecting a rejected one:
+something local is injecting a rejected one — or sending the request somewhere
+other than where curl sent it. List every setting with the file it came from:
 
 ```bash
-sudo -u tradegate -H git -C /home/tradegate/TradeGate remote -v          # token in the URL
+sudo -u tradegate -H git -C /home/tradegate/TradeGate config --list --show-origin \
+  | grep -Ei 'credential|http\.|url\.|proxy'
 sudo -u tradegate -H cat /home/tradegate/.git-credentials 2>/dev/null    # stored, expired PAT
-sudo -u tradegate -H git config --global --get-regexp 'url\..*\.insteadOf'
-sudo -u tradegate -H git config --get-all http.extraHeader
+sudo -u tradegate -H grep -l github.com /home/tradegate/.netrc /etc/netrc 2>/dev/null
 ```
+
+That last one is the sneaky one. curl reads `~/.netrc` automatically in most git
+builds, so a stale login there is sent on every request **without any git config
+mentioning it** — invisible to every other check on this page.
+
+When configuration explains nothing, stop reading it and watch the exchange:
+
+```bash
+sudo -u tradegate -H env GIT_TERMINAL_PROMPT=0 GIT_CURL_VERBOSE=1 \
+  git -C /home/tradegate/TradeGate -c credential.helper= ls-remote origin 2>&1 \
+  | grep -Ei 'Send header: (GET|Authorization)|Recv header: HTTP|netrc|fatal'
+```
+
+This prints the exact URL git requested, the status it got back, and any
+`Authorization` header it sent — which settles in one command what the
+configuration audit can only infer.
 
 ```bash
 # Remote carries a token: point it back at the anonymous URL.
