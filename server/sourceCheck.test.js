@@ -110,3 +110,20 @@ test('a value outside its plausible range turns OK into PART and names the value
   assert.equal(summarizeSource(source, fulfilled({ status: 'unavailable', reason: 'x', iv: 0.5 }), 1).verdict, 'failed');
   assert.deepEqual(plausibilityOf({ plausible: () => { throw new Error('bad'); } }, {}), []);
 });
+
+test('a running app is read through its endpoints; errors name the endpoint and status', async () => {
+  const { findRunningApp, servedLoader } = await import('./sourceCheck.js');
+  const calls = [];
+  const fetchImpl = async (url) => {
+    calls.push(url);
+    if (url.endsWith('/api/health')) return Response.json({ status: 'ok', build: { shortCommit: 'abc1234' } });
+    if (url.endsWith('/api/macro/treasury')) return Response.json({ status: 'calculated', cash: { billions: 885.4 } });
+    return Response.json({ error: 'Unable to fetch data from an upstream provider.' }, { status: 502 });
+  };
+  assert.deepEqual(await findRunningApp('http://127.0.0.1:8787', { fetchImpl }), { baseUrl: 'http://127.0.0.1:8787', commit: 'abc1234' });
+  assert.equal((await servedLoader('http://127.0.0.1:8787', '/api/macro/treasury', { fetchImpl })()).cash.billions, 885.4);
+  await assert.rejects(servedLoader('http://127.0.0.1:8787', '/api/analytics/factors', { fetchImpl })(), /\/api\/analytics\/factors answered 502: Unable to fetch data/);
+  // Nothing listening: the check falls back to calling the loaders itself.
+  assert.equal(await findRunningApp('http://127.0.0.1:1', { fetchImpl: async () => { throw new Error('ECONNREFUSED'); } }), null);
+  assert.equal(calls.filter((url) => url.endsWith('/api/health')).length, 1);
+});

@@ -738,7 +738,7 @@ After a deploy, check that every external source answers from the server:
 cd ~/TradeGate && npm run check:sources
 ```
 
-It calls each source-backed loader once, using the app's own `.env`, keys and database, and prints one block per source:
+When the app is running, each source is read from the app's own endpoint over localhost. That checks exactly what the app serves, from its caches, without making any extra provider calls. A separate process would have none of the app's caches and its own rate limiter, so it repeated the app's calls and drew rate-limit errors (429) that the app never saw. If the app isn't answering, or with `-- --in-process`, each loader is called directly using the app's `.env`, keys and database. The report prints one block per source:
 
 - **verdict:** `OK`, `PART` or `FAIL`;
 - **one key figure**, such as the CAPE and its date, or how many FRED series arrived;

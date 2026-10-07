@@ -146,3 +146,38 @@ export function summarizeIngestion({ enabled, databaseConfigured, jobs = [], now
   }
   return { verdict, lines };
 }
+
+/**
+ * Reads a source from the running app instead of calling its provider again.
+ *
+ * Run beside the app, a second process has none of its caches and its own
+ * per-minute rate limiter, so it repeated the app's provider calls and drew
+ * 429s from Twelve Data and bitcoin-data.com that the app never saw - and
+ * reported them as the app's failures. Reading the endpoint checks exactly
+ * what the app serves and costs no provider call.
+ */
+export function servedLoader(baseUrl, endpoint, { fetchImpl = globalThis.fetch, timeoutMs = 90_000 } = {}) {
+  return async () => {
+    const response = await fetchImpl(`${baseUrl}${endpoint}`, { headers: { Accept: 'application/json' }, signal: AbortSignal.timeout(timeoutMs) });
+    let body = null;
+    try {
+      body = await response.json();
+    } catch {
+      body = null;
+    }
+    if (!response.ok) throw new Error(`${endpoint} answered ${response.status}${body?.error ? `: ${body.error}` : ''}`);
+    return body;
+  };
+}
+
+/** The running app's base URL if it answers its health check, else null. */
+export async function findRunningApp(baseUrl, { fetchImpl = globalThis.fetch, timeoutMs = 3_000 } = {}) {
+  try {
+    const response = await fetchImpl(`${baseUrl}/api/health`, { signal: AbortSignal.timeout(timeoutMs) });
+    if (!response.ok) return null;
+    const health = await response.json();
+    return { baseUrl, commit: health?.build?.shortCommit ?? null };
+  } catch {
+    return null;
+  }
+}
