@@ -444,6 +444,31 @@ Every API response carries an `X-TradeGate-Build` header with the short commit o
 docker build --build-arg GIT_SHA=$(git rev-parse HEAD) -t tradegate .
 ```
 
+## Workspace Snapshots
+
+`GET /api/snapshot` records every published reading in one pass: each model's version, status, state, score and the date of the data behind it, the observation date of every macro input series, the build commit, and any section that failed to load. `?download=1` serves it as a JSON file and `?format=csv` as a spreadsheet, one row per reading with the snapshot time and commit on every row. Cells that a spreadsheet would run as a formula are defused.
+
+The Workspace snapshot panel on the Markets page downloads both. Its compare button takes a saved JSON snapshot and lists what has changed since, with a cause for each change:
+
+- **new data**: the date behind the reading moved, or for a macro reading, one of its input series printed;
+- **model changed**: the version differs, so the two numbers come from different logic and are not comparable;
+- **same data**: same version and data date but a different answer, usually an upstream revision;
+- **undated**: the reading carries no date of its own, so nothing says whether its data moved.
+
+Readings are found by walking the payloads rather than from a hand-kept list, so a new model appears in snapshots without being registered anywhere.
+
+## Dark Theme
+
+The stylesheet is written light-first with literal colours. At build time `src/darkTheme.js`, a Vite plugin, derives a dark counterpart for every light colour that has no hand-written `html[data-theme='dark']` rule:
+
+- text is lightened to at least 5.5:1 against the dark surfaces;
+- light surfaces become dark ones of the same hue;
+- light borders become dark hairlines;
+- data marks are held to 3:1;
+- text dimmed with opacity is floored at 0.8.
+
+Hand-written dark rules always take precedence. A test fails if a hand-written dark text colour drops below 4.5:1.
+
 ## Reliability Rules
 
 - Missing provider data returns unavailable; it is never silently replaced with a sample value.

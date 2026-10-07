@@ -5,6 +5,7 @@ import { changeOverSpan, formatPercent, formatSpanLabel, formatTimestamp, format
 import { buildRoute, parseRoute } from './routing.js';
 import { addSymbolToList, normalizeWatchlists } from './watchlistRules.js';
 import { SCREENER_COLUMNS, ariaSortFor, nextSortState, sortRows } from './screenerSort.js';
+import { compareSnapshots } from './snapshotDiff.js';
 
 const navItems = [
   ['⌘', 'Overview'],
@@ -820,7 +821,7 @@ function TrackRecordTable({ record, current = null, title = 'TRACK RECORD', stat
   return <div className="track-record">
     <div className="track-title">
       <p className="section-kicker">{title}</p>
-      <div className="track-tabs">{record.horizons.map((entry) => <button key={entry.days} className={entry.days === horizon.days ? 'active' : ''} onClick={() => setDays(entry.days)}>{entry.days}d</button>)}</div>
+      <div className="track-tabs">{record.horizons.map((entry) => <button key={entry.days} className={entry.days === horizon.days ? 'active' : ''} aria-pressed={entry.days === horizon.days} onClick={() => setDays(entry.days)}>{entry.days}d</button>)}</div>
     </div>
     <div className="track-head"><span>{stateLabel}</span><span>Before {record.holdoutFrom}</span><span>Held out since</span><span>Vs all weeks</span></div>
     {horizon.states.map((state) => <div className={`track-row ${state.key === current ? 'current' : ''}`} key={state.key}>
@@ -1124,8 +1125,8 @@ function SignalRecordsPanel({ records }) {
     </div>
     {published ? <>
       <div className="track-tabs signal-asset-tabs">
-        <button className={!active ? 'active' : ''} onClick={() => setSelected(null)}>Pooled</button>
-        {assets.map((asset) => <button key={asset.key} className={active?.key === asset.key ? 'active' : ''} onClick={() => setSelected(asset.key)}>{asset.name}{asset.regime ? ` \u00b7 ${asset.regime}` : ''}</button>)}
+        <button className={!active ? 'active' : ''} aria-pressed={!active} onClick={() => setSelected(null)}>Pooled</button>
+        {assets.map((asset) => <button key={asset.key} className={active?.key === asset.key ? 'active' : ''} aria-pressed={active?.key === asset.key} onClick={() => setSelected(asset.key)}>{asset.name}{asset.regime ? ` \u00b7 ${asset.regime}` : ''}</button>)}
       </div>
       {record?.read ? <p className="dca-read">{record.read}</p> : null}
       <TrackRecordTable key={active?.key ?? 'pooled'} record={record} current={active?.regime ?? null} title={active ? `${active.name.toUpperCase()} \u00b7 NOW ${String(active.regime ?? '').toUpperCase()}${Number.isFinite(active.score) ? ` (${active.score})` : ''}` : 'POOLED ACROSS ASSETS'} stateLabel="Regime" assumption="the score assumes" />
@@ -1200,6 +1201,94 @@ function ModelRegistryPanel({ registry }) {
       <ul>{model.failureModes.map((mode) => <li key={mode}>{mode}</li>)}</ul>
     </details>)}
     <p className="model-footnote">Every response carries the commit that produced it in an X-TradeGate-Build header{registry.build?.startedAt ? `; this server started ${registry.build.startedAt.slice(0, 16).replace('T', ' ')} UTC on Node ${registry.build.node}` : ''}. A version string changes when a model’s logic does, so a number captured from the page can be traced to the code behind it.</p>
+  </article>;
+}
+
+const SNAPSHOT_CAUSES = {
+  data: { label: 'new data', title: 'The date behind the reading moved, or for a macro reading its input series printed.' },
+  model: { label: 'model changed', title: 'The model version differs, so the two readings come from different logic and are not comparable.' },
+  undated: { label: 'undated', title: 'This reading carries no date of its own, so the snapshot cannot say whether its data moved.' },
+  unexplained: { label: 'same data', title: 'Same version, same data date, different answer: usually an upstream revision or an undated input.' },
+};
+
+function snapshotValue(side) {
+  if (side.status === 'unavailable') return 'unavailable';
+  const parts = [side.state, Number.isFinite(side.score) ? String(side.score) : null].filter(Boolean);
+  return parts.length ? parts.join(' · ') : side.status;
+}
+
+function formatSnapshotTime(iso) {
+  return typeof iso === 'string' ? `${iso.slice(0, 16).replace('T', ' ')} UTC` : 'unknown time';
+}
+
+function SnapshotPanel() {
+  const [state, setState] = React.useState({ status: 'idle' });
+  const compareWith = async (file) => {
+    if (!file) return;
+    setState({ status: 'loading', file: file.name });
+    try {
+      let earlier;
+      try {
+        earlier = JSON.parse(await file.text());
+      } catch {
+        setState({ status: 'invalid', reason: `${file.name} is not JSON. Compare takes a snapshot saved with Download JSON.` });
+        return;
+      }
+      const response = await fetch('/api/snapshot', { headers: { Accept: 'application/json' } });
+      if (!response.ok) throw new Error(`The current snapshot could not be taken (${response.status}).`);
+      const diff = compareSnapshots(earlier, await response.json());
+      setState(diff.status === 'compared' ? { status: 'compared', diff, file: file.name } : { status: 'invalid', reason: diff.reason });
+    } catch (error) {
+      setState({ status: 'invalid', reason: error.message });
+    }
+  };
+  const diff = state.diff;
+  return <article className="panel snapshot-panel">
+    <div className="panel-title">
+      <div>
+        <p className="section-kicker">WORKSPACE SNAPSHOT</p>
+        <h3>Save every reading with its data date, model version and build</h3>
+      </div>
+    </div>
+    <p className="snapshot-intro">A snapshot records each model’s status, state, score and the date of the data behind it, plus the observation date of every macro input. Compare a saved one with now to see what moved and why.</p>
+    <div className="snapshot-actions">
+      <a className="snapshot-button" href="/api/snapshot?download=1" download>Download JSON</a>
+      <a className="snapshot-button" href="/api/snapshot?format=csv" download>Download CSV</a>
+      <label className="snapshot-button snapshot-compare">
+        Compare with a saved snapshot
+        <input type="file" accept="application/json,.json" onChange={(event) => { compareWith(event.target.files?.[0]); event.target.value = ''; }} />
+      </label>
+    </div>
+    {state.status === 'loading' ? <p className="snapshot-note">Taking a current snapshot to compare with {state.file}…</p> : null}
+    {state.status === 'invalid' ? <p className="snapshot-note snapshot-error" role="alert">{state.reason}</p> : null}
+    {state.status === 'compared' ? <div className="snapshot-diff">
+      <p className="snapshot-summary">
+        {formatSnapshotTime(diff.from.takenAt)} to {formatSnapshotTime(diff.to.takenAt)}
+        {Number.isFinite(diff.elapsedDays) ? ` (${diff.elapsedDays} ${diff.elapsedDays === 1 ? 'day' : 'days'})` : ''}.{' '}
+        {diff.changes.length ? `${diff.changes.length} ${diff.changes.length === 1 ? 'reading' : 'readings'} changed, ${diff.unchanged} did not.` : `Nothing changed across ${diff.unchanged} readings.`}
+        {diff.codeChanged ? ` The code changed too (${diff.from.commit} to ${diff.to.commit}).` : ''}
+        {diff.swapped ? ' The saved file was newer than now, so it is treated as the later side.' : ''}
+      </p>
+      {diff.changes.length ? <div className="snapshot-causes">
+        {Object.entries(SNAPSHOT_CAUSES).filter(([key]) => diff.byCause[key]).map(([key, cause]) => <span key={key} className={`snapshot-cause cause-${key}`} title={cause.title}>{diff.byCause[key]} {cause.label}</span>)}
+      </div> : null}
+      {diff.changes.length ? <div className="snapshot-table" role="table" aria-label="Changed readings">
+        <div className="snapshot-row snapshot-head" role="row"><span role="columnheader">Reading</span><span role="columnheader">Was</span><span role="columnheader">Now</span><span role="columnheader">Why</span></div>
+        {diff.changes.map((change) => <div className="snapshot-row" role="row" key={change.key}>
+          <span role="cell"><b>{change.name}</b><small>{change.key}</small></span>
+          <span role="cell" data-label="Was">{snapshotValue(change.from)}{change.from.asOf ? <small>{String(change.from.asOf).slice(0, 10)}</small> : null}</span>
+          <span role="cell" data-label="Now">{snapshotValue(change.to)}{change.delta !== null ? <i className={change.delta > 0 ? 'delta-up' : 'delta-down'}> {change.delta > 0 ? '+' : ''}{change.delta}</i> : null}{change.to.asOf ? <small>{String(change.to.asOf).slice(0, 10)}</small> : null}</span>
+          <span role="cell" data-label="Why"><span className={`snapshot-cause cause-${change.cause}`} title={SNAPSHOT_CAUSES[change.cause].title}>{SNAPSHOT_CAUSES[change.cause].label}</span>{change.cause === 'model' ? <small>{change.from.version} to {change.to.version}</small> : null}</span>
+        </div>)}
+      </div> : null}
+      <p className="snapshot-note">
+        {diff.vintages.advanced.length
+          ? `${diff.vintages.advanced.length} of ${diff.vintages.compared} macro inputs printed since: ${diff.vintages.advanced.map((series) => `${series.id} (${series.from} to ${series.to})`).join(', ')}.`
+          : diff.vintages.compared ? `None of the ${diff.vintages.compared} macro inputs printed a new observation in between.` : 'Neither snapshot carried macro input dates.'}
+        {diff.appeared.length ? ` New since: ${diff.appeared.map((entry) => entry.name).join(', ')}.` : ''}
+        {diff.disappeared.length ? ` No longer published: ${diff.disappeared.map((entry) => entry.name).join(', ')}.` : ''}
+      </p>
+    </div> : null}
   </article>;
 }
 
@@ -1609,6 +1698,7 @@ function MarketsDashboard({ data }) {
     <SignalRecordsPanel records={data.signalRecords} />
     <CrossCheckPanel check={data.crossCheck} />
     <ModelRegistryPanel registry={data.models} />
+    <SnapshotPanel />
     <section className="heatmap-bottom-grid">
       <article className={`heatmap-method panel ${heatmap?.status === 'calculated' ? '' : 'preview-section'}`}><p className="section-kicker">MODEL DISCIPLINES</p><h3>One screen, seven lenses.</h3><p>Scores combine trend, cross-market alignment, positioning, volatility, and liquidity rather than relying on price direction alone.</p><div><span>Score</span><span>Regime</span><span>Alignment</span><span>Trend</span><span>Crowding</span><span>Volatility</span><span>Liquidity</span></div></article>
       <article className={`heatmap-alert panel ${heatmapRisk?.status === 'calculated' ? '' : 'preview-section'}`}><p className="section-kicker">WEAKEST LINK · {heatmapRisk?.status?.toUpperCase() ?? 'UNAVAILABLE'}</p><h3>{heatmapRisk?.headline ? `${heatmapRisk.headline.type}${heatmapRisk.headline.symbol ? `: ${heatmapRisk.headline.symbol}` : ''}` : heatmapRisk?.status === 'calculated' ? 'No single weak link stands out.' : 'Awaiting calculated markets.'}</h3><p>{heatmapRisk?.read ?? 'The heatmap must publish calculated scores before its weakest link can be identified.'}</p>{(heatmapRisk?.concerns ?? []).slice(1, 4).map((concern) => <div className="risk-concern" key={concern.key}><b>{concern.type}{concern.symbol ? ` · ${concern.symbol}` : ''}</b><small>{concern.read}</small></div>)}{heatmapRisk?.headline?.symbol ? <button onClick={() => { setSelectedSymbol(heatmapRisk.headline.symbol); setGroup('All'); }}>Show {heatmapRisk.headline.symbol} in the matrix →</button> : null}</article>
