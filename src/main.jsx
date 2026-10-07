@@ -1014,7 +1014,7 @@ function CryptoOptionsPanel({ options }) {
  * and what its cash management is doing to bank reserves. Each auction is
  * judged against its own tenor's history, never against another tenor's.
  */
-function TreasuryFundingPanel({ treasury }) {
+function TreasuryFundingPanel({ treasury, weeklyNet = null }) {
   const status = treasury?.status ?? 'unavailable';
   const published = status !== 'unavailable';
   const auctions = treasury?.auctions;
@@ -1053,7 +1053,7 @@ function TreasuryFundingPanel({ treasury }) {
 
       <div className="options-stats treasury-stats">
         {cash?.status === 'calculated' ? <div><span>Cash balance, 4 weeks</span><b className={cash.liquidityEffect28Billions <= -50 ? 'negative' : cash.liquidityEffect28Billions >= 50 ? 'positive' : ''}>{Number.isFinite(cash.change28Billions) ? `${cash.change28Billions > 0 ? '+' : ''}$${cash.change28Billions}bn` : '\u2014'}</b><small>{Number.isFinite(cash.liquidityEffect28Billions) ? `${cash.liquidityEffect28Billions >= 0 ? 'adds' : 'drains'} $${Math.abs(cash.liquidityEffect28Billions)}bn of reserves` : 'change unavailable'}</small></div> : null}
-        {net?.status === 'calculated' ? <div><span>Daily net liquidity</span><b>${net.trillions.toFixed(2)}tn</b><small>{Number.isFinite(net.change28Billions) ? `${net.change28Billions >= 0 ? '+' : '\u2212'}$${Math.abs(net.change28Billions)}bn over 4 weeks` : `as of ${net.asOf}`}</small></div> : null}
+        {net?.status === 'calculated' ? <div title="Two figures for one quantity, both correct: this one subtracts the Treasury's daily cash balance as of the latest statement, carrying the Fed balance sheet up to seven days; the Macro page aligns every leg to the Fed's weekly Wednesday print."><span>Daily net liquidity</span><b>${net.trillions.toFixed(2)}tn</b><small>{Number.isFinite(net.change28Billions) ? `${net.change28Billions >= 0 ? '+' : '\u2212'}$${Math.abs(net.change28Billions)}bn over 4 weeks` : `as of ${net.asOf}`}</small>{Number.isFinite(weeklyNet?.trillions) ? <small>Macro page, weekly: ${weeklyNet.trillions.toFixed(2)}tn{weeklyNet.asOf ? ` (${String(weeklyNet.asOf).slice(0, 10)})` : ''}</small> : null}</div> : null}
         {debt?.status === 'calculated' ? <div><span>Debt held by public</span><b>${debt.heldByPublicTrillions}tn</b><small>{Number.isFinite(debt.growth90dAnnualizedPercent) ? `${debt.growth90dAnnualizedPercent}% ann. (90d) vs ${debt.growth1yPercent}% (1y)` : ''}</small></div> : null}
         {interest?.status === 'calculated' ? <div><span>Avg rate, marketable debt</span><b>{interest.averageRate}%</b><small>{`${interest.change12mPoints >= 0 ? '+' : ''}${interest.change12mPoints.toFixed(2)} pts in 12 months`}</small></div> : null}
         {wall?.status === 'calculated' ? <div><span>Matures within 12 months</span><b>{wall.within12mPercent}%</b><small>{`$${wall.within12mTrillions}tn \u00b7 avg ${wall.weightedYearsToMaturity}y to maturity`}</small></div> : null}
@@ -2336,7 +2336,7 @@ function MacroDashboard({ data }) {
       </article>
     </section>
 
-    <TreasuryFundingPanel treasury={data.treasury} />
+    <TreasuryFundingPanel treasury={data.treasury} weeklyNet={Number.isFinite(data.liquidity?.netLiquidity) ? { trillions: data.liquidity.netLiquidity / 1e6, asOf: data.liquidity.model?.asOf ?? null } : null} />
 
     <section className="workspace-pulse panel">
       <div className="panel-title"><div><p className="section-kicker">WORKSPACE PULSE · CALCULATED</p><h3>Headlines from every calculated workspace</h3></div><span className="data-pill">Live</span></div>
