@@ -815,7 +815,7 @@ function TrackRecordTable({ record, current = null, title = 'TRACK RECORD', stat
   const horizon = record.horizons.find((entry) => entry.days === days) ?? record.horizons[0];
   const cell = (stats) => (Number.isFinite(stats?.median)
     ? <span><b className={stats.median > 0 ? 'positive' : stats.median < 0 ? 'negative' : ''}>{stats.median > 0 ? '+' : ''}{stats.median}%</b><small>{stats.hitRate}% up &middot; n<sub>eff</sub> {stats.effective}{stats.status === 'thin' ? ' (thin)' : ''}</small></span>
-    : <span><b className="track-insufficient">&mdash;</b><small>{stats?.n ? <>n<sub>eff</sub> {stats.effective}, too few</> : 'no weeks in this tier'}</small></span>);
+    : <span><b className="track-insufficient">&mdash;</b><small>{stats?.n ? <>n<sub>eff</sub> {stats.effective}, too few</> : `no weeks in this ${stateLabel.toLowerCase()}`}</small></span>);
   const score = (value) => (Number.isFinite(value) ? `${value > 0 ? '+' : ''}${value}` : 'n/a');
   return <div className="track-record">
     <div className="track-title">
@@ -1689,9 +1689,11 @@ function RegimeHistoryPanel({ history }) {
       {recent.length ? <div className="stat-head"><span>Transition</span><span>Benchmark after</span></div> : null}
       {recent.map((entry) => <div className="stat-row" key={entry.date}>
         <span><strong>{`${entry.from} → ${entry.to}`}</strong><small>{`${entry.date} · score ${entry.score}`}</small></span>
-        <b className={Number.isFinite(entry.forward63) ? (entry.forward63 >= 0 ? 'positive' : 'negative') : ''}>{Number.isFinite(entry.forward21) ? `${entry.forward21 > 0 ? '+' : ''}${entry.forward21}% / ` : 'pending / '}{Number.isFinite(entry.forward63) ? `${entry.forward63 > 0 ? '+' : ''}${entry.forward63}%` : 'pending'}</b>
+        <b className={Number.isFinite(entry.forward63) ? (entry.forward63 >= 0 ? 'positive' : 'negative') : ''}>{history.benchmarkAvailable === false ? 'no benchmark' : <>{Number.isFinite(entry.forward21) ? `${entry.forward21 > 0 ? '+' : ''}${entry.forward21}% / ` : 'pending / '}{Number.isFinite(entry.forward63) ? `${entry.forward63 > 0 ? '+' : ''}${entry.forward63}%` : 'pending'}</>}</b>
       </div>)}
       {recent.length ? null : <div className="equity-empty">No regime change inside the recomputed window.</div>}
+      {history.trackRecord?.read ? <p className="dca-read">{history.trackRecord.read}</p> : null}
+      <TrackRecordTable record={history.trackRecord} current={history.current?.regime} title={`WHAT FOLLOWED EACH REGIME \u00b7 ${history.trackRecord?.benchmark ?? 'SPY'}`} stateLabel="Regime" assumption="the regime model assumes" />
     </> : <div className="equity-empty">{history?.reason ?? 'At least two overlapping macro histories are required.'}</div>}
     <p className="model-footnote">{published ? `${history.read} ${history.reason ?? ''}` : ''} {history?.methodology ?? ''}</p>
   </article>;

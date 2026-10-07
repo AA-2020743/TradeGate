@@ -1,5 +1,5 @@
 import { calculateTechnicalSnapshot } from './analytics.js';
-import { evaluateTrackRecord, forwardObservations } from './trackRecord.js';
+import { describeCurrentState, evaluateTrackRecord, forwardObservations } from './trackRecord.js';
 
 /**
  * Whether technical-v1's regimes have meant anything.
@@ -53,39 +53,9 @@ export function technicalTrackRecord({ points, annualizationDays = 252 }) {
   return { ...record, observations, windowDays: WINDOW_DAYS, current: today ? { regime: today.regime, score: today.score } : null };
 }
 
-function signed(value) {
-  return `${value > 0 ? '+' : ''}${value}%`;
-}
-
-/**
- * What followed the regime the asset is in now, at the longest horizon whose
- * held-out cell has evidence, and whether the regimes ranked as the score
- * assumes.
- */
+/** What followed the regime the asset is in now; see describeCurrentState. */
 export function describeTechnicalRecord(record, name, regime) {
-  if (record?.status !== 'calculated') return { text: null, days: null };
-  const byLength = [...record.horizons].sort((left, right) => right.days - left.days);
-  const stateIn = (horizon) => horizon.states.find((state) => state.key === regime);
-  const horizon = byLength.find((entry) => Number.isFinite(stateIn(entry)?.heldOut.stats.median))
-    ?? byLength.find((entry) => Number.isFinite(stateIn(entry)?.development.stats.median))
-    ?? byLength.at(-1);
-  const state = stateIn(horizon);
-  const parts = [];
-  const legs = [];
-  if (Number.isFinite(state?.development.stats.median)) legs.push(`${signed(state.development.stats.median)} before ${record.holdoutFrom} against ${signed(horizon.development.all.median)} for all weeks`);
-  if (Number.isFinite(state?.heldOut.stats.median)) legs.push(`${signed(state.heldOut.stats.median)} since then against ${signed(horizon.heldOut.all.median)}`);
-  parts.push(legs.length
-    ? `${name} weeks scored ${regime} were followed over ${horizon.days} days by a median ${legs.join(', and ')}`
-    : `${name} has spent too few independent weeks scored ${regime} to say what followed`);
-  const ordered = horizon.heldOut.ordering ?? horizon.development.ordering;
-  const block = Number.isFinite(horizon.heldOut.ordering) ? 'held-out block' : 'development history';
-  if (Number.isFinite(ordered)) {
-    if (ordered >= 0.6) parts.push(`across the ${block} the regimes ranked as the score assumes, Constructive followed by the best returns and Guarded by the worst`);
-    else if (ordered <= -0.2) parts.push(`across the ${block} the regimes did not rank as the score assumes: Guarded weeks were followed by better returns than Constructive ones`);
-    else parts.push(`across the ${block} the regimes ranked only loosely in the order the score assumes`);
-  }
-  const text = parts.join('; ');
-  return { text: `${text.charAt(0).toUpperCase()}${text.slice(1)}. This describes what followed, not what will.`, days: horizon.days };
+  return describeCurrentState(record, { name, state: regime, phrase: (state) => `weeks scored ${state}`, subject: 'regimes', best: 'Constructive', worst: 'Guarded' });
 }
 
 export { ORDER as TECHNICAL_REGIMES };

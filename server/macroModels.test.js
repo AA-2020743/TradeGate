@@ -443,3 +443,36 @@ test('point-in-time vintages turn the study into a backtest and never use a late
   assert.equal(backtest.current.regime, hindsight.current.regime, 'the latest score is unaffected by an old revision');
   assert.equal(backtest.transitions.length >= 1, true);
 });
+
+test('the macro regime history carries a track record benchmarked on SPY, labelled hindsight without vintages', () => {
+  // Conditions cycle between easy and tight; SPY rises in the easy stretches
+  // and falls in the tight ones, so the regimes should rank as assumed.
+  const count = 2600;
+  const easy = (index) => Math.sin(index / 160) > 0;
+  const model = calculateRegimeTransitions([
+    series('financialConditions', (index) => (easy(index) ? -0.6 : 0.9), { count }),
+    series('highYieldSpread', (index) => (easy(index) ? 3.1 : 7.5), { count }),
+    series('vix', (index) => (easy(index) ? 13 : 32), { count }),
+  ], Array.from({ length: count }, (_, index) => ({ date: day(index), value: 100 * Math.exp(0.0004 * index) * (1 + (0.25 * Math.sin((index + 40) / 160))) })));
+  const record = model.trackRecord;
+  assert.equal(record.status, 'calculated');
+  assert.equal(record.benchmark, 'SPY');
+  assert.deepEqual(record.horizons.map((horizon) => horizon.days), [30, 90, 180]);
+  assert.equal(record.horizons[0].states[0].key, 'Expansion / risk-on');
+  assert.match(record.read, /^SPY weeks in /);
+  assert.match(record.read, /not what will\.$/);
+  // No vintages were supplied, so the record must carry the hindsight caveat
+  // itself rather than leave it to the methodology footnote.
+  assert.match(record.limits, /hindsight, not a backtest/);
+});
+
+test('without a benchmark the track record refuses and says why', () => {
+  const count = 1400;
+  const model = calculateRegimeTransitions([
+    series('financialConditions', (index) => (index < 700 ? -0.6 : 0.9), { count }),
+    series('highYieldSpread', (index) => (index < 700 ? 3.1 : 7.5), { count }),
+    series('vix', (index) => (index < 700 ? 13 : 32), { count }),
+  ], []);
+  assert.equal(model.trackRecord.status, 'unavailable');
+  assert.match(model.trackRecord.reason, /benchmark/);
+});

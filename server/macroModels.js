@@ -1,4 +1,5 @@
 import { mean, medianSpacingDays, ordinal, percentileRank } from './statistics.js';
+import { describeCurrentState, evaluateTrackRecord } from './trackRecord.js';
 /**
  * Macro models that sit alongside the liquidity and regime engines: the yield
  * curve, market-implied inflation, the rate path the curve is pricing, the
@@ -619,6 +620,20 @@ export function calculateRegimeTransitions(seriesList, benchmarkPoints, { stepDa
   }
   dwell[runRegime] = [...(dwell[runRegime] ?? []), runLength * stepDays];
 
+  // What followed each regime, with the shared track-record disciplines -
+  // held-out block, edge against the base rate, effective sample size. The
+  // transitions list says what happened after each change; this says what
+  // each regime has been worth on average, and whether that held up.
+  const horizons = [{ days: 30, sessions: 21 }, { days: 90, sessions: 63 }, { days: 180, sessions: 126 }];
+  const trackRecord = benchmark.length
+    ? evaluateTrackRecord({
+      observations: samples.map((sample) => ({ date: sample.date, label: sample.regime, returns: Object.fromEntries(horizons.map((horizon) => [horizon.days, forwardReturn(sample.date, horizon.sessions)])) })),
+      order: REGIME_BANDS.map((band) => ({ key: band.name, label: band.name })),
+      horizons,
+      stepDays,
+    })
+    : { status: 'unavailable', reason: 'A benchmark history is needed to measure what followed each regime.' };
+
   const current = samples.at(-1);
   const currentRun = (() => {
     let length = 1;
@@ -633,12 +648,30 @@ export function calculateRegimeTransitions(seriesList, benchmarkPoints, { stepDa
     asOf: current.date,
     reason: benchmark.length ? null : 'Forward returns need a benchmark history; the transition dates publish without them.',
     stepDays,
+    // Without a benchmark the forward returns are not pending, they are not
+    // measurable; the panel needs to tell those apart.
+    benchmarkAvailable: benchmark.length > 0,
     vintage: pointInTime ? 'point-in-time' : 'current',
     pointInTimeKeys: Object.keys(pointInTimeByKey),
     samples: samples.length,
     coveredFrom: samples[0].date,
     transitions,
     current: { regime: current.regime, score: current.score, runDays: currentRun, typicalDwellDays: typicalDwell },
+    trackRecord: trackRecord.status === 'calculated'
+      ? (() => {
+        const described = describeCurrentState(trackRecord, { name: 'SPY', state: current.regime, phrase: (state) => `weeks in ${state}`, subject: 'regimes', best: REGIME_BANDS[0].name, worst: REGIME_BANDS.at(-1).name });
+        return {
+          ...trackRecord,
+          benchmark: 'SPY',
+          read: described.text,
+          readHorizonDays: described.days,
+          // The record inherits the vintage of the scores it describes. Scored
+          // on revised data, it is a hindsight study and must say so where the
+          // numbers are, not only in the methodology.
+          limits: `${trackRecord.limits}${pointInTime ? '' : ' These regimes were scored on the current vintage of their inputs, so revisions that did not exist at the time are in use: this record is hindsight, not a backtest.'}`,
+        };
+      })()
+      : trackRecord,
     dwellDays: Object.fromEntries(Object.entries(dwell).map(([regime, lengths]) => [regime, { episodes: lengths.length, medianDays: Math.round(mean(lengths)) }])),
     read: `${transitions.length} regime ${transitions.length === 1 ? 'change' : 'changes'} across ${samples.length} recomputed readings since ${samples[0].date}. The tape has been in ${current.regime} for ${currentRun} days${typicalDwell ? `, against a ${typicalDwell}-day average for that regime in this history` : ''}.`,
     methodology: `The score is recomputed every ${stepDays} days from financial conditions, high-yield spreads and volatility using the same weights and clamps the live regime applies to them, then bucketed into the same bands. ${pointInTime ? `Point-in-time observations are used for ${Object.keys(pointInTimeByKey).join(', ')}: each score sees only values that had actually been published by that date, which makes those legs a genuine backtest rather than hindsight.` : 'This is a hindsight study rather than a backtest: the series carry their current vintage, so a revised observation is used at a date when its revision did not exist. A FRED API key would unlock the point-in-time vintages that fix this.'} Forward returns are the benchmark's move over the following sessions from the transition date, and are omitted where the history does not extend far enough.`,

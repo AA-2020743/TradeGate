@@ -151,4 +151,43 @@ export function evaluateTrackRecord({ observations, order, horizons, stepDays = 
   };
 }
 
+function signed(value) {
+  return `${value > 0 ? '+' : ''}${value}%`;
+}
+
+/**
+ * One paragraph on what followed the state a signal is in now, at the longest
+ * horizon whose held-out cell has evidence, and whether the states ranked as
+ * the signal assumes. Shared so every track record words its finding the
+ * same way.
+ *
+ * `phrase(state)` turns a state into the subject of the sentence ("weeks
+ * scored Constructive"); `best` and `worst` name the two ends of the order the
+ * signal claims; `subject` is what ranked ("regimes", "tiers").
+ */
+export function describeCurrentState(record, { name, state, phrase, subject, best, worst }) {
+  if (record?.status !== 'calculated' || !state) return { text: null, days: null };
+  const byLength = [...record.horizons].sort((left, right) => right.days - left.days);
+  const stateIn = (horizon) => horizon.states.find((entry) => entry.key === state);
+  const horizon = byLength.find((entry) => Number.isFinite(stateIn(entry)?.heldOut.stats.median))
+    ?? byLength.find((entry) => Number.isFinite(stateIn(entry)?.development.stats.median))
+    ?? byLength.at(-1);
+  const cell = stateIn(horizon);
+  const legs = [];
+  if (Number.isFinite(cell?.development.stats.median)) legs.push(`${signed(cell.development.stats.median)} before ${record.holdoutFrom} against ${signed(horizon.development.all.median)} for all weeks`);
+  if (Number.isFinite(cell?.heldOut.stats.median)) legs.push(`${signed(cell.heldOut.stats.median)} since then against ${signed(horizon.heldOut.all.median)}`);
+  const parts = [legs.length
+    ? `${name} ${phrase(state)} were followed over ${horizon.days} days by a median ${legs.join(', and ')}`
+    : `${name} has spent too few independent ${phrase(state)} to say what followed`];
+  const ordered = horizon.heldOut.ordering ?? horizon.development.ordering;
+  const block = Number.isFinite(horizon.heldOut.ordering) ? 'held-out block' : 'development history';
+  if (Number.isFinite(ordered)) {
+    if (ordered >= 0.6) parts.push(`across the ${block} the ${subject} ranked as assumed, ${best} followed by the best returns and ${worst} by the worst`);
+    else if (ordered <= -0.2) parts.push(`across the ${block} the ${subject} did not rank as assumed: ${worst} was followed by better returns than ${best}`);
+    else parts.push(`across the ${block} the ${subject} ranked only loosely in the assumed order`);
+  }
+  const text = parts.join('; ');
+  return { text: `${text.charAt(0).toUpperCase()}${text.slice(1)}. This describes what followed, not what will.`, days: horizon.days };
+}
+
 export { MINIMUM_EFFECTIVE, SOLID_EFFECTIVE };
