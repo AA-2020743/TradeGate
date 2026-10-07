@@ -18,6 +18,7 @@ import { calculateCryptoOptionsSurface } from './cryptoOptions.js';
 import { calculateTreasuryFunding } from './treasuryFunding.js';
 import { calculateFactorReturns, joinFactorTables, parseFrenchDaily } from './factorReturns.js';
 import { readLargestTextEntry } from './zip.js';
+import { combineFundingVenues, okxPositioningRows } from './derivativesVenues.js';
 import { resolveVintage, screenVintage } from './vintage.js';
 import { cryptoHistoryGranularity, describeSeriesFreshness, isCryptoHistoryStale, isCotReportStale, isDailyCloseStale, isFredSeriesAbandoned, isFredSeriesStale, isPbocObservationStale, monthsBetween } from './freshness.js';
 import { percentileRank } from './statistics.js';
@@ -756,39 +757,63 @@ export function smaOf(values, window) {
 }
 
 
-async function getBinanceFundingLeg() {
-  const [current, bybit, history] = await Promise.all([
-    fetchJson('https://fapi.binance.com/fapi/v1/premiumIndex?symbol=BTCUSDT'),
-    fetchJson('https://api.bybit.com/v5/market/tickers?category=linear&symbol=BTCUSDT'),
-    fetchJson('https://fapi.binance.com/fapi/v1/fundingRate?symbol=BTCUSDT&limit=1000'),
-  ]);
-  const binanceRate = asNumber(current?.lastFundingRate);
-  const bybitRate = asNumber(bybit?.result?.list?.[0]?.fundingRate);
-  const rates = [binanceRate, bybitRate].filter((value) => Number.isFinite(value));
-  if (!rates.length) throw new Error('No funding-rate venue responded');
-  const aggregate = rates.reduce((sum, value) => sum + value, 0) / rates.length;
-  const historicalRates = (Array.isArray(history) ? history : []).map((row) => asNumber(row?.fundingRate)).filter((value) => Number.isFinite(value));
-  return {
-    binanceRate,
-    bybitRate,
-    venues: rates.length,
-    aggregate8h: aggregate,
-    annualizedPercent: Math.round(aggregate * 3 * 365 * 10000) / 100,
-    percentile: historicalRates.length > 60 ? percentileOf(historicalRates, aggregate) : null,
-    observations: historicalRates.length,
-    windowDays: Math.round(historicalRates.length / 3),
-  };
+const OKX = 'https://www.okx.com/api/v5';
+
+async function getOkx(path, params) {
+  const url = new URL(`${OKX}/${path}`);
+  for (const [key, value] of Object.entries(params)) url.searchParams.set(key, String(value));
+  const payload = await fetchJson(url);
+  if (payload?.code !== undefined && String(payload.code) !== '0') throw new Error(`OKX ${path}: ${payload.msg || `code ${payload.code}`}`);
+  return payload?.data ?? [];
 }
 
-async function getBinancePositioningLeg() {
-  const rows = await fetchJson('https://fapi.binance.com/futures/data/openInterestHist?symbol=BTCUSDT&period=1d&limit=30');
-  if (!Array.isArray(rows) || rows.length < 9) throw new Error('Binance open-interest history unavailable');
-  const quadrant = calculateOpenInterestQuadrant(rows.map((row) => ({
-    openInterest: asNumber(row.sumOpenInterest),
-    openInterestValue: asNumber(row.sumOpenInterestValue),
-  })));
-  if (quadrant.status !== 'calculated') throw new Error(quadrant.reason);
-  return quadrant;
+/** OKX keeps about three months of funding history, 100 rows a page. */
+async function getOkxFundingHistory(pages = 4) {
+  const rates = [];
+  let after = null;
+  for (let page = 0; page < pages; page += 1) {
+    const rows = await getOkx('public/funding-rate-history', { instId: 'BTC-USDT-SWAP', limit: 100, ...(after ? { after } : {}) });
+    if (!rows.length) break;
+    rates.push(...rows.map((row) => asNumber(row.fundingRate)));
+    after = rows.at(-1).fundingTime;
+  }
+  return rates.filter((value) => Number.isFinite(value)).reverse();
+}
+
+async function getFundingLeg() {
+  const settle = (promise) => promise.then((value) => value, (error) => (error instanceof Error ? error : new Error(String(error))));
+  const [binance, bybit, okx, binanceHistory] = await Promise.all([
+    settle(fetchJson('https://fapi.binance.com/fapi/v1/premiumIndex?symbol=BTCUSDT').then((row) => asNumber(row?.lastFundingRate))),
+    settle(fetchJson('https://api.bybit.com/v5/market/tickers?category=linear&symbol=BTCUSDT').then((row) => asNumber(row?.result?.list?.[0]?.fundingRate))),
+    settle(getOkx('public/funding-rate', { instId: 'BTC-USDT-SWAP' }).then((rows) => asNumber(rows?.[0]?.fundingRate))),
+    settle(fetchJson('https://fapi.binance.com/fapi/v1/fundingRate?symbol=BTCUSDT&limit=1000').then((rows) => (Array.isArray(rows) ? rows.map((row) => asNumber(row?.fundingRate)) : []))),
+  ]);
+  // Binance keeps the longest history; OKX's three months stand in when
+  // Binance refuses the address.
+  let history = Array.isArray(binanceHistory) && binanceHistory.length > 60 ? { venue: 'Binance', rates: binanceHistory } : null;
+  if (!history) {
+    const okxHistory = await settle(getOkxFundingHistory());
+    if (Array.isArray(okxHistory) && okxHistory.length > 60) history = { venue: 'OKX', rates: okxHistory };
+  }
+  return combineFundingVenues({ venues: { binance, bybit, okx }, history });
+}
+
+async function getPositioningLeg() {
+  try {
+    const rows = await fetchJson('https://fapi.binance.com/futures/data/openInterestHist?symbol=BTCUSDT&period=1d&limit=30');
+    if (!Array.isArray(rows) || rows.length < 9) throw new Error('Binance open-interest history unavailable');
+    const quadrant = calculateOpenInterestQuadrant(rows.map((row) => ({ openInterest: asNumber(row.sumOpenInterest), openInterestValue: asNumber(row.sumOpenInterestValue) })));
+    if (quadrant.status !== 'calculated') throw new Error(quadrant.reason);
+    return { ...quadrant, venue: 'Binance' };
+  } catch (binanceError) {
+    const [openInterest, candles] = await Promise.all([
+      getOkx('rubik/stat/contracts/open-interest-volume', { ccy: 'BTC', period: '1D' }),
+      getOkx('market/candles', { instId: 'BTC-USDT-SWAP', bar: '1Dutc', limit: 60 }),
+    ]).catch((okxError) => { throw new Error(`Binance: ${binanceError.message}; OKX: ${okxError.message}`); });
+    const quadrant = calculateOpenInterestQuadrant(okxPositioningRows({ openInterest, candles }));
+    if (quadrant.status !== 'calculated') throw new Error(`Binance: ${binanceError.message}; OKX: ${quadrant.reason}`);
+    return { ...quadrant, venue: 'OKX', fallbackReason: `Binance: ${binanceError.message}` };
+  }
 }
 
 let bitcoinOnchainMemo = null;
@@ -1707,11 +1732,21 @@ export async function getBitcoinCycleWorkspace() {
       bitcoinOnchainMemo = { mvrvZ, sth };
       return { mvrvZ, sth, memoized: false };
     };
+    // Funding and positioning are independent; one failing used to discard
+    // the other, or stop it being fetched at all.
     const derivativesLoader = async () => {
-      const funding = await getBinanceFundingLeg();
-      const positioning = await getBinancePositioningLeg();
+      const [fundingResult, positioningResult] = await Promise.allSettled([getFundingLeg(), getPositioningLeg()]);
+      const funding = fundingResult.status === 'fulfilled' ? fundingResult.value : bitcoinDerivativesMemo?.funding ?? null;
+      const positioning = positioningResult.status === 'fulfilled' ? positioningResult.value : bitcoinDerivativesMemo?.positioning ?? null;
+      if (!funding && !positioning) throw new Error(`Funding: ${fundingResult.reason?.message}; positioning: ${positioningResult.reason?.message}`);
       bitcoinDerivativesMemo = { funding, positioning };
-      return { funding, positioning, memoized: false };
+      return {
+        funding,
+        positioning,
+        memoized: fundingResult.status !== 'fulfilled' || positioningResult.status !== 'fulfilled',
+        failedLegs: [['funding', fundingResult], ['positioning', positioningResult]].filter(([, result]) => result.status === 'rejected').map(([leg]) => leg),
+        errors: [['Funding', fundingResult], ['Positioning', positioningResult]].filter(([, result]) => result.status === 'rejected').map(([leg, result]) => `${leg}: ${result.reason?.message}`),
+      };
     };
     const [priceResult, barsResult, onchainResult, derivativesResult, stablecoinsResult, macroResult] = await Promise.allSettled([
       getYahooHistory('BTC-USD', '10y'),
@@ -1823,16 +1858,25 @@ export async function getBitcoinCycleWorkspace() {
       asOf: sthLatest.d,
     } : { status: 'unavailable', reason: `bitcoin-data.com STH realized-price feed is required: ${onchainResult.reason?.message ?? onchainResult.reason ?? 'payload missing'}` };
 
-    const fundingResult = derivativesResult.status === 'fulfilled' ? { status: 'fulfilled', value: derivativesResult.value.funding } : derivativesResult;
-    const positioningResult = derivativesResult.status === 'fulfilled' ? { status: 'fulfilled', value: derivativesResult.value.positioning } : derivativesResult;
+    // Each leg is judged on its own value: the loader now returns whichever
+    // legs answered, so a fulfilled loader can still carry a null leg, and a
+    // leg reused from an earlier run is labelled as such rather than as live.
+    const derivativeErrors = derivativesResult.status === 'fulfilled' ? derivativesResult.value.errors ?? [] : [derivativesResult.reason?.message ?? String(derivativesResult.reason)];
+    const fundingValue = derivativesData?.funding ?? null;
+    const positioningValue = derivativesData?.positioning ?? null;
+    // A whole-loader failure means both legs, if present, came from the memo.
+    const failedLegs = derivativesResult.status === 'fulfilled' ? derivativesResult.value.failedLegs ?? [] : ['funding', 'positioning'];
 
-    const leverage = fundingResult.status === 'fulfilled' ? {
-      status: 'calculated',
-      ...fundingResult.value,
-      note: `Aggregate of ${fundingResult.value.venues} venues; percentile over ~${fundingResult.value.windowDays}-day Binance history.`,
-    } : { status: 'unavailable', reason: `Perpetual funding endpoints are unreachable: ${fundingResult.reason?.message ?? fundingResult.reason}` };
+    const leverage = fundingValue ? {
+      status: failedLegs.includes('funding') ? 'provisional' : 'calculated',
+      ...(failedLegs.includes('funding') ? { staleReason: 'Last successful reading reused: no funding venue answered this time.' } : {}),
+      ...fundingValue,
+      note: `Average of ${fundingValue.venues} venue${fundingValue.venues === 1 ? '' : 's'} (${Object.keys(fundingValue.venueRates ?? {}).join(', ') || 'unnamed'}); percentile against ${fundingValue.historyVenue ? `~${fundingValue.windowDays} days of ${fundingValue.historyVenue} history` : 'no venue history'}.${fundingValue.failedVenues?.length ? ` Not answering: ${fundingValue.failedVenues.map((entry) => entry.venue).join(', ')}.` : ''}`,
+    } : { status: 'unavailable', reason: `No perpetual funding venue answered: ${derivativeErrors.join('; ') || 'no response'}` };
 
-    const positioning = positioningResult.status === 'fulfilled' ? { status: 'calculated', ...positioningResult.value } : { status: 'unavailable', reason: `Binance open-interest history is unreachable: ${positioningResult.reason?.message ?? positioningResult.reason}` };
+    const positioning = positioningValue
+      ? { status: failedLegs.includes('positioning') ? 'provisional' : 'calculated', ...positioningValue, ...(failedLegs.includes('positioning') ? { staleReason: 'Last successful reading reused: neither Binance nor OKX answered this time.' } : {}) }
+      : { status: 'unavailable', reason: `Open-interest history is unreachable on Binance and OKX: ${derivativeErrors.join('; ') || 'no response'}` };
 
     const etfFlows = { status: 'unavailable', reason: 'Farside is Cloudflare-blocked from this environment; no keyless ETF-flow source is available.' };
 
@@ -3099,7 +3143,7 @@ export function getProviderHealth() {
     wikipedia: { configured: true, mode: 'keyless-public', purpose: 'S&P 500 constituent universe' },
     coingecko: { configured: true, mode: config.coingeckoApiKey ? `credentialed-${config.coingeckoPlan}` : 'keyless-public', purpose: 'Bitcoin on-chain proxies and global market aggregates (dominance, total capitalization)' },
     defiLlama: { configured: true, mode: 'keyless-public', purpose: 'Aggregate stablecoin supply history for the issuance liquidity leg' },
-    binanceBybit: { configured: true, mode: 'keyless-public', purpose: 'Perpetual funding rates, open-interest history, and BTC cycle derivatives legs' },
+    binanceBybit: { configured: true, mode: 'keyless-public', purpose: 'Perpetual funding rates (Binance, Bybit, OKX), open-interest history (Binance, OKX fallback), and BTC cycle derivatives legs' },
     bitcoinData: { configured: true, mode: 'keyless-public', serialized: true, purpose: 'MVRV Z-score and short-term holder realized price' },
     cftc: { configured: true, mode: config.cftcAppToken ? 'app-token' : 'keyless-public', purpose: 'Commitments of Traders positioning for equities, FX, and metals' },
     multpl: { configured: true, mode: 'keyless-public', purpose: 'Trailing S&P 500 earnings yield for the equity risk-premium proxy' },

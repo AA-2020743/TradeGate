@@ -306,6 +306,10 @@ Two readings come out of it. *Within* an asset, where its gold ratio sits in its
 
 The equity indices are read on price **and** total return because the difference is not cosmetic: a price index can be flat in gold terms over a decade while the same index with dividends reinvested is well ahead — and that gap is the real return, delivered as income rather than as price.
 
+### Derivatives venues
+
+BTC perpetual funding is read from Binance, Bybit and OKX, and open interest from Binance with OKX as the fallback. Every venue restricts some region — Binance's futures API answers US addresses with 451 and Bybit's CDN refuses some cloud ranges with 403 — so each venue is its own result and the funding read names the venues it was built from and the ones that did not answer. The cross-venue spread is published, and the percentile names the venue whose history it is ranked against (Binance's ~330 days, or OKX's three months when Binance refuses). OKX publishes daily open interest in dollars only, so its coin-equivalent is rebuilt from the same day's close before the price/open-interest quadrant reads it. A leg that fails on a refresh reuses its last good reading, labelled provisional with the reason, never as live.
+
 ### `factor-returns-v1`
 
 Which equity factors are working, from the Kenneth R. French Data Library — the reference source for academic factor returns, no key. Six long-short US factors: market, size, value, profitability, investment and momentum. A factor's return is what the tilt earned, not what the market did.
