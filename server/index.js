@@ -134,7 +134,7 @@ app.use('/api', (request, response, next) => {
 app.get('/api/health', async (_request, response) => {
   const database = await getDatabaseHealth();
   const databaseDegraded = database.configured && (!database.connected || !database.migrated);
-  response.json({ status: databaseDegraded ? 'degraded' : 'ok', asOf: new Date().toISOString(), providers: { ...getProviderHealth(), database }, blockedSources: getBlockedSources(), writes: describeWriteProtection(config.writeToken), build: buildInfo });
+  response.json({ status: databaseDegraded ? 'degraded' : 'ok', asOf: new Date().toISOString(), providers: { ...getProviderHealth(), database }, blockedSources: getBlockedSources(), writes: describeWriteProtection(config.writeToken), ingestion: { enabled: config.ingestionEnabled && isDatabaseConfigured(), read: config.ingestionEnabled ? (isDatabaseConfigured() ? 'Scheduled ingestion is running.' : 'Ingestion is enabled but no database is configured.') : 'INGESTION_ENABLED is not true: stored history, model outputs and alerts are not being updated.' }, build: buildInfo });
 });
 
 app.get('/api/models', (_request, response) => {

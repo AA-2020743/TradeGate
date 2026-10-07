@@ -136,6 +136,23 @@ export async function startIngestionRun(jobName) {
   return result.rows[0].id;
 }
 
+/**
+ * Runs a stopped process left marked "running". Nothing else closes them, so a
+ * restart mid-run left the status page reporting a job in progress for weeks.
+ * Only rows older than the longest job are touched, so a run another process
+ * (npm run ingest:once) has just started is left alone.
+ */
+export async function closeAbandonedIngestionRuns(olderThanMinutes = 120) {
+  if (!pool) return 0;
+  const result = await pool.query(
+    `UPDATE ingestion_runs
+     SET status = 'failed', finished_at = NOW(), error_message = 'Abandoned: the process stopped before the run finished.'
+     WHERE status = 'running' AND started_at < NOW() - make_interval(mins => $1)`,
+    [olderThanMinutes],
+  );
+  return result.rowCount ?? 0;
+}
+
 export async function finishIngestionRun(id, status, observationsWritten, details = {}, errorMessage = null) {
   if (!pool || id === null) return;
   await pool.query(

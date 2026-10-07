@@ -23,6 +23,7 @@ import { TECHNICAL_REGIMES, describeTechnicalRecord, technicalTrackRecord } from
 import { evaluateTrackRecord } from './trackRecord.js';
 import { crossCheckSeries, dataQualityFor, gateOnDataQuality, summarizeCrossChecks } from './priceCrossCheck.js';
 import { resolveVintage, screenVintage } from './vintage.js';
+import { parseBisMonthlySeries } from './bisData.js';
 import { INDEX_VALUATION_VERSION, SHILLER_FALLBACK_URLS, SHILLER_PAGE, calculateIndexValuation, findShillerDataLink, parseShillerRows } from './indexValuation.js';
 import { readWorkbook, sheetRows } from './xls.js';
 import { ALERT_HORIZONS, ALERT_OUTCOMES_VERSION, BENCHMARK, claimFor, scoreAlertOutcomes } from './alertOutcomes.js';
@@ -89,7 +90,7 @@ const SURPRISE_INDICATORS = [
 const PBOC_SERIES_CODE = 'M.CN.B.XDC.CNY.N';
 const PBOC_SERIES_ID = 'BIS_WS_CBTA_CN';
 
-async function getPbocAssets() {
+async function getPbocFromDbnomics() {
   const url = new URL(`https://api.db.nomics.world/v22/series/BIS/WS_CBTA/${PBOC_SERIES_CODE}`);
   url.searchParams.set('observations', '1');
   const payload = await fetchJson(url);
@@ -97,13 +98,32 @@ async function getPbocAssets() {
   const periods = doc?.period ?? [];
   const values = doc?.value ?? [];
   if (!periods.length) throw new Error('DBnomics returned no observations for BIS WS_CBTA China');
-  const history = periods
+  return periods
     .map((period, index) => ({ date: `${period}-01`, value: Number(values[index]), realtimeStart: null, realtimeEnd: null }))
     .filter((item) => Number.isFinite(item.value))
     .reverse();
+}
+
+async function getPbocFromBis() {
+  return parseBisMonthlySeries(await fetchText(`https://stats.bis.org/api/v1/data/WS_CBTA/${PBOC_SERIES_CODE}/all?format=csv`));
+}
+
+/**
+ * The PBoC balance sheet from the BIS itself, with the DBnomics mirror as a
+ * fallback; whichever carries the newer month wins. The mirror alone stalled
+ * at 2025-03 while the BIS published through 2026-06.
+ */
+export async function getPbocAssets() {
+  const [bis, mirror] = await Promise.allSettled([getPbocFromBis(), getPbocFromDbnomics()]);
+  const candidates = [
+    bis.status === 'fulfilled' && bis.value.length ? { via: 'BIS statistics API', history: bis.value } : null,
+    mirror.status === 'fulfilled' && mirror.value.length ? { via: 'DBnomics mirror', history: mirror.value } : null,
+  ].filter(Boolean).sort((left, right) => right.history[0].date.localeCompare(left.history[0].date));
+  if (!candidates.length) {
+    throw new Error(`Neither the BIS nor DBnomics returned the PBoC series (BIS: ${bis.reason?.message ?? 'empty'}; DBnomics: ${mirror.reason?.message ?? 'empty'})`);
+  }
+  const { via, history } = candidates[0];
   const observation = history[0];
-  const value = observation?.value;
-  if (!observation || !Number.isFinite(value)) throw new Error('DBnomics returned no usable observation for BIS WS_CBTA China');
   return {
     id: PBOC_SERIES_ID,
     key: 'pbocBalanceSheet',
@@ -111,7 +131,8 @@ async function getPbocAssets() {
     unit: 'CNY billions',
     multiplier: 1,
     provider: 'BIS',
-    value,
+    via,
+    value: observation.value,
     date: observation.date,
     stored: false,
     stale: isPbocObservationStale(observation.date),
@@ -3151,9 +3172,9 @@ export async function getLiquiditySnapshot(options = {}) {
 
     const errors = failedSeries.map((item) => `${item.id} (${item.name}) could not be fetched: ${item.reason}${item.covered ? ' - a stored observation is standing in.' : ''}`);
     if (!config.fredApiKey && !storedSeries.length && !series.length) errors.push('FRED is unreachable and no stored observations are available');
-    // Not every macro series is FRED's: the PBoC balance sheet is BIS data
-    // through DBnomics, and a stale one sent readers to the wrong provider.
-    const named = (item) => `${item.id}${item.provider && item.provider !== 'FRED' ? ` (${item.provider} via DBnomics)` : ''}`;
+    // Not every macro series is FRED's: the PBoC balance sheet is BIS data, and
+    // a stale one sent readers to the wrong provider.
+    const named = (item) => `${item.id}${item.provider && item.provider !== 'FRED' ? ` (${item.provider}${item.via ? `, ${item.via}` : ''})` : ''}`;
     // An abandoned series is also stale; it is reported once, as abandoned.
     const staleOnly = staleLiveSeries.filter((item) => !item.abandoned);
     if (staleOnly.length) errors.push(`Latest macro responses are stale: ${staleOnly.map(named).join(', ')}`);

@@ -68,3 +68,23 @@ test('the report ends with a count of what answered', () => {
   assert.match(report, /^FAIL +C/m);
   assert.match(report, /1 of 3 sources fully answered, 1 partly, 1 not at all\.$/);
 });
+
+test('ingestion is reported off, stale, or current - a six-week stall cannot pass silently', async () => {
+  const { summarizeIngestion } = await import('./sourceCheck.js');
+  const now = Date.parse('2026-10-07T21:00:00Z');
+  const jobs = [
+    { job_name: 'fred-liquidity', status: 'partial', started_at: '2026-08-24T12:37:00Z', finished_at: '2026-08-24T12:37:57Z', error_message: null },
+    { job_name: 'market-history', status: 'running', started_at: '2026-08-24T12:30:00Z', finished_at: null, error_message: null },
+  ];
+  const off = summarizeIngestion({ enabled: false, databaseConfigured: true, jobs, now });
+  assert.equal(off.verdict, 'failed');
+  assert.match(off.lines[0], /INGESTION_ENABLED is not true/);
+  assert.match(off.lines[1], /fred-liquidity: partial, 44 days ago/);
+  assert.match(off.lines[2], /market-history: running, started 2026-08-24T12:30 and never finished/);
+  const stale = summarizeIngestion({ enabled: true, databaseConfigured: true, jobs, now });
+  assert.equal(stale.verdict, 'partial');
+  const current = summarizeIngestion({ enabled: true, databaseConfigured: true, jobs: [{ job_name: 'fred-liquidity', status: 'completed', started_at: '2026-10-07T19:00:00Z', finished_at: '2026-10-07T19:01:00Z' }], now });
+  assert.equal(current.verdict, 'ok');
+  assert.match(current.lines[0], /completed, 2h ago/);
+  assert.equal(summarizeIngestion({ enabled: true, databaseConfigured: false, now }).verdict, 'failed');
+});

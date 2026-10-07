@@ -745,4 +745,6 @@ It calls each source-backed loader once, using the app's own `.env`, keys and da
 - **the state of each sub-part;**
 - **the upstream reason for anything that failed**, for example `403`, a timeout, or no database.
 
-Sources run one at a time, so a shared upstream's rate limit is not mistaken for a failure. Add `-- --json` for machine-readable output. The check changes nothing except the in-memory cache.
+Sources run one at a time, so a shared upstream's rate limit is not mistaken for a failure.
+
+The report ends with the state of ingestion. Scheduled ingestion is off unless `.env` sets `INGESTION_ENABLED=true` and a database is configured. Without it the app still serves every model from live calls, but stored history, model outputs, the consensus history and the alert record stop updating. `/api/health` also reports whether ingestion is on. Runs left open by a process that stopped mid-run are closed as failed (abandoned) the next time the scheduler starts. Add `-- --json` for machine-readable output. The check changes nothing except the in-memory cache.

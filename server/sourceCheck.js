@@ -94,3 +94,28 @@ export function formatReport(summaries) {
   lines.push('', `${ok} of ${summaries.length} sources fully answered, ${partial} partly, ${summaries.length - ok - partial} not at all.`);
   return lines.join('\n');
 }
+
+/**
+ * Whether stored history is being kept current. Ingestion is off unless
+ * INGESTION_ENABLED=true, and a server running without it serves every model
+ * from live calls while its stored series and alert record silently age.
+ */
+export function summarizeIngestion({ enabled, databaseConfigured, jobs = [], now = Date.now(), staleAfterHours = 36 }) {
+  if (!databaseConfigured) return { verdict: 'failed', lines: ['No database is configured, so nothing is stored and ingestion cannot run.'] };
+  const lines = [];
+  let verdict = enabled ? 'ok' : 'failed';
+  if (!enabled) lines.push('INGESTION_ENABLED is not true in .env: the scheduler is off, so stored history, model outputs and alerts are not being updated.');
+  if (!jobs.length) {
+    lines.push('No ingestion run has ever been recorded.');
+    return { verdict: 'failed', lines };
+  }
+  for (const job of jobs) {
+    const finished = job.finished_at ? new Date(job.finished_at).getTime() : null;
+    const ageHours = finished === null ? null : Math.round((now - finished) / 3_600_000);
+    const stale = ageHours === null || ageHours > staleAfterHours;
+    if (stale && verdict === 'ok') verdict = 'partial';
+    const when = ageHours === null ? `started ${new Date(job.started_at).toISOString().slice(0, 16)} and never finished` : ageHours < 48 ? `${ageHours}h ago` : `${Math.round(ageHours / 24)} days ago`;
+    lines.push(`${job.job_name}: ${job.status}, ${when}${job.error_message ? ` - ${job.error_message}` : ''}`);
+  }
+  return { verdict, lines };
+}

@@ -88,15 +88,20 @@ function compare(rows) {
   };
 }
 
-export function crossCheckSeries({ symbol, name, primary, shadow, primarySource, shadowSource, allowOffset = false, window = 60 }) {
+export function crossCheckSeries({ symbol, name, primary, shadow, primarySource, shadowSource, allowOffset = false, window = 60, today = new Date().toISOString().slice(0, 10) }) {
   const base = { symbol, name, primarySource, shadowSource };
   // "Yahoo (stored)" is still Yahoo: compare the provider, not the label.
   const providerOf = (source) => String(source ?? '').replace(/\s*\(stored\)$/i, '');
   if (!primarySource || !shadowSource || providerOf(primarySource) === providerOf(shadowSource)) {
     return { ...base, status: 'not-independent', reason: `The primary history came from ${primarySource ?? 'an unknown source'}, the same provider as the shadow, so agreement would prove nothing. A Twelve Data key or stored history supplies an independent primary.` };
   }
-  const left = byDate(primary);
-  const right = byDate(shadow);
+  // Completed days only. Today's point is a live price, not a close, and the
+  // two sources sample it at different moments; with a one-day offset in
+  // play, one side's live price was set against the other's settled close
+  // and bitcoin went to review on every afternoon's move.
+  const completed = (map) => new Map([...map].filter(([date]) => date < today));
+  const left = completed(byDate(primary));
+  const right = completed(byDate(shadow));
   const offsets = allowOffset ? [0, -1, 1] : [0];
   const candidates = offsets
     .map((offset) => ({ offset, rows: pair(left, right, offset, window) }))

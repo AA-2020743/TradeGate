@@ -7,7 +7,8 @@
  * Run it on the server after a deploy: it uses the same .env, keys and
  * database as the app, and touches nothing but the in-memory cache.
  */
-import { closeDatabase } from './database.js';
+import { config } from './config.js';
+import { closeDatabase, getIngestionStatus, isDatabaseConfigured } from './database.js';
 import {
   getAccumulationSchedules,
   getAlertOutcomes,
@@ -20,7 +21,7 @@ import {
   getPriceCrossCheck,
   getTreasuryFunding,
 } from './providers.js';
-import { formatReport, summarizeSource } from './sourceCheck.js';
+import { formatReport, summarizeIngestion, summarizeSource } from './sourceCheck.js';
 
 const TIMEOUT_MS = 90_000;
 
@@ -107,7 +108,15 @@ try {
     summaries.push(summarizeSource(source, result, Date.now() - started));
     if (!process.argv.includes('--json')) process.stderr.write(`checked ${source.name}\n`);
   }
-  console.log(process.argv.includes('--json') ? JSON.stringify(summaries, null, 2) : formatReport(summaries));
+  const jobs = isDatabaseConfigured() ? await getIngestionStatus().catch(() => []) : [];
+  const ingestion = summarizeIngestion({ enabled: config.ingestionEnabled, databaseConfigured: isDatabaseConfigured(), jobs });
+  if (process.argv.includes('--json')) {
+    console.log(JSON.stringify({ sources: summaries, ingestion }, null, 2));
+  } else {
+    console.log(formatReport(summaries));
+    console.log(`\n${{ ok: 'OK  ', partial: 'PART', failed: 'FAIL' }[ingestion.verdict]}  Ingestion (stored history)`);
+    for (const line of ingestion.lines) console.log(`      ${line}`);
+  }
 } finally {
   await closeDatabase();
 }

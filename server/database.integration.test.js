@@ -16,6 +16,7 @@ import { readdir, readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
+import { createHash } from 'node:crypto';
 
 const connectionString = process.env.TEST_DATABASE_URL;
 const describe = connectionString ? test : test.skip;
@@ -23,11 +24,27 @@ const describe = connectionString ? test : test.skip;
 let database;
 let pool;
 
+// Applies and records each migration the way server/migrate.js does. Running
+// the SQL without recording it left schema_migrations empty, so the health
+// check - which reads that table - reported this database unmigrated and two
+// tests here failed against a correct implementation.
 async function migrate(client) {
   const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
   const directory = path.join(root, 'database', 'migrations');
   const files = (await readdir(directory)).filter((file) => file.endsWith('.sql')).sort();
-  for (const file of files) await client.query(await readFile(path.join(directory, file), 'utf8'));
+  await client.query(`CREATE TABLE IF NOT EXISTS schema_migrations (
+    filename TEXT PRIMARY KEY,
+    checksum TEXT,
+    applied_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  )`);
+  for (const file of files) {
+    const sql = await readFile(path.join(directory, file), 'utf8');
+    await client.query(sql);
+    await client.query(
+      'INSERT INTO schema_migrations (filename, checksum) VALUES ($1, $2) ON CONFLICT (filename) DO NOTHING',
+      [file, createHash('sha256').update(sql).digest('hex')],
+    );
+  }
 }
 
 async function reset() {
@@ -114,6 +131,23 @@ describe('an ingestion run records its own outcome', async () => {
   assert.equal(row.rows[0].status, 'completed');
   assert.equal(Number(row.rows[0].observations_written), 42);
   assert.equal(row.rows[0].details.note, 'ok');
+});
+
+describe('runs a stopped process left open are closed as failed and abandoned; a fresh one is left alone', async () => {
+  await reset();
+  const orphan = await database.startIngestionRun('market-history');
+  await pool.query(`UPDATE ingestion_runs SET started_at = NOW() - INTERVAL '44 days' WHERE id = $1`, [orphan]);
+  const fresh = await database.startIngestionRun('fred-liquidity');
+  const finished = await database.startIngestionRun('market-snapshot');
+  await pool.query(`UPDATE ingestion_runs SET started_at = NOW() - INTERVAL '3 days' WHERE id = $1`, [finished]);
+  await database.finishIngestionRun(finished, 'completed', 1);
+  assert.equal(await database.closeAbandonedIngestionRuns(120), 1);
+  const rows = Object.fromEntries((await pool.query('SELECT id, status, finished_at, error_message FROM ingestion_runs')).rows.map((row) => [String(row.id), row]));
+  assert.equal(rows[String(orphan)].status, 'failed', 'the status constraint has no separate abandoned state');
+  assert.ok(rows[String(orphan)].finished_at);
+  assert.match(rows[String(orphan)].error_message, /stopped before the run finished/);
+  assert.equal(rows[String(fresh)].status, 'running', 'a run started minutes ago may belong to another live process');
+  assert.equal(rows[String(finished)].status, 'completed');
 });
 
 describe('an unavailable model is never stored', async () => {

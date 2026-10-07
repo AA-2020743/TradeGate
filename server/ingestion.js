@@ -4,6 +4,7 @@ import { observationTimestamp, runIngestionJob } from './ingestionRun.js';
 import { buildWorkspaceNarrative, calculateTechnicalSnapshot, isPublished } from './analytics.js';
 import {
   acquireIngestionLock,
+  closeAbandonedIngestionRuns,
   finishIngestionRun,
   hasIngestedMarketHistoriesSince,
   insertModelAlerts,
@@ -448,6 +449,9 @@ export function startIngestionScheduler() {
     }
   };
 
+  void closeAbandonedIngestionRuns()
+    .then((closed) => { if (closed) logger.warn('Closed ingestion runs a stopped process left open', { closed }); })
+    .catch((error) => logger.warn('Could not close abandoned ingestion runs', { error }));
   void runMarket();
   void runMacro();
   void runHistory({ skipCompletedToday: true });

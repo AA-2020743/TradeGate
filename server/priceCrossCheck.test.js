@@ -113,3 +113,26 @@ test('only an independent pass verifies; anything that could not compare is unve
     assert.equal(gated.dataQuality.status, 'unverified');
   }
 });
+
+test('today’s live price is not compared: bitcoin no longer goes to review on an intraday move', () => {
+  // Reproduces the server: CoinGecko stamps each close at 00:00 of the next
+  // day and ends with a live price dated today; Yahoo stamps closes on their
+  // own date and ends with today's live bar. Today moved 2.6% intraday.
+  const day = (offset) => new Date(Date.UTC(2026, 9, 7) + offset * 86_400_000).toISOString().slice(0, 10);
+  const close = (offset) => 60000 * (1 + 0.01 * Math.sin(offset));
+  const coingecko = [];
+  const yahoo = [];
+  for (let offset = -90; offset < 0; offset += 1) {
+    coingecko.push({ date: day(offset + 1), value: close(offset) });
+    yahoo.push({ date: day(offset), value: close(offset) });
+  }
+  coingecko.push({ date: day(0), value: close(-1) * 1.026 });
+  yahoo.push({ date: day(0), value: close(-1) * 1.0262 });
+  const args = { symbol: 'BTC', name: 'Bitcoin', primary: coingecko, shadow: yahoo, primarySource: 'CoinGecko', shadowSource: 'Yahoo', allowOffset: true };
+  const check = crossCheckSeries({ ...args, today: day(0) });
+  assert.equal(check.status, 'pass', JSON.stringify(check.breaches));
+  assert.equal(check.offsetDays, -1);
+  assert.ok(check.latestDate < day(0));
+  // Comparing the live points too is what sent it to review.
+  assert.equal(crossCheckSeries({ ...args, today: day(1) }).status, 'review');
+});
