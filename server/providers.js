@@ -13,7 +13,7 @@ import { calculateDataSurprise, calculateLiquidityPayoff, calculateNominalDecomp
 import { calculateGrowthNowcast, calculateInflationNowcast, calculateLiquidityCalendar, calculateRatePath, calculateRegimeTransitions, calculateYieldCurveModel, seriesPoints } from './macroModels.js';
 import { buildCryptoVerdict, buildFxVerdict, buildMetalsVerdict } from './verdict.js';
 import { calculateRatioValuation, compareIncomeContribution, rankHardMoneyStrength } from './hardMoney.js';
-import { allocateAcrossAssets, calculateAccumulationSchedule, describeLadder } from './accumulation.js';
+import { allocateAcrossAssets, calculateAccumulationSchedule, describeLadder, pooledTrackRecord } from './accumulation.js';
 import { calculateCryptoOptionsSurface } from './cryptoOptions.js';
 import { calculateTreasuryFunding } from './treasuryFunding.js';
 import { resolveVintage, screenVintage } from './vintage.js';
@@ -1498,14 +1498,20 @@ export async function getAccumulationSchedules() {
           key: asset.key,
           name: asset.name,
           points: result.value.map((point) => ({ date: String(point.timestamp).slice(0, 10), value: point.value })),
+          keepObservations: true,
         }),
       };
     });
 
+    // Pool the weekly observations first, then drop them: they are thousands
+    // of rows per asset and exist only to build the pooled record.
+    const pooled = pooledTrackRecord(schedules);
+    for (const schedule of schedules) delete schedule.weeklyObservations;
     const published = schedules.filter((schedule) => schedule.status !== 'unavailable');
     return {
       ...resolveVintage(published.map((schedule) => ({ name: schedule.name, asOf: schedule.asOf }))),
       version: 'accumulation-v1',
+      trackRecord: pooled,
       status: published.length ? (published.length === schedules.length ? 'calculated' : 'provisional') : 'unavailable',
       reason: published.length ? undefined : 'No asset returned enough history to be ranked against itself.',
       schedules,

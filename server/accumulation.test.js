@@ -8,6 +8,9 @@ import {
   prepareAccumulationSeries,
   riskAt,
   riskAtPrice,
+  weeklyTierReads,
+  accumulationTrackRecord,
+  pooledTrackRecord,
 } from './accumulation.js';
 
 /** Deterministic noise: the tests must not be able to pass or fail by luck. */
@@ -252,4 +255,54 @@ test('a schedule publishes the limit of ranking an asset against only itself', (
   const schedule = calculateAccumulationSchedule({ key: 'x', name: 'X', points: cyclical() });
   assert.match(schedule.limits, /own history/);
   assert.match(schedule.limits, /near its highs/);
+});
+
+test('the track record classifies the same weeks the backtest bought', () => {
+  // One pass of walk-forward reads feeds both. If they were computed apart,
+  // the record could describe weeks the backtest classified differently.
+  const points = cyclical();
+  const prepared = prepareAccumulationSeries(points);
+  const reads = weeklyTierReads(prepared);
+  const { observations } = accumulationTrackRecord(prepared, reads);
+  const byDate = new Map(reads.map((read) => [prepared.dates[read.index], read.tier.key]));
+  assert.ok(observations.length > 100);
+  for (const observation of observations) assert.equal(observation.label, byDate.get(observation.date));
+  const direct = riskAt(prepared, reads[50].index);
+  assert.equal(direct.tier.key, reads[50].tier.key);
+});
+
+test('weekly observations are kept only when asked for, so they never reach a browser by accident', () => {
+  const plain = calculateAccumulationSchedule({ key: 'x', name: 'X', points: cyclical() });
+  assert.equal(plain.weeklyObservations, undefined);
+  assert.equal(plain.trackRecord.status, 'calculated');
+  const kept = calculateAccumulationSchedule({ key: 'x', name: 'X', points: cyclical(), keepObservations: true });
+  assert.ok(kept.weeklyObservations.length > 100);
+  assert.ok(kept.weeklyObservations.every((observation) => observation.asset === 'x'));
+  // The price-point count shares the obvious name and must survive both paths.
+  assert.equal(plain.observations, 2600);
+  assert.equal(kept.observations, 2600);
+});
+
+test('the per-asset read uses the longest horizon that has held-out evidence, and says which', () => {
+  const schedule = calculateAccumulationSchedule({ key: 'x', name: 'X', points: cyclical() });
+  assert.match(schedule.trackRecord.read, /over (30|90|180) days/);
+  assert.match(schedule.trackRecord.read, /not what will\.$/);
+  // Never a number for a cell that had none.
+  assert.doesNotMatch(schedule.trackRecord.read, /undefined|NaN|null/);
+});
+
+test('the pooled read writes only the clauses it has evidence for', () => {
+  const schedules = [0, 260, 520].map((phase, index) => calculateAccumulationSchedule({ key: `a${index}`, name: `A${index}`, points: cyclical(phase, index + 3), keepObservations: true }));
+  const pooled = pooledTrackRecord(schedules);
+  assert.equal(pooled.status, 'calculated');
+  assert.equal(pooled.assets.length, 3);
+  assert.doesNotMatch(pooled.read, /too few weeks after|undefined|NaN/);
+  assert.match(pooled.limits, /move together/);
+  assert.equal(pooledTrackRecord(schedules.slice(0, 1)).status, 'unavailable');
+});
+
+test('the table opens on the horizon the read is written about', () => {
+  const schedule = calculateAccumulationSchedule({ key: 'x', name: 'X', points: cyclical() });
+  assert.ok([30, 90, 180].includes(schedule.trackRecord.readHorizonDays));
+  assert.match(schedule.trackRecord.read, new RegExp(`over ${schedule.trackRecord.readHorizonDays} days`));
 });

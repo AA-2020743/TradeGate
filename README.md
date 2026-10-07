@@ -306,6 +306,18 @@ Two readings come out of it. *Within* an asset, where its gold ratio sits in its
 
 The equity indices are read on price **and** total return because the difference is not cosmetic: a price index can be flat in gold terms over a decade while the same index with dividends reinvested is well ahead — and that gap is the real return, delivered as income rather than as price.
 
+### Track records
+
+A model that says "deep value" or "stretched" is making an implicit claim about what comes next. `server/trackRecord.js` measures that claim: for every week a signal was in a given state, what did the asset do over the following 30, 90 and 180 days — and was that any different from what an ordinary week was followed by? It is applied first to the accumulation tiers, per asset and pooled across all six assets.
+
+Three disciplines keep it from being the flattering backtest these usually are:
+
+- **Held out.** The newest 30% of observations form a block reported separately. A pattern that exists only in the earlier block is a pattern in that block, not a property of the signal.
+- **Against the base rate, not zero.** An asset that rose in 80% of quarters makes every state look predictive of gains, so each state is compared with the median for all weeks in the same block.
+- **Effective sample size.** Weekly readings of a 90-day return overlap eleven weeks in twelve, so 52 of them carry roughly four independent observations. Every cell shows both counts; under four effective observations it publishes no statistics, under ten it is marked thin.
+
+Tier ordering is scored from −1 (exactly reversed) to +1 (cheaper tiers followed by better returns, as the ladder assumes). The per-asset read uses the longest horizon at which the current tier's held-out cell has evidence and the table opens on that same horizon, because a single asset's held-out block rarely holds enough independent 90-day windows per tier. The track record can contradict the model it describes, and is built to say so: on a momentum-driven series, deep-value weeks were followed by worse 30-day returns than stretched ones, even while the tiered schedule bought cheaper units over the full cycle. Both are true; they answer different questions.
+
 ### `treasury-funding-v1`
 
 Whether the US Treasury is finding buyers for its debt, and what its cash management is doing to bank reserves — from the Treasury's own Fiscal Data API, no key.

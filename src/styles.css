@@ -421,3 +421,17 @@ html[data-theme='dark'] .screener-search { background: #1a221d; border-color: #3
   .treasury-head, .treasury-row { grid-template-columns: minmax(0, 0.8fr) repeat(3, minmax(0, 0.9fr)) minmax(0, 0.6fr); }
   .treasury-head span:nth-child(2), .treasury-row > small:nth-child(2) { display: none; }
 }
+
+/* Track record: what followed each state, before and after the held-out cut. */
+.track-record { margin-top: 1rem; padding-top: 0.8rem; border-top: 1px solid var(--hairline, rgba(255, 255, 255, 0.1)); }
+.track-title { display: flex; justify-content: space-between; align-items: center; gap: 0.6rem; flex-wrap: wrap; }
+.track-tabs { display: flex; gap: 0.3rem; }
+.track-tabs button { font-size: 0.75rem; padding: 0.15rem 0.5rem; }
+.track-head, .track-row { display: grid; grid-template-columns: minmax(0, 0.9fr) minmax(0, 1fr) minmax(0, 1fr) minmax(0, 0.5fr); gap: 0.6rem; align-items: baseline; }
+.track-head { margin-top: 0.6rem; padding-bottom: 0.35rem; font-size: 0.7rem; letter-spacing: 0.05em; text-transform: uppercase; opacity: 0.55; border-bottom: 1px solid var(--hairline, rgba(255, 255, 255, 0.12)); }
+.track-row { padding: 0.4rem 0; border-bottom: 1px solid var(--hairline, rgba(255, 255, 255, 0.06)); }
+.track-row > span { display: flex; flex-direction: column; min-width: 0; }
+.track-row small { opacity: 0.6; font-size: 0.74em; }
+.track-row.current { box-shadow: inset 2px 0 0 var(--verdict-accent, #d2705f); padding-left: 0.5rem; margin-left: -0.5rem; }
+.track-all { font-weight: 600; border-bottom: none; }
+.track-insufficient { opacity: 0.45; }

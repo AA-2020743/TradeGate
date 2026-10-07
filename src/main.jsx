@@ -801,6 +801,40 @@ function formatLevel(value) {
 }
 
 /**
+ * What followed each state of a signal, in the development history and in
+ * the held-out block. A cell without enough independent observations shows
+ * its effective count and no statistics, so thin evidence reads as thin.
+ */
+function TrackRecordTable({ record, current = null, title = 'TRACK RECORD' }) {
+  // Open on the horizon the written read is about, so the sentence above the
+  // table and the numbers in it describe the same thing.
+  const [days, setDays] = React.useState(record?.readHorizonDays ?? 90);
+  if (!record || record.status !== 'calculated') {
+    return record?.reason ? <p className="treasury-note">{title}: {record.reason}</p> : null;
+  }
+  const horizon = record.horizons.find((entry) => entry.days === days) ?? record.horizons[0];
+  const cell = (stats) => (Number.isFinite(stats?.median)
+    ? <span><b className={stats.median > 0 ? 'positive' : stats.median < 0 ? 'negative' : ''}>{stats.median > 0 ? '+' : ''}{stats.median}%</b><small>{stats.hitRate}% up &middot; n<sub>eff</sub> {stats.effective}{stats.status === 'thin' ? ' (thin)' : ''}</small></span>
+    : <span><b className="track-insufficient">&mdash;</b><small>{stats?.n ? <>n<sub>eff</sub> {stats.effective}, too few</> : 'no weeks in this tier'}</small></span>);
+  const score = (value) => (Number.isFinite(value) ? `${value > 0 ? '+' : ''}${value}` : 'n/a');
+  return <div className="track-record">
+    <div className="track-title">
+      <p className="section-kicker">{title}</p>
+      <div className="track-tabs">{record.horizons.map((entry) => <button key={entry.days} className={entry.days === horizon.days ? 'active' : ''} onClick={() => setDays(entry.days)}>{entry.days}d</button>)}</div>
+    </div>
+    <div className="track-head"><span>Tier</span><span>Before {record.holdoutFrom}</span><span>Held out since</span><span>Vs all weeks</span></div>
+    {horizon.states.map((state) => <div className={`track-row ${state.key === current ? 'current' : ''}`} key={state.key}>
+      <span>{state.label}</span>
+      {cell(state.development.stats)}
+      {cell(state.heldOut.stats)}
+      <small className={state.consistent ? (state.heldOut.edge > 0 ? 'positive' : 'negative') : ''}>{state.consistent ? (state.heldOut.edge > 0 ? 'above both times' : 'below both times') : Number.isFinite(state.development.edge) && Number.isFinite(state.heldOut.edge) ? 'flipped' : '\u2014'}</small>
+    </div>)}
+    <div className="track-row track-all"><span>All weeks</span>{cell(horizon.development.all)}{cell(horizon.heldOut.all)}<small></small></div>
+    <p className="treasury-note">Median return over the next {horizon.days} days. Tier ordering, where +1 is exactly as the ladder assumes and &minus;1 the reverse: {score(horizon.development.ordering)} before, {score(horizon.heldOut.ordering)} held out. {record.methodology} {record.limits}</p>
+  </div>;
+}
+
+/**
  * The accumulation rule, shown as a rule rather than as a recommendation.
  *
  * Every number a reader needs to disagree with it is on the panel: the risk
@@ -892,6 +926,14 @@ function AccumulationPanel({ accumulation, only = null, title = 'ACCUMULATION RU
       {single?.backtest?.status === 'calculated' ? <p className="dca-read">
         Run weekly over {single.backtest.buys} purchases from {single.backtest.from}, the rule paid {Math.abs(single.backtest.costAdvantagePercent)}% {single.backtest.costAdvantagePercent <= 0 ? 'less' : 'more'} per unit than a flat schedule, deploying {single.backtest.capitalRatio}&times; the capital.
       </p> : null}
+
+      {single ? <>
+        {single.trackRecord?.read ? <p className="dca-read">{single.trackRecord.read}</p> : null}
+        <TrackRecordTable record={single.trackRecord} current={single.tier.key} title={`${single.name.toUpperCase()} TRACK RECORD`} />
+      </> : <>
+        {accumulation.trackRecord?.read ? <p className="dca-read">{accumulation.trackRecord.read}</p> : null}
+        <TrackRecordTable record={accumulation.trackRecord} title="POOLED TRACK RECORD" />
+      </>}
 
       {!single ? (accumulation.byClass ?? []).filter((entry) => entry.allocation?.status === 'calculated').map((entry) => <p className="dca-read" key={entry.klass}>
         <b>{entry.klass}:</b> {entry.allocation.read}

@@ -1,4 +1,5 @@
 import { ordinal, percentileRank } from './statistics.js';
+import { evaluateTrackRecord, forwardObservations } from './trackRecord.js';
 
 /**
  * How much to buy, as a function of how expensive the thing already is.
@@ -364,9 +365,29 @@ function boundariesFor(risk) {
  * comparison is cost per unit, which is scale-free, so a schedule cannot look
  * better by spending more.
  */
-export function backtestAccumulation(prepared, { cadenceSessions } = {}) {
+function weeklyStep(prepared) {
+  return Math.max(1, Math.round(CADENCE_SESSIONS_PER_WEEK / (prepared.spacingDays || 1)));
+}
+
+/**
+ * The tier at every weekly step, each read from data up to that step only.
+ * Computed once and shared: the backtest and the track record must classify
+ * the same weeks the same way, and reading them twice would let the two
+ * drift.
+ */
+export function weeklyTierReads(prepared, step = weeklyStep(prepared)) {
+  const reads = [];
+  for (let index = 0; index < prepared.values.length; index += step) {
+    const read = riskAt(prepared, index);
+    if (read?.status === 'calculated') reads.push({ index, tier: read.tier });
+  }
+  return reads;
+}
+
+export function backtestAccumulation(prepared, { cadenceSessions, reads } = {}) {
   if (prepared?.status !== 'ready') return { status: 'unavailable', reason: prepared?.reason ?? 'No usable history.' };
-  const step = cadenceSessions ?? Math.max(1, Math.round(CADENCE_SESSIONS_PER_WEEK / (prepared.spacingDays || 1)));
+  const step = cadenceSessions ?? weeklyStep(prepared);
+  const tierReads = reads ?? weeklyTierReads(prepared, step);
 
   let tieredSpend = 0;
   let tieredUnits = 0;
@@ -376,9 +397,8 @@ export function backtestAccumulation(prepared, { cadenceSessions } = {}) {
   let firstDate = null;
   let buys = 0;
 
-  for (let index = 0; index < prepared.values.length; index += step) {
-    const read = riskAt(prepared, index);
-    if (read?.status !== 'calculated') continue;
+  for (const read of tierReads) {
+    const { index } = read;
     const price = prepared.values[index];
     if (!(price > 0)) continue;
     if (!firstDate) firstDate = prepared.dates[index];
@@ -416,8 +436,79 @@ export function backtestAccumulation(prepared, { cadenceSessions } = {}) {
   };
 }
 
+const TRACK_HORIZON_DAYS = [30, 90, 180];
+
+/**
+ * What followed each tier. The ladder assumes cheaper tiers precede better
+ * returns; this measures whether they did, on a held-out block as well as
+ * the development history, against what an ordinary week was followed by.
+ */
+export function accumulationTrackRecord(prepared, reads = weeklyTierReads(prepared)) {
+  const horizons = TRACK_HORIZON_DAYS.map((days) => ({ days, sessions: Math.max(1, Math.round(days / (prepared.spacingDays || 1))) }));
+  const observations = forwardObservations({
+    dates: prepared.dates,
+    values: prepared.values,
+    samples: reads.map((read) => ({ index: read.index, label: read.tier.key })),
+    horizons,
+  });
+  return { observations, record: evaluateTrackRecord({ observations, order: TIERS.map((tier) => ({ key: tier.key, label: tier.label })), horizons, stepDays: 7 }) };
+}
+
+function signed(value) {
+  return `${value > 0 ? '+' : ''}${value}%`;
+}
+
+/**
+ * One paragraph on what followed the tier the asset is in now, and whether
+ * the ladder as a whole ranked the way it assumes.
+ *
+ * The horizon is chosen by the evidence, not fixed: a single asset's held-out
+ * block rarely holds enough independent 90-day windows per tier, and a read
+ * that always said "too short" would bury the horizons that can speak. It
+ * uses the longest horizon at which the current tier's held-out cell has
+ * statistics, and says which.
+ */
+/** The horizon the read speaks about, so the table can open on the same one. */
+export function trackRecordReadHorizon(record, tierKey) {
+  if (record?.status !== 'calculated') return null;
+  const byLength = [...record.horizons].sort((left, right) => right.days - left.days);
+  const stateIn = (horizon) => horizon.states.find((entry) => entry.key === tierKey);
+  const horizon = byLength.find((entry) => Number.isFinite(stateIn(entry)?.heldOut.stats.median))
+    ?? byLength.find((entry) => Number.isFinite(stateIn(entry)?.development.stats.median))
+    ?? record.horizons.find((entry) => entry.days === 90);
+  return horizon?.days ?? null;
+}
+
+export function describeTrackRecord(record, name, tierKey) {
+  if (record?.status !== 'calculated') return null;
+  const days = trackRecordReadHorizon(record, tierKey);
+  const horizon = record.horizons.find((entry) => entry.days === days);
+  const state = horizon?.states.find((entry) => entry.key === tierKey) ?? null;
+  if (!horizon || !state) return null;
+
+  const parts = [];
+  const before = state.development.stats;
+  const after = state.heldOut.stats;
+  const legs = [];
+  if (Number.isFinite(before.median)) legs.push(`${signed(before.median)} before ${record.holdoutFrom} against ${signed(horizon.development.all.median)} for all weeks`);
+  if (Number.isFinite(after.median)) legs.push(`${signed(after.median)} since then against ${signed(horizon.heldOut.all.median)}`);
+  parts.push(legs.length
+    ? `${name} weeks in the ${state.label.toLowerCase()} tier were followed over ${horizon.days} days by a median ${legs.join(', and ')}`
+    : `${name} has spent too few independent weeks in the ${state.label.toLowerCase()} tier to say what followed it`);
+
+  const ordered = horizon.heldOut.ordering ?? horizon.development.ordering;
+  const block = Number.isFinite(horizon.heldOut.ordering) ? 'held-out block' : 'development history';
+  if (Number.isFinite(ordered)) {
+    if (ordered >= 0.6) parts.push(`across the ${block} the tiers ranked as the ladder assumes, cheaper tiers followed by better ${horizon.days}-day returns`);
+    else if (ordered <= -0.2) parts.push(`across the ${block} the tiers did not rank as the ladder assumes: cheaper tiers were not followed by better ${horizon.days}-day returns`);
+    else parts.push(`across the ${block} the tiers ranked only loosely in the order the ladder assumes`);
+  }
+  const text = parts.join('; ');
+  return `${text.charAt(0).toUpperCase()}${text.slice(1)}. This describes what followed, not what will.`;
+}
+
 /** Today's tier for one asset, with the history the rule would have produced. */
-export function calculateAccumulationSchedule({ key, name, points, baselineContribution = 100, note = null } = {}) {
+export function calculateAccumulationSchedule({ key, name, points, baselineContribution = 100, note = null, keepObservations = false } = {}) {
   const prepared = prepareAccumulationSeries(points);
   if (prepared.status !== 'ready') {
     return { key, name, status: 'unavailable', reason: prepared.reason, observations: prepared.observations ?? 0 };
@@ -429,7 +520,9 @@ export function calculateAccumulationSchedule({ key, name, points, baselineContr
     return { key, name, status: 'unavailable', reason: read?.reason ?? 'The risk components could not be ranked.', observations: prepared.observations, components: read?.components ?? [] };
   }
 
-  const backtest = backtestAccumulation(prepared);
+  const reads = weeklyTierReads(prepared);
+  const backtest = backtestAccumulation(prepared, { reads });
+  const track = accumulationTrackRecord(prepared, reads);
   const boundaries = boundariesFor(read.risk);
   const heaviest = [...read.components]
     .filter((component) => Number.isFinite(component.percentile))
@@ -453,6 +546,11 @@ export function calculateAccumulationSchedule({ key, name, points, baselineContr
     components: read.components,
     boundaries,
     priceLadder: tierPriceLadder(prepared, read.risk),
+    trackRecord: { ...track.record, read: describeTrackRecord(track.record, name, read.tier.key), readHorizonDays: trackRecordReadHorizon(track.record, read.tier.key) },
+    // Raw observations are only kept for pooling across assets; the provider
+    // strips them before anything is sent to a browser.
+    // Named apart from `observations`, which is already the price-point count.
+    ...(keepObservations ? { weeklyObservations: track.observations.map((observation) => ({ ...observation, asset: key })) } : {}),
     // Published because it is the reading's main weakness. An asset that has
     // spent its whole history extended has a risk distribution centred on
     // extended, so a middling percentile there is not the same claim as a
@@ -543,6 +641,47 @@ export function describeLadder() {
       range: `${floor}\u2013${Number.isFinite(tier.max) ? tier.max : 100}`,
     };
   });
+}
+
+/**
+ * The ladder's record with every asset's weeks pooled. Each asset's tiers are
+ * defined against its own history, so a deep-value week means the same thing
+ * for each and pooling is legitimate - but the assets move together (the S&P
+ * and the Nasdaq most of all), so the effective sample overstates the
+ * independent evidence, and the limits say so.
+ */
+export function pooledTrackRecord(schedules) {
+  const observations = (schedules ?? []).flatMap((schedule) => schedule?.weeklyObservations ?? []);
+  const assets = new Set(observations.map((observation) => observation.asset));
+  if (assets.size < 2) return { status: 'unavailable', reason: `Pooling needs two assets with a track record; ${assets.size} available.` };
+  const record = evaluateTrackRecord({
+    observations,
+    order: TIERS.map((tier) => ({ key: tier.key, label: tier.label })),
+    horizons: TRACK_HORIZON_DAYS.map((days) => ({ days })),
+    stepDays: 7,
+  });
+  if (record.status !== 'calculated') return record;
+  const horizon = record.horizons.find((entry) => entry.days === 90);
+  const ordered = horizon?.heldOut.ordering;
+  const deep = horizon?.states.find((state) => state.key === 'deep');
+  const stretched = horizon?.states.find((state) => state.key === 'stretched');
+  // Each clause is written only from a cell that has statistics, so a thin
+  // tier drops out of the sentence instead of being named as a number.
+  const legs = [
+    Number.isFinite(deep?.heldOut.stats.median) ? `${signed(deep.heldOut.stats.median)} after a deep-value week` : null,
+    Number.isFinite(stretched?.heldOut.stats.median) ? `${signed(stretched.heldOut.stats.median)} after a stretched week` : null,
+    Number.isFinite(horizon?.heldOut.all.median) ? `${signed(horizon.heldOut.all.median)} after any week` : null,
+  ].filter(Boolean);
+  const read = legs.length
+    ? `Pooled across ${assets.size} assets, the median 90-day return in the held-out block since ${record.holdoutFrom} was ${legs.length > 1 ? `${legs.slice(0, -1).join(', ')} and ${legs.at(-1)}` : legs[0]}.${Number.isFinite(ordered) ? ` Tier ordering in that block scored ${ordered > 0 ? '+' : ''}${ordered}, where +1 is exactly the order the ladder assumes and -1 exactly the reverse.` : ''} This describes what followed, not what will.`
+    : `Pooled across ${assets.size} assets, the held-out block since ${record.holdoutFrom} still holds too few independent 90-day windows per tier to report.`;
+  return {
+    ...record,
+    assets: [...assets],
+    readHorizonDays: 90,
+    read,
+    limits: `${record.limits} The pooled assets move together - the S&P and the Nasdaq most of all - so the effective sample overstates the independent evidence.`,
+  };
 }
 
 export { TIERS as ACCUMULATION_TIERS, COMPONENTS as ACCUMULATION_COMPONENTS, WINDOW_DAYS as ACCUMULATION_WINDOW_DAYS };
