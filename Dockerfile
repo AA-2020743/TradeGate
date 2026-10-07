@@ -6,7 +6,10 @@ COPY . .
 RUN npm run build
 
 FROM node:22-alpine
-ENV NODE_ENV=production
+# The image ships without .git, so the commit is passed in at build time:
+#   docker build --build-arg GIT_SHA=$(git rev-parse HEAD) -t tradegate .
+ARG GIT_SHA=""
+ENV NODE_ENV=production GIT_SHA=$GIT_SHA
 WORKDIR /app
 COPY package*.json ./
 RUN npm ci --omit=dev && npm cache clean --force

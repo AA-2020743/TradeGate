@@ -170,3 +170,14 @@ test('responses carry a content security policy and health reports the write mod
   const payload = await response.json();
   assert.equal(payload.writes.mode, 'local-only');
 });
+
+test('every response names the build that produced it, and the registry is served', async () => {
+  const response = await get('/api/models');
+  assert.equal(response.status, 200);
+  assert.ok(response.headers.get('x-tradegate-build'));
+  const payload = await response.json();
+  assert.ok(payload.models.length >= 10);
+  assert.equal(payload.build.shortCommit, response.headers.get('x-tradegate-build'));
+  const health = await (await get('/api/health')).json();
+  assert.equal(health.build.shortCommit, payload.build.shortCommit);
+});

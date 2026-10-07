@@ -434,6 +434,16 @@ With PostgreSQL configured, the scheduled `research-workspaces` ingestion job pe
 
 A consolidated `/api/digest` endpoint returns one JSON snapshot of every headline regime call — US and global net-liquidity regimes, dollar transmission label, equity breadth and screener leader, Fear & Greed, and bitcoin valuation/funding bands — composed live from the same cached computations the dashboards use, suitable for cron-driven daily digests or external monitoring.
 
+## Model Registry and Build Lineage
+
+`GET /api/models` lists every published model (id and version, the page it appears on, what it measures, the inputs it reads, its known failure modes, and whether it carries a track record). The Markets page renders the same list in the Model registry panel. Model ids such as `technical-v1` or `accumulation-v1` change when the model's logic changes, so a value captured from the page names the logic that produced it.
+
+Every API response carries an `X-TradeGate-Build` header with the short commit of the running code, and `/api/health` reports `build { commit, shortCommit, startedAt, node }`. The commit is read from the `GIT_SHA` environment variable when set, otherwise from the checkout's `.git` directory. Docker images have no `.git`, so pass it at build time:
+
+```bash
+docker build --build-arg GIT_SHA=$(git rev-parse HEAD) -t tradegate .
+```
+
 ## Reliability Rules
 
 - Missing provider data returns unavailable; it is never silently replaced with a sample value.

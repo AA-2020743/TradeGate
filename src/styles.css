@@ -467,3 +467,13 @@ html[data-theme='dark'] .screener-search { background: #1a221d; border-color: #3
   .crosscheck-reason { grid-column: 2 / 4; }
 }
 .crosscheck-row > *, .crosscheck-head > * { min-width: 0; overflow-wrap: anywhere; }
+
+/* Model registry: one collapsible row per model. */
+.registry-panel { margin: 1.2rem 0; }
+.registry-row { border-bottom: 1px solid var(--hairline, rgba(255, 255, 255, 0.06)); padding: 0.45rem 0; }
+.registry-row summary { cursor: pointer; display: flex; flex-wrap: wrap; gap: 0.6rem; align-items: baseline; }
+.registry-row summary code { font-size: 0.75rem; opacity: 0.7; }
+.registry-row summary small { opacity: 0.55; font-size: 0.75rem; }
+.registry-badge { font-size: 0.68rem; letter-spacing: 0.05em; text-transform: uppercase; padding: 0.05rem 0.4rem; border: 1px solid var(--verdict-accent, #d2705f); border-radius: 4px; }
+.registry-row p, .registry-row ul { margin: 0.45rem 0 0; font-size: 0.85rem; line-height: 1.5; }
+.registry-row ul { padding-left: 1.2rem; opacity: 0.85; }

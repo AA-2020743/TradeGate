@@ -22,6 +22,8 @@ import { createRateLimiter } from './rateLimit.js';
 import { calculateDollarTransmission, getBitcoinCycleWorkspace, getBlockedSources, getCryptoGlobal, getDxyBitcoinRelationship, getEquityRiskAppetite, getEquityScreener, getEthereumRotation, getAccumulationSchedules, getCryptoOptionsWorkspace, getFactorReturns, getFxWorkspace, getHardMoneyValuation, getIntradayRotation, getLiquiditySnapshot, getMarketHeatmap, getMarketHistory, getMarketPositioning, getMarketSnapshot, getMetalsWorkspace, getNewsWire, getPriceCrossCheck, getProviderHealth, getRegimeCorrelations, getSentimentSnapshot, getSignalTrackRecords, getStablecoinLeadLag, getTechnicalSnapshot, getTreasuryFunding } from './providers.js';
 import { buildAtomFeed } from './analytics.js';
 import { authorizeWrite, contentSecurityPolicy, describeWriteProtection, securityHeaders } from './security.js';
+import { buildInfo } from './buildInfo.js';
+import { MODEL_REGISTRY } from './modelRegistry.js';
 
 const app = express();
 const rootDirectory = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -37,6 +39,12 @@ app.use(express.json({ limit: '64kb' }));
 // is read from the built page rather than restated here.
 const servedHtml = existsSync(distIndexFile) ? readFileSync(distIndexFile, 'utf8') : '';
 app.use(securityHeaders({ csp: contentSecurityPolicy(servedHtml) }));
+// Every response names the commit that produced it, so a number captured from
+// the page can be traced to the exact logic behind it.
+app.use((_request, response, next) => {
+  response.setHeader('X-TradeGate-Build', buildInfo.shortCommit);
+  next();
+});
 /**
  * Cache policy per route, matched to how often the thing behind it can change.
  *
@@ -125,7 +133,11 @@ app.use('/api', (request, response, next) => {
 app.get('/api/health', async (_request, response) => {
   const database = await getDatabaseHealth();
   const databaseDegraded = database.configured && (!database.connected || !database.migrated);
-  response.json({ status: databaseDegraded ? 'degraded' : 'ok', asOf: new Date().toISOString(), providers: { ...getProviderHealth(), database }, blockedSources: getBlockedSources(), writes: describeWriteProtection(config.writeToken) });
+  response.json({ status: databaseDegraded ? 'degraded' : 'ok', asOf: new Date().toISOString(), providers: { ...getProviderHealth(), database }, blockedSources: getBlockedSources(), writes: describeWriteProtection(config.writeToken), build: buildInfo });
+});
+
+app.get('/api/models', (_request, response) => {
+  response.json({ asOf: new Date().toISOString(), build: buildInfo, models: MODEL_REGISTRY });
 });
 
 app.get('/api/markets/snapshot', async (_request, response, next) => {
