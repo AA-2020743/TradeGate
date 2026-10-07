@@ -1,4 +1,5 @@
 import { config } from './config.js';
+import { onePointPerDay } from './dailySeries.js';
 import { deliverAlerts, pendingAfterDelivery, withPending } from './alertDelivery.js';
 import { observationTimestamp, runIngestionJob } from './ingestionRun.js';
 import { buildWorkspaceNarrative, calculateTechnicalSnapshot, isPublished } from './analytics.js';
@@ -87,7 +88,9 @@ export async function ingestMarketHistory() {
           unit: 'close',
           currency: 'USD',
           metadata: { range: '1Y', timezone: 'UTC' },
-          observations: history.points.map((point) => ({
+          // Daily closes only: the provider's trailing live price would be
+          // stored as an extra session every day this runs.
+          observations: onePointPerDay(history.points).map((point) => ({
             observedAt: point.timestamp,
             providerAsOf: point.timestamp,
             value: point.value,

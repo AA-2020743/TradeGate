@@ -1643,8 +1643,8 @@ function comparableOutputs(outputs) {
   const latest = outputs[0] ?? null;
   const previous = outputs[1] ?? null;
   if (!latest?.output || !previous?.output) return { latest: null, previous: null, reason: null };
-  const latestVintage = latest.output.asOf ?? latest.effective_at ?? null;
-  const previousVintage = previous.output.asOf ?? previous.effective_at ?? null;
+  const latestVintage = latest.output.asOf ?? latest.effectiveAt ?? latest.effective_at ?? null;
+  const previousVintage = previous.output.asOf ?? previous.effectiveAt ?? previous.effective_at ?? null;
   if (latestVintage && previousVintage && String(latestVintage) === String(previousVintage)) {
     return { latest: null, previous: null, reason: 'same-vintage' };
   }

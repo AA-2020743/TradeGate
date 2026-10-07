@@ -150,6 +150,39 @@ describe('runs a stopped process left open are closed as failed and abandoned; a
   assert.equal(rows[String(finished)].status, 'completed');
 });
 
+describe('a stored daily series with stray mid-day prices reads back as one close per day', async () => {
+  await reset();
+  const day = (offset, time = '00:00:00') => `${new Date(Date.now() - offset * 86_400_000).toISOString().slice(0, 10)}T${time}.000Z`;
+  await database.persistSeries({
+    id: 'market:BTC:close:usd', provider: 'CoinGecko', providerSeriesId: 'BTC', name: 'BTC closing price',
+    assetClass: 'Crypto', frequency: '1day', unit: 'close', currency: 'USD', metadata: {},
+    observations: [
+      { observedAt: day(3), value: 100, metadata: {} },
+      { observedAt: day(2), value: 101, metadata: {} },
+      { observedAt: day(2, '21:13:00'), value: 140, metadata: {} },
+      { observedAt: day(1), value: 102, metadata: {} },
+      { observedAt: day(1, '12:37:00'), value: 150, metadata: {} },
+    ],
+  });
+  const stored = await database.getStoredMarketHistory('BTC', '1M');
+  assert.deepEqual(stored.map((point) => point.value), [100, 101, 102]);
+});
+
+describe('undated consensus outputs stored on different days all count toward its history', async () => {
+  await reset();
+  const { calculateConsensusHistory } = await import('./macroConsensus.js');
+  for (let daysAgo = 4; daysAgo >= 0; daysAgo -= 1) {
+    await database.persistModelOutput('macro-consensus', { version: 'macro-consensus-v1', status: 'calculated', averageScore: 50 + daysAgo, spread: 10 + daysAgo, state: 'Models broadly agree' });
+    await pool.query(`UPDATE model_outputs SET calculated_at = NOW() - make_interval(days => $1)
+      WHERE model_id = 'macro-consensus' AND calculated_at = (SELECT MAX(calculated_at) FROM model_outputs WHERE model_id = 'macro-consensus')`, [daysAgo]);
+  }
+  const rows = await database.getRecentModelOutputs('macro-consensus', 120);
+  assert.equal(rows.length, 5);
+  assert.ok(rows[0].calculatedAt instanceof Date);
+  const history = calculateConsensusHistory(rows);
+  assert.notEqual(history.status, 'unavailable', history.reason);
+});
+
 describe('an unavailable model is never stored', async () => {
   await reset();
   await database.persistModelOutput('m', { version: 'v1', status: 'unavailable', reason: 'no inputs', asOf: null });

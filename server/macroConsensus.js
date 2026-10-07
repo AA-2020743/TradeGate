@@ -311,7 +311,7 @@ export function calculateModelCorrelationMatrix(outputsByModel = {}, { minimumOb
   const seriesByModel = Object.entries(outputsByModel).map(([modelId, outputs]) => {
     const points = (outputs ?? [])
       .map((entry) => ({
-        date: String(entry?.output?.asOf ?? entry?.effective_at ?? '').slice(0, 10),
+        date: storedOutputDate(entry),
         value: Number(entry?.output?.score),
       }))
       .filter((point) => point.date && Number.isFinite(point.value))
@@ -458,6 +458,20 @@ const ALERT_RULES = [
     text: (consensus) => `${consensus.read} The most divergent pair: ${consensus.contradictions[0]?.read ?? 'none published'}`,
   },
 ];
+
+/**
+ * The date a stored model output speaks for: its own asOf, else the stored
+ * effective date, else the day the run calculated it. Stored rows arrive as
+ * { effectiveAt, calculatedAt } from getRecentModelOutputs; reading the
+ * snake_case column name instead left every output without an asOf undated,
+ * and the consensus history - whose model publishes none - counted zero
+ * readings however many runs had stored.
+ */
+export function storedOutputDate(entry) {
+  const raw = entry?.output?.asOf ?? entry?.effectiveAt ?? entry?.effective_at ?? entry?.calculatedAt ?? entry?.calculated_at ?? null;
+  if (raw === null || raw === undefined) return '';
+  return (raw instanceof Date ? raw.toISOString() : String(raw)).slice(0, 10);
+}
 
 /**
  * Turns the time-sensitive readings into alert entries. The regime engine has
@@ -695,7 +709,7 @@ export function calculateConsensusHistory(outputs = [], { minimumObservations = 
   const version = 'macro-consensus-history-v1';
   const points = (outputs ?? [])
     .map((entry) => ({
-      date: String(entry?.output?.asOf ?? entry?.effective_at ?? '').slice(0, 10),
+      date: storedOutputDate(entry),
       average: Number(entry?.output?.averageScore),
       spread: Number(entry?.output?.spread),
       state: entry?.output?.state ?? null,

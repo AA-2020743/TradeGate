@@ -1,3 +1,4 @@
+import { onePointPerDay } from './dailySeries.js';
 import { readdir } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -215,13 +216,16 @@ export async function listStoredModelIds() {
 export async function getRecentModelOutputs(modelId, limit = 2) {
   if (!pool) return [];
   const result = await pool.query(
-    `SELECT version, effective_at, output FROM model_outputs
+    `SELECT version, effective_at, calculated_at, output FROM model_outputs
      WHERE model_id = $1
      ORDER BY calculated_at DESC, effective_at DESC
      LIMIT $2`,
     [modelId, limit],
   );
-  return result.rows.map((row) => ({ version: row.version, effectiveAt: row.effective_at, output: row.output }));
+  // calculatedAt dates the composites that carry no data date of their own
+  // (the macro consensus has none); without it their stored readings came
+  // back undated and every history built on them read as empty.
+  return result.rows.map((row) => ({ version: row.version, effectiveAt: row.effective_at, calculatedAt: row.calculated_at, output: row.output }));
 }
 
 export async function insertModelAlerts(modelId, entries, ingestionRunId = null) {
@@ -497,7 +501,8 @@ export async function getStoredMarketHistoryWithProvider(symbol, range) {
      ORDER BY observed_at ASC`,
     [`market:${symbol}:close:usd`, start.toISOString()],
   );
-  return { points: result.rows.map((row) => ({ timestamp: row.observed_at.toISOString(), value: Number(row.value) })), provider };
+  // Rows already stored with a stray mid-day point are collapsed on read.
+  return { points: onePointPerDay(result.rows.map((row) => ({ timestamp: row.observed_at.toISOString(), value: Number(row.value) }))), provider };
 }
 
 export async function getStoredSeriesCoverage(symbols) {
