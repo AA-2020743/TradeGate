@@ -306,6 +306,17 @@ Two readings come out of it. *Within* an asset, where its gold ratio sits in its
 
 The equity indices are read on price **and** total return because the difference is not cosmetic: a price index can be flat in gold terms over a decade while the same index with dividends reinvested is well ahead — and that gap is the real return, delivered as income rather than as price.
 
+### `crypto-options-v1`
+
+The BTC and ETH option surfaces from Deribit's public API (no key). Options do not say where price goes; they say what the market will pay to be protected, and against what. Four readings carry most of it: implied vol at fixed tenors, the 25-delta risk reversal (negative means downside protection costs more than upside), the term structure (near above far means something is priced soon), and implied minus realized (whether options are rich or cheap against what the asset has actually done). DVOL history places today's 30-day implied vol in its past year.
+
+Two conventions are deliberate, and both are where simpler summaries go wrong:
+
+- **Constant maturity.** Listed expiries drift — "the front month" is 29 days out one week and 22 the next — so a raw front-month IV changes when nothing in the market did. Each tenor (7, 30, 90 days) is interpolated linearly in **total variance** between the two listed expiries that bracket it; interpolating vol directly understates the far tenor whenever the curve is steep. Expiries inside two days are excluded as settlement noise, and a tenor outside the listed range is reported missing rather than extrapolated.
+- **Exact 25-delta.** Taking the listed strike nearest 0.25 compares, on a typical chain, a 0.27-delta call with a 0.31-delta put, so part of the "skew" is just the smile. Wings are interpolated to exactly ±0.25 forward delta (Black-76 on each expiry's own underlying, so carry is not counted twice). On the test chain the nearest-strike method is off by 0.3 vol points; an expiry that does not bracket 0.25 publishes no wing.
+
+Limits, published with it: Deribit carries most crypto options open interest, not all (CME is absent); mark IV is the exchange's model mark, not a traded price; open interest is in coins, so put/call counts contracts rather than notional; the max-pain strike is a mechanical reading of open interest, a reference level and not a target.
+
 ### `accumulation-v1`
 
 A dynamic dollar-cost-averaging rule for bitcoin, gold, silver, platinum, the S&P 500 and the Nasdaq-100 — one engine, because the question it asks (where is this asset in its own history?) does not change with the asset class.

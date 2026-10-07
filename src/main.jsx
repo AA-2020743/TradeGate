@@ -902,6 +902,70 @@ function AccumulationPanel({ accumulation, only = null, title = 'ACCUMULATION RU
   </article>;
 }
 
+/**
+ * What the options market is charging for crypto risk. Every number is a
+ * price, not a forecast - the panel says what protection costs and against
+ * what, and leaves direction to the models that measure it.
+ */
+function signedVol(value) {
+  return Number.isFinite(value) ? `${value > 0 ? '+' : ''}${value.toFixed(1)}` : '\u2014';
+}
+
+function skewLabel(rr) {
+  if (!Number.isFinite(rr)) return 'Skew unavailable';
+  if (rr <= -2) return 'Puts bid over calls';
+  if (rr >= 2) return 'Calls bid over puts';
+  return 'Balanced smile';
+}
+
+function OptionsSurfaceCard({ surface }) {
+  if (surface?.status === 'unavailable' || !surface) {
+    return <div className="options-card"><h4>{surface?.currency ?? 'Options'}</h4><p className="equity-empty">{surface?.reason ?? 'No option chain was returned.'}</p></div>;
+  }
+  const thirty = surface.tenors?.find((tenor) => tenor.days === 30);
+  return <div className="options-card">
+    <div className="options-card-head">
+      <h4>{surface.currency}</h4>
+      <span className={thirty?.riskReversal25 <= -2 ? 'negative' : thirty?.riskReversal25 >= 2 ? 'positive' : ''}>{skewLabel(thirty?.riskReversal25)}</span>
+    </div>
+    <div className="options-tenor-head"><span>Tenor</span><span>ATM IV</span><span>25&Delta; RR</span><span>25&Delta; fly</span></div>
+    {(surface.tenors ?? []).map((tenor) => <div className="options-tenor-row" key={tenor.days}>
+      <span>{tenor.days}d</span>
+      <b>{Number.isFinite(tenor.atmIv) ? tenor.atmIv.toFixed(1) : '\u2014'}</b>
+      <b className={tenor.riskReversal25 <= -2 ? 'negative' : tenor.riskReversal25 >= 2 ? 'positive' : ''}>{signedVol(tenor.riskReversal25)}</b>
+      <small>{signedVol(tenor.butterfly25)}</small>
+    </div>)}
+    <div className="options-stats">
+      <div><span>30d implied vs realized</span><b className={surface.varianceRiskPremium >= 10 ? 'negative' : surface.varianceRiskPremium <= -5 ? 'positive' : ''}>{signedVol(surface.varianceRiskPremium)}</b><small>{Number.isFinite(surface.realized30) ? `realized ${surface.realized30.toFixed(1)}` : 'realized unavailable'}</small></div>
+      <div><span>Term slope 30d&minus;90d</span><b className={surface.termSlope >= 2 ? 'negative' : ''}>{signedVol(surface.termSlope)}</b><small>{surface.termShape === 'inverted' ? 'inverted: near tenor above far' : surface.termShape === 'upward' ? 'upward sloping (normal)' : surface.termShape === 'flat' ? 'flat' : '\u2014'}</small></div>
+      <div><span>DVOL vs past year</span><b>{Number.isFinite(surface.dvol?.percentile) ? ordinal(surface.dvol.percentile) : '\u2014'}</b><small>{Number.isFinite(surface.dvol?.latest) ? `DVOL ${surface.dvol.latest.toFixed(1)}` : 'history unavailable'}</small></div>
+      <div><span>Put/call open interest</span><b>{Number.isFinite(surface.putCallOpenInterest) ? surface.putCallOpenInterest.toFixed(2) : '\u2014'}</b><small>contracts, not notional</small></div>
+      {surface.pin ? <div><span>Max pain, {surface.pin.expiry.slice(5, 10)}</span><b>{formatLevel(surface.pin.strike)}</b><small>{Number.isFinite(surface.pin.distancePercent) ? `${surface.pin.distancePercent > 0 ? '+' : ''}${surface.pin.distancePercent}% from spot` : ''}</small></div> : null}
+    </div>
+    {surface.read ? <p className="dca-read">{surface.read}</p> : null}
+  </div>;
+}
+
+function CryptoOptionsPanel({ options }) {
+  const status = options?.status ?? 'unavailable';
+  const published = status !== 'unavailable';
+  const btc = options?.surfaces?.find((surface) => surface.currency === 'BTC');
+  const btc30 = btc?.tenors?.find((tenor) => tenor.days === 30);
+  return <article className={`panel options-panel ${published ? '' : 'preview-section'}`}>
+    <div className="panel-title">
+      <div>
+        <p className="section-kicker">OPTIONS SURFACE · {status.toUpperCase()}</p>
+        <h3>{published && Number.isFinite(btc30?.atmIv) ? `BTC 30-day implied vol ${btc30.atmIv.toFixed(1)} \u00b7 ${skewLabel(btc30.riskReversal25).toLowerCase()}` : 'Awaiting Deribit option chains'}</h3>
+      </div>
+      <span className="data-pill">constant-maturity</span>
+    </div>
+    {published
+      ? <div className="options-grid">{(options.surfaces ?? []).map((surface) => <OptionsSurfaceCard surface={surface} key={surface.currency} />)}</div>
+      : <div className="equity-empty">{options?.reason ?? 'The Deribit public option chains are required.'}</div>}
+    <p className="model-footnote">{btc?.methodology ?? ''} {btc?.limits ?? ''}</p>
+  </article>;
+}
+
 function ConcentrationPanel({ concentration }) {
   const status = concentration?.status ?? 'unavailable';
   const published = status !== 'unavailable';
@@ -2393,6 +2457,7 @@ function CryptoDashboard({ data }) {
     <section className="macro-section-heading"><div><p className="section-kicker">DOLLAR TRANSMISSION · {transmission?.status?.toUpperCase() ?? 'UNAVAILABLE'}</p><h2>{transmission?.linkSign === 0 ? 'The dollar link is too weak to move bitcoin' : `${tailwindLabel} for bitcoin`}</h2></div><span className="data-pill">Favorability read</span></section>
     <section className="crypto-grid">
       <AccumulationPanel accumulation={data.accumulation} only="bitcoin" title="BITCOIN ACCUMULATION" />
+      <CryptoOptionsPanel options={data.cryptoOptions} />
       <article className={`crypto-tailwind-panel panel ${hasDollarInputs ? '' : 'preview-section'}`}><div className="panel-title"><div><p className="section-kicker">IS THE DOLLAR A TAILWIND?</p><h3>{tailwindLabel}</h3></div><span className="data-pill">{Number.isFinite(tailwindScore) ? `${tailwindScore > 0 ? '+' : ''}${tailwindScore} signal` : 'Unavailable'}</span></div>
         <div className="btc-cycle-grid">
           <div className="btc-cycle-cell"><small>Broad-dollar momentum</small><b>{formatPercent(usdMomentum)}</b><span>20-session change · {usdStrength?.regime ?? 'regime unavailable'}</span></div>

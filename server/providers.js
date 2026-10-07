@@ -14,6 +14,7 @@ import { calculateGrowthNowcast, calculateInflationNowcast, calculateLiquidityCa
 import { buildCryptoVerdict, buildFxVerdict, buildMetalsVerdict } from './verdict.js';
 import { calculateRatioValuation, compareIncomeContribution, rankHardMoneyStrength } from './hardMoney.js';
 import { allocateAcrossAssets, calculateAccumulationSchedule, describeLadder } from './accumulation.js';
+import { calculateCryptoOptionsSurface } from './cryptoOptions.js';
 import { resolveVintage, screenVintage } from './vintage.js';
 import { cryptoHistoryGranularity, describeSeriesFreshness, isCryptoHistoryStale, isCotReportStale, isDailyCloseStale, isFredSeriesAbandoned, isFredSeriesStale, isPbocObservationStale, monthsBetween } from './freshness.js';
 import { percentileRank } from './statistics.js';
@@ -1516,6 +1517,64 @@ export async function getAccumulationSchedules() {
       errors,
       disclaimer: 'This is a spending rule, not advice and not a forecast. It scales a contribution by where an asset sits in its own price history; it never signals a sale, never goes to zero, and carries no view on whether the asset should be held at all.',
       methodology: 'Each asset is scored on three price-derived components - stretch above its one-year mean, position against its three-year high, and one-year momentum - each ranked against that asset\u2019s own history so the scale means the same thing across assets. The weighted rank places the asset in one of five tiers whose multiples average exactly 1.0, so an evenly spread risk history spends the same as a flat schedule. The backtest re-runs the rule weekly using only the data available at each step and compares cost per unit, not ending value.',
+    };
+  });
+}
+
+const DERIBIT = 'https://www.deribit.com/api/v2/public';
+
+async function getDeribit(method, params) {
+  const url = new URL(`${DERIBIT}/${method}`);
+  for (const [key, value] of Object.entries(params)) url.searchParams.set(key, String(value));
+  const payload = await fetchJson(url);
+  if (payload?.error) throw new Error(`Deribit ${method}: ${payload.error.message ?? JSON.stringify(payload.error)}`);
+  return payload?.result;
+}
+
+/**
+ * The BTC and ETH option surfaces from Deribit's public endpoints - no key.
+ * Each currency is independent: one failing leaves the other published, and
+ * the DVOL history and the realized-vol closes are optional enrichments that
+ * degrade the read without blocking it.
+ */
+export async function getCryptoOptionsWorkspace() {
+  return withCache('analytics:crypto-options', 15 * 60_000, async () => {
+    const now = Date.now();
+    const currencies = [
+      { currency: 'BTC', yahoo: 'BTC-USD' },
+      { currency: 'ETH', yahoo: 'ETH-USD' },
+    ];
+    const errors = [];
+    const surfaces = await Promise.all(currencies.map(async ({ currency, yahoo }) => {
+      const [chainResult, dvolResult, closesResult] = await Promise.allSettled([
+        getDeribit('get_book_summary_by_currency', { currency, kind: 'option' }),
+        getDeribit('get_volatility_index_data', { currency, start_timestamp: now - (400 * 86_400_000), end_timestamp: now, resolution: '1D' }),
+        getYahooHistory(yahoo, '1y'),
+      ]);
+      if (chainResult.status !== 'fulfilled') {
+        errors.push(`Deribit ${currency} option chain: ${chainResult.reason?.message ?? 'no response'}`);
+        return { currency, status: 'unavailable', reason: `The Deribit ${currency} option chain could not be fetched: ${chainResult.reason?.message ?? 'no response'}` };
+      }
+      if (dvolResult.status !== 'fulfilled') errors.push(`Deribit ${currency} DVOL history: ${dvolResult.reason?.message ?? 'no response'}`);
+      if (closesResult.status !== 'fulfilled') errors.push(`${yahoo} closes for realized vol: ${closesResult.reason?.message ?? 'no response'}`);
+      // DVOL candles are [timestamp, open, high, low, close]; the close is the
+      // day's settled 30-day implied-vol reading.
+      const dvolHistory = dvolResult.status === 'fulfilled'
+        ? (dvolResult.value?.data ?? []).map((candle) => ({ date: new Date(candle[0]).toISOString().slice(0, 10), value: candle[4] }))
+        : [];
+      const closes = closesResult.status === 'fulfilled' ? closesResult.value.map((point) => point.value) : [];
+      return calculateCryptoOptionsSurface({ currency, summaries: chainResult.value, closes, dvolHistory, now });
+    }));
+
+    const published = surfaces.filter((surface) => surface.status !== 'unavailable');
+    return {
+      version: 'crypto-options-v1',
+      asOf: new Date(now).toISOString(),
+      status: published.length === surfaces.length ? 'calculated' : published.length ? 'provisional' : 'unavailable',
+      reason: published.length ? undefined : 'Neither option chain could be read from Deribit.',
+      source: 'Deribit public API (book summaries and DVOL)',
+      surfaces,
+      errors,
     };
   });
 }

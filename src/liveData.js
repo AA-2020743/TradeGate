@@ -26,6 +26,7 @@ export function usePlatformData() {
     equityRisk: null,
     hardMoney: null,
     accumulation: null,
+    cryptoOptions: null,
     news: null,
     screener: null,
     alerts: null,
@@ -36,7 +37,7 @@ export function usePlatformData() {
     let active = true;
 
     const load = async () => {
-      const [health, markets, liquidity, dxyBtc, regimeCorrelations, positioning, heatmap, metals, fx, hardMoney, accumulation, sentiment, bitcoin, equityRisk, news, screener, alerts] = await Promise.allSettled([
+      const [health, markets, liquidity, dxyBtc, regimeCorrelations, positioning, heatmap, metals, fx, hardMoney, accumulation, cryptoOptions, sentiment, bitcoin, equityRisk, news, screener, alerts] = await Promise.allSettled([
         requestJson('/api/health'),
         requestJson('/api/markets/snapshot'),
         requestJson('/api/macro/liquidity'),
@@ -48,6 +49,7 @@ export function usePlatformData() {
         requestJson('/api/analytics/fx'),
         requestJson('/api/analytics/hard-money'),
         requestJson('/api/analytics/accumulation'),
+        requestJson('/api/analytics/crypto-options'),
         requestJson('/api/analytics/sentiment'),
         requestJson('/api/analytics/bitcoin'),
         requestJson('/api/analytics/equity-risk'),
@@ -68,6 +70,7 @@ export function usePlatformData() {
       const fxData = fx.status === 'fulfilled' ? fx.value : null;
       const hardMoneyData = hardMoney.status === 'fulfilled' ? hardMoney.value : null;
       const accumulationData = accumulation.status === 'fulfilled' ? accumulation.value : null;
+      const cryptoOptionsData = cryptoOptions.status === 'fulfilled' ? cryptoOptions.value : null;
       const sentimentData = sentiment.status === 'fulfilled' ? sentiment.value : null;
       const bitcoinData = bitcoin.status === 'fulfilled' ? bitcoin.value : null;
       const equityRiskData = equityRisk.status === 'fulfilled' ? equityRisk.value : null;
@@ -97,6 +100,7 @@ export function usePlatformData() {
         fx: fxData,
         hardMoney: hardMoneyData,
         accumulation: accumulationData,
+        cryptoOptions: cryptoOptionsData,
         sentiment: sentimentData,
         bitcoin: bitcoinData,
         equityRisk: equityRiskData,
