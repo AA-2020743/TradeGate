@@ -19,6 +19,8 @@ import { calculateTreasuryFunding } from './treasuryFunding.js';
 import { calculateFactorReturns, joinFactorTables, parseFrenchDaily } from './factorReturns.js';
 import { readLargestTextEntry } from './zip.js';
 import { combineFundingVenues, okxPositioningRows } from './derivativesVenues.js';
+import { TECHNICAL_REGIMES, describeTechnicalRecord, technicalTrackRecord } from './technicalTrackRecord.js';
+import { evaluateTrackRecord } from './trackRecord.js';
 import { resolveVintage, screenVintage } from './vintage.js';
 import { cryptoHistoryGranularity, describeSeriesFreshness, isCryptoHistoryStale, isCotReportStale, isDailyCloseStale, isFredSeriesAbandoned, isFredSeriesStale, isPbocObservationStale, monthsBetween } from './freshness.js';
 import { percentileRank } from './statistics.js';
@@ -1719,6 +1721,66 @@ export async function getFactorReturns() {
       : fiveResult.value;
     const missing = momentumResult.status === 'rejected' ? { Mom: `The momentum file could not be read: ${momentumResult.reason?.message ?? 'failed'}` } : {};
     return { ...calculateFactorReturns(rows, { missing }), source: 'Kenneth R. French Data Library', errors };
+  });
+}
+
+/**
+ * Track records for technical-v1 on the six assets with decade-long daily
+ * histories, plus the record pooled across them. Each asset's weekly
+ * observations are kept only long enough to pool, then dropped.
+ */
+export async function getSignalTrackRecords() {
+  return withCache('analytics:signal-records', 12 * 60 * 60_000, async () => {
+    const settled = await Promise.allSettled(ACCUMULATION_SYMBOLS.map((asset) => getYahooHistory(asset.symbol, '10y')));
+    const errors = [];
+    const pooledObservations = [];
+    const assets = ACCUMULATION_SYMBOLS.map((asset, index) => {
+      const result = settled[index];
+      if (result.status !== 'fulfilled' || !result.value?.length) {
+        errors.push(`${asset.symbol}: ${result.reason?.message ?? 'no observations'}`);
+        return { key: asset.key, name: asset.name, klass: asset.klass, status: 'unavailable', reason: `${asset.symbol} did not return a history.` };
+      }
+      const points = result.value.map((point) => ({ date: String(point.timestamp).slice(0, 10), value: point.value }));
+      const annualizationDays = asset.key === 'bitcoin' ? 365 : 252;
+      const { observations, ...record } = technicalTrackRecord({ points, annualizationDays });
+      if (record.status !== 'calculated') return { key: asset.key, name: asset.name, klass: asset.klass, ...record };
+      pooledObservations.push(...observations.map((observation) => ({ ...observation, asset: asset.key })));
+      const { current, ...rest } = record;
+      const described = describeTechnicalRecord(rest, asset.name, current?.regime);
+      return { key: asset.key, name: asset.name, klass: asset.klass, ...rest, regime: current?.regime ?? null, score: current?.score ?? null, read: described.text, readHorizonDays: described.days };
+    });
+    const pooledAssets = new Set(pooledObservations.map((observation) => observation.asset));
+    const pooled = pooledAssets.size >= 2
+      ? evaluateTrackRecord({ observations: pooledObservations, order: TECHNICAL_REGIMES, horizons: [{ days: 30 }, { days: 90 }, { days: 180 }], stepDays: 7 })
+      : { status: 'unavailable', reason: `Pooling needs two assets; ${pooledAssets.size} available.` };
+    if (pooled.status === 'calculated') {
+      const horizon = pooled.horizons.find((entry) => entry.days === 90);
+      const cell = (key) => horizon.states.find((state) => state.key === key)?.heldOut.stats;
+      const constructive = cell('Constructive');
+      const guarded = cell('Guarded');
+      const legs = [
+        Number.isFinite(constructive?.median) ? `${constructive.median > 0 ? '+' : ''}${constructive.median}% after a Constructive week` : null,
+        Number.isFinite(guarded?.median) ? `${guarded.median > 0 ? '+' : ''}${guarded.median}% after a Guarded week` : null,
+        Number.isFinite(horizon.heldOut.all.median) ? `${horizon.heldOut.all.median > 0 ? '+' : ''}${horizon.heldOut.all.median}% after any week` : null,
+      ].filter(Boolean);
+      pooled.assets = [...pooledAssets];
+      pooled.readHorizonDays = 90;
+      pooled.read = legs.length
+        ? `Pooled across ${pooledAssets.size} assets, the median 90-day return in the held-out block since ${pooled.holdoutFrom} was ${legs.length > 1 ? `${legs.slice(0, -1).join(', ')} and ${legs.at(-1)}` : legs[0]}.${Number.isFinite(horizon.heldOut.ordering) ? ` Regime ordering in that block scored ${horizon.heldOut.ordering > 0 ? '+' : ''}${horizon.heldOut.ordering}, where +1 is exactly the order the score assumes.` : ''} This describes what followed, not what will.`
+        : `Pooled across ${pooledAssets.size} assets, the held-out block since ${pooled.holdoutFrom} holds too few independent 90-day windows per regime to report.`;
+      pooled.limits = `${pooled.limits} The pooled assets move together - the S&P and the Nasdaq most of all - so the effective sample overstates the independent evidence.`;
+    }
+    const published = assets.filter((asset) => asset.status === 'calculated');
+    return {
+      version: 'technical-track-record-v1',
+      model: 'technical-v1',
+      asOf: new Date().toISOString(),
+      status: published.length === assets.length ? 'calculated' : published.length ? 'provisional' : 'unavailable',
+      reason: published.length ? undefined : 'No asset returned enough history to score its past.',
+      assets,
+      pooled,
+      errors,
+    };
   });
 }
 

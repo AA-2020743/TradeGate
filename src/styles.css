@@ -449,3 +449,6 @@ html[data-theme='dark'] .screener-search { background: #1a221d; border-color: #3
   .factor-row > :nth-child(2), .factor-row > :nth-child(3), .factor-row > :nth-child(7) { display: none; }
   .factor-row > span small { display: none; }
 }
+
+.signal-records-panel { margin: 1.2rem 0; }
+.signal-asset-tabs { flex-wrap: wrap; margin-top: 0.6rem; }

@@ -79,7 +79,11 @@ function summarize(list, horizonDays, stepDays) {
  */
 function ordering(cells) {
   const usable = cells.filter((cell) => Number.isFinite(cell.stats?.median));
-  if (usable.length < 3) return null;
+  // A three-state signal often leaves its middle state thin, and its two
+  // extremes are still a real test of the order; a five-state ladder needs
+  // more than its two ends to say anything about the ladder.
+  const minimum = cells.length >= 5 ? 3 : 2;
+  if (usable.length < minimum) return null;
   let agree = 0;
   let total = 0;
   for (let left = 0; left < usable.length; left += 1) {

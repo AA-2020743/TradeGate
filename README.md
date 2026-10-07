@@ -332,6 +332,10 @@ Three disciplines keep it from being the flattering backtest these usually are:
 
 Tier ordering is scored from −1 (exactly reversed) to +1 (cheaper tiers followed by better returns, as the ladder assumes). The per-asset read uses the longest horizon at which the current tier's held-out cell has evidence and the table opens on that same horizon, because a single asset's held-out block rarely holds enough independent 90-day windows per tier. The track record can contradict the model it describes, and is built to say so: on a momentum-driven series, deep-value weeks were followed by worse 30-day returns than stretched ones, even while the tiered schedule bought cheaper units over the full cycle. Both are true; they answer different questions.
 
+The same engine audits **technical-v1** (`server/technicalTrackRecord.js`, on the Markets page). The score is trend and momentum, so its claim is that a Constructive week precedes better returns than a Guarded one. Every past week is re-scored from a fixed trailing window of the closes available that week — fixed so every historical score is comparable, at the cost of differing by a point or two from a live score computed on more history — and today's regime is computed from the same window so the current state and its record are one measurement. Records are published per asset and pooled across the six. On a cyclical test series the two models behave as opposites, which is the point of measuring them: the momentum score ranked its regimes as it assumes, while the accumulation tiers, which buy weakness, ranked in reverse over the following months.
+
+Tier or regime ordering needs evidence in at least two states for a three-state signal and three for the five-tier ladder; a three-regime score often leaves its middle state thin, and its two extremes are still a real test of the order.
+
 ### `treasury-funding-v1`
 
 Whether the US Treasury is finding buyers for its debt, and what its cash management is doing to bank reserves — from the Treasury's own Fiscal Data API, no key.

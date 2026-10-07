@@ -805,7 +805,7 @@ function formatLevel(value) {
  * the held-out block. A cell without enough independent observations shows
  * its effective count and no statistics, so thin evidence reads as thin.
  */
-function TrackRecordTable({ record, current = null, title = 'TRACK RECORD' }) {
+function TrackRecordTable({ record, current = null, title = 'TRACK RECORD', stateLabel = 'Tier', assumption = 'the ladder assumes' }) {
   // Open on the horizon the written read is about, so the sentence above the
   // table and the numbers in it describe the same thing.
   const [days, setDays] = React.useState(record?.readHorizonDays ?? 90);
@@ -822,7 +822,7 @@ function TrackRecordTable({ record, current = null, title = 'TRACK RECORD' }) {
       <p className="section-kicker">{title}</p>
       <div className="track-tabs">{record.horizons.map((entry) => <button key={entry.days} className={entry.days === horizon.days ? 'active' : ''} onClick={() => setDays(entry.days)}>{entry.days}d</button>)}</div>
     </div>
-    <div className="track-head"><span>Tier</span><span>Before {record.holdoutFrom}</span><span>Held out since</span><span>Vs all weeks</span></div>
+    <div className="track-head"><span>{stateLabel}</span><span>Before {record.holdoutFrom}</span><span>Held out since</span><span>Vs all weeks</span></div>
     {horizon.states.map((state) => <div className={`track-row ${state.key === current ? 'current' : ''}`} key={state.key}>
       <span>{state.label}</span>
       {cell(state.development.stats)}
@@ -830,7 +830,7 @@ function TrackRecordTable({ record, current = null, title = 'TRACK RECORD' }) {
       <small className={state.consistent ? (state.heldOut.edge > 0 ? 'positive' : 'negative') : ''}>{state.consistent ? (state.heldOut.edge > 0 ? 'above both times' : 'below both times') : Number.isFinite(state.development.edge) && Number.isFinite(state.heldOut.edge) ? 'flipped' : '\u2014'}</small>
     </div>)}
     <div className="track-row track-all"><span>All weeks</span>{cell(horizon.development.all)}{cell(horizon.heldOut.all)}<small></small></div>
-    <p className="treasury-note">Median return over the next {horizon.days} days. Tier ordering, where +1 is exactly as the ladder assumes and &minus;1 the reverse: {score(horizon.development.ordering)} before, {score(horizon.heldOut.ordering)} held out. {record.methodology} {record.limits}</p>
+    <p className="treasury-note">Median return over the next {horizon.days} days. {stateLabel} ordering, where +1 is exactly as {assumption} and &minus;1 the reverse: {score(horizon.development.ordering)} before, {score(horizon.heldOut.ordering)} held out. {record.methodology} {record.limits}</p>
   </div>;
 }
 
@@ -1100,6 +1100,36 @@ function FactorReturnsPanel({ factors }) {
       <p className="treasury-note">{factors.freshness}{factors.momentumCrash?.rule ? ` Crash setup rule: ${factors.momentumCrash.rule}` : ''}</p>
     </> : <div className="equity-empty">{factors?.reason ?? 'The Kenneth French data library is required.'}</div>}
     <p className="model-footnote">{factors?.methodology ?? ''} {factors?.limits ?? ''}</p>
+  </article>;
+}
+
+/**
+ * Whether technical-v1's regimes have meant anything: the score is re-run on
+ * every past week and each regime is judged by what followed it.
+ */
+function SignalRecordsPanel({ records }) {
+  const status = records?.status ?? 'unavailable';
+  const published = status !== 'unavailable';
+  const assets = (records?.assets ?? []).filter((asset) => asset.status === 'calculated');
+  const [selected, setSelected] = React.useState(null);
+  const active = assets.find((asset) => asset.key === selected) ?? null;
+  const record = active ?? records?.pooled;
+  return <article className={`panel signal-records-panel ${published ? '' : 'preview-section'}`}>
+    <div className="panel-title">
+      <div>
+        <p className="section-kicker">TECHNICAL-V1 TRACK RECORD · {status.toUpperCase()}</p>
+        <h3>{published ? 'Have the technical regimes meant anything?' : 'Awaiting decade-long price histories'}</h3>
+      </div>
+      <span className="data-pill">walk-forward</span>
+    </div>
+    {published ? <>
+      <div className="track-tabs signal-asset-tabs">
+        <button className={!active ? 'active' : ''} onClick={() => setSelected(null)}>Pooled</button>
+        {assets.map((asset) => <button key={asset.key} className={active?.key === asset.key ? 'active' : ''} onClick={() => setSelected(asset.key)}>{asset.name}{asset.regime ? ` \u00b7 ${asset.regime}` : ''}</button>)}
+      </div>
+      {record?.read ? <p className="dca-read">{record.read}</p> : null}
+      <TrackRecordTable key={active?.key ?? 'pooled'} record={record} current={active?.regime ?? null} title={active ? `${active.name.toUpperCase()} \u00b7 NOW ${String(active.regime ?? '').toUpperCase()}${Number.isFinite(active.score) ? ` (${active.score})` : ''}` : 'POOLED ACROSS ASSETS'} stateLabel="Regime" assumption="the score assumes" />
+    </> : <div className="equity-empty">{records?.reason ?? 'Decade-long daily histories are required.'}</div>}
   </article>;
 }
 
@@ -1506,6 +1536,7 @@ function MarketsDashboard({ data }) {
       {selectedAsset && <article className="heatmap-detail panel"><div className="panel-title"><div><p className="section-kicker">SELECTED MARKET</p><h3>{selectedAsset.name}</h3></div><span className="market-symbol us-indices">{selectedAsset.symbol}</span></div><div className="detail-score"><span>Technical score</span><b className={cellTone(selectedAsset, 'score')}>{selectedAsset.score}</b><small>{selectedAsset.regime} regime · as of {String(selectedAsset.asOf ?? '').slice(0, 10)}</small></div><div className="detail-metrics">{[['trend', 'Trend'], ['momentum', 'Momentum'], ['volatility', 'Volatility'], ['crowding', 'Crowding'], ['alignment', 'Alignment']].map(([key, label]) => <div key={key}><span>{label}</span><b className={cellTone(selectedAsset, key)}>{cellValue(selectedAsset, key)}</b></div>)}</div><div className="heatmap-callout"><span>Model read</span><p>{selectedAsset.trend} against a {selectedAsset.volatility.toLowerCase()} volatility profile; equity-market alignment is {String(selectedAsset.alignmentValue ?? '—')}{Number.isFinite(selectedAsset.crowdingPercentile) ? ` with leveraged-fund positioning at the ${ordinal(selectedAsset.crowdingPercentile)} percentile` : ''}.</p></div><button className="source-link">Open {selectedAsset.symbol} research →</button></article>}
     </section>
 
+    <SignalRecordsPanel records={data.signalRecords} />
     <section className="heatmap-bottom-grid">
       <article className={`heatmap-method panel ${heatmap?.status === 'calculated' ? '' : 'preview-section'}`}><p className="section-kicker">MODEL DISCIPLINES</p><h3>One screen, seven lenses.</h3><p>Scores combine trend, cross-market alignment, positioning, volatility, and liquidity rather than relying on price direction alone.</p><div><span>Score</span><span>Regime</span><span>Alignment</span><span>Trend</span><span>Crowding</span><span>Volatility</span><span>Liquidity</span></div></article>
       <article className={`heatmap-alert panel ${heatmapRisk?.status === 'calculated' ? '' : 'preview-section'}`}><p className="section-kicker">WEAKEST LINK · {heatmapRisk?.status?.toUpperCase() ?? 'UNAVAILABLE'}</p><h3>{heatmapRisk?.headline ? `${heatmapRisk.headline.type}${heatmapRisk.headline.symbol ? `: ${heatmapRisk.headline.symbol}` : ''}` : heatmapRisk?.status === 'calculated' ? 'No single weak link stands out.' : 'Awaiting calculated markets.'}</h3><p>{heatmapRisk?.read ?? 'The heatmap must publish calculated scores before its weakest link can be identified.'}</p>{(heatmapRisk?.concerns ?? []).slice(1, 4).map((concern) => <div className="risk-concern" key={concern.key}><b>{concern.type}{concern.symbol ? ` · ${concern.symbol}` : ''}</b><small>{concern.read}</small></div>)}{heatmapRisk?.headline?.symbol ? <button onClick={() => { setSelectedSymbol(heatmapRisk.headline.symbol); setGroup('All'); }}>Show {heatmapRisk.headline.symbol} in the matrix →</button> : null}</article>

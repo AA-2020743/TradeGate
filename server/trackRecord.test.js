@@ -92,3 +92,16 @@ test('too few observations refuses rather than describing noise', () => {
   assert.equal(record.status, 'unavailable');
   assert.match(record.reason, /40 dated observations/);
 });
+
+test('a three-state signal is ranked from its two extremes when the middle is thin', () => {
+  // Without this a three-regime score whose middle state is rarely visited
+  // could never report an ordering at all.
+  const list = Array.from({ length: 900 }, (_, index) => {
+    const label = index % 60 === 0 ? 'mid' : index % 2 ? 'cheap' : 'dear';
+    return { date: date(index), label, returns: { 30: label === 'cheap' ? 6 : label === 'dear' ? -2 : 1, 90: 0 } };
+  });
+  const record = evaluateTrackRecord({ observations: list, order: ORDER, horizons: [{ days: 30 }], holdoutFraction: 0.3 });
+  const thirty = record.horizons[0];
+  assert.equal(thirty.states.find((state) => state.key === 'mid').development.stats.status, 'insufficient');
+  assert.equal(thirty.development.ordering, 1);
+});
