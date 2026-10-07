@@ -127,3 +127,22 @@ test('a running app is read through its endpoints; errors name the endpoint and 
   assert.equal(await findRunningApp('http://127.0.0.1:1', { fetchImpl: async () => { throw new Error('ECONNREFUSED'); } }), null);
   assert.equal(calls.filter((url) => url.endsWith('/api/health')).length, 1);
 });
+
+test('a job started minutes ago is running, not stuck; one left open for hours is', async () => {
+  const { summarizeIngestion } = await import('./sourceCheck.js');
+  const now = Date.parse('2026-10-07T23:58:00Z');
+  const result = summarizeIngestion({
+    enabled: true,
+    databaseConfigured: true,
+    now,
+    jobs: [
+      { job_name: 'fred-liquidity', status: 'running', started_at: '2026-10-07T23:56:00Z', finished_at: null },
+      { job_name: 'market-history', status: 'completed', started_at: '2026-10-07T22:50:00Z', finished_at: '2026-10-07T22:52:00Z' },
+    ],
+  });
+  assert.equal(result.verdict, 'ok');
+  assert.equal(result.lines[0], 'fred-liquidity: running, started 2 min ago');
+  const stuck = summarizeIngestion({ enabled: true, databaseConfigured: true, now, jobs: [{ job_name: 'market-history', status: 'running', started_at: '2026-10-07T18:00:00Z', finished_at: null }] });
+  assert.equal(stuck.verdict, 'partial');
+  assert.match(stuck.lines[0], /never finished/);
+});

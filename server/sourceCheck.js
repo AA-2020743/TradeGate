@@ -127,7 +127,7 @@ export function formatReport(summaries) {
  * INGESTION_ENABLED=true, and a server running without it serves every model
  * from live calls while its stored series and alert record silently age.
  */
-export function summarizeIngestion({ enabled, databaseConfigured, jobs = [], now = Date.now(), staleAfterHours = 36 }) {
+export function summarizeIngestion({ enabled, databaseConfigured, jobs = [], now = Date.now(), staleAfterHours = 36, runningGraceMinutes = 120 }) {
   if (!databaseConfigured) return { verdict: 'failed', lines: ['No database is configured, so nothing is stored and ingestion cannot run.'] };
   const lines = [];
   let verdict = enabled ? 'ok' : 'failed';
@@ -138,6 +138,14 @@ export function summarizeIngestion({ enabled, databaseConfigured, jobs = [], now
   }
   for (const job of jobs) {
     const finished = job.finished_at ? new Date(job.finished_at).getTime() : null;
+    const startedMinutes = Math.round((now - new Date(job.started_at).getTime()) / 60_000);
+    // A run started within the window the scheduler allows before closing it
+    // as abandoned is in progress, not stuck: a check run just after a
+    // restart found two jobs mid-run and called them never finished.
+    if (finished === null && job.status === 'running' && Number.isFinite(startedMinutes) && startedMinutes <= runningGraceMinutes) {
+      lines.push(`${job.job_name}: running, started ${startedMinutes} min ago`);
+      continue;
+    }
     const ageHours = finished === null ? null : Math.round((now - finished) / 3_600_000);
     const stale = ageHours === null || ageHours > staleAfterHours;
     if (stale && verdict === 'ok') verdict = 'partial';
