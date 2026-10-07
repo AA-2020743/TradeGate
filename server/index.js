@@ -19,7 +19,7 @@ import { getEquityDashboard, getSectorDashboard } from './equities.js';
 import { logger } from './log.js';
 import { startIngestionScheduler } from './ingestion.js';
 import { createRateLimiter } from './rateLimit.js';
-import { calculateDollarTransmission, getBitcoinCycleWorkspace, getBlockedSources, getCryptoGlobal, getDxyBitcoinRelationship, getEquityRiskAppetite, getEquityScreener, getEthereumRotation, getAccumulationSchedules, getCryptoOptionsWorkspace, getFactorReturns, getFxWorkspace, getHardMoneyValuation, getIntradayRotation, getLiquiditySnapshot, getMarketHeatmap, getMarketHistory, getMarketPositioning, getMarketSnapshot, getMetalsWorkspace, getNewsWire, getProviderHealth, getRegimeCorrelations, getSentimentSnapshot, getSignalTrackRecords, getStablecoinLeadLag, getTechnicalSnapshot, getTreasuryFunding } from './providers.js';
+import { calculateDollarTransmission, getBitcoinCycleWorkspace, getBlockedSources, getCryptoGlobal, getDxyBitcoinRelationship, getEquityRiskAppetite, getEquityScreener, getEthereumRotation, getAccumulationSchedules, getCryptoOptionsWorkspace, getFactorReturns, getFxWorkspace, getHardMoneyValuation, getIntradayRotation, getLiquiditySnapshot, getMarketHeatmap, getMarketHistory, getMarketPositioning, getMarketSnapshot, getMetalsWorkspace, getNewsWire, getPriceCrossCheck, getProviderHealth, getRegimeCorrelations, getSentimentSnapshot, getSignalTrackRecords, getStablecoinLeadLag, getTechnicalSnapshot, getTreasuryFunding } from './providers.js';
 import { buildAtomFeed } from './analytics.js';
 import { authorizeWrite, contentSecurityPolicy, describeWriteProtection, securityHeaders } from './security.js';
 
@@ -200,6 +200,14 @@ app.get('/api/analytics/heatmap', async (_request, response, next) => {
 app.get('/api/analytics/hard-money', async (request, response, next) => {
   try {
     sendJsonWithEtag(request, response, await getHardMoneyValuation());
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.get('/api/analytics/price-crosscheck', async (request, response, next) => {
+  try {
+    sendJsonWithEtag(request, response, await getPriceCrossCheck());
   } catch (error) {
     next(error);
   }

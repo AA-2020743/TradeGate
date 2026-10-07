@@ -440,7 +440,19 @@ const HISTORY_DAYS = {
 };
 
 export async function getStoredMarketHistory(symbol, range) {
-  if (!pool || range === 'All' || range === '1D' || range === '5D') return [];
+  return (await getStoredMarketHistoryWithProvider(symbol, range)).points;
+}
+
+/**
+ * Stored closes with the provider that last wrote the series. Ingestion falls
+ * back to Yahoo when Twelve Data fails, so a stored series is not
+ * necessarily Twelve Data's - and a cross-check that assumed it was would
+ * compare Yahoo with itself and call the agreement independent.
+ */
+export async function getStoredMarketHistoryWithProvider(symbol, range) {
+  if (!pool || range === 'All' || range === '1D' || range === '5D') return { points: [], provider: null };
+  const providerRow = await pool.query('SELECT provider FROM data_series WHERE id = $1', [`market:${symbol}:close:usd`]).catch(() => ({ rows: [] }));
+  const provider = providerRow.rows?.[0]?.provider ?? null;
   const now = new Date();
   const start = range === 'YTD'
     ? new Date(Date.UTC(now.getUTCFullYear(), 0, 1))
@@ -453,7 +465,7 @@ export async function getStoredMarketHistory(symbol, range) {
      ORDER BY observed_at ASC`,
     [`market:${symbol}:close:usd`, start.toISOString()],
   );
-  return result.rows.map((row) => ({ timestamp: row.observed_at.toISOString(), value: Number(row.value) }));
+  return { points: result.rows.map((row) => ({ timestamp: row.observed_at.toISOString(), value: Number(row.value) })), provider };
 }
 
 export async function getStoredSeriesCoverage(symbols) {

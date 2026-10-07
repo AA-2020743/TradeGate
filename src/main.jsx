@@ -1133,6 +1133,40 @@ function SignalRecordsPanel({ records }) {
   </article>;
 }
 
+/** Each core symbol's primary history set beside an independent second source. */
+function CrossCheckPanel({ check }) {
+  const status = check?.status ?? 'unavailable';
+  const published = status !== 'unavailable';
+  const label = { pass: 'Agrees', review: 'Review', 'not-independent': 'No independent source', unavailable: 'Unavailable' };
+  const tone = { pass: 'positive', review: 'negative' };
+  return <article className={`panel crosscheck-panel ${published ? '' : 'preview-section'}`}>
+    <div className="panel-title">
+      <div>
+        <p className="section-kicker">PRICE CROSS-CHECK · {status.toUpperCase()}</p>
+        <h3>{!published ? 'Awaiting price histories' : check.review?.length ? `${check.review.length} of ${(check.checks ?? []).length} symbols disagree with a second source` : check.passed?.length ? 'Prices agree across independent sources' : 'No independent second source to compare'}</h3>
+      </div>
+      <span className="data-pill">primary vs Yahoo</span>
+    </div>
+    {published ? <>
+      <div className="crosscheck-head"><span>Symbol</span><span>Sources</span><span>Latest diff</span><span>Daily return diff</span><span>Result</span></div>
+      {(check.checks ?? []).map((row) => <div className="crosscheck-row" key={row.symbol}>
+        <span><b>{row.symbol}</b><small>{row.name}</small></span>
+        <small>{row.primarySource ?? '\u2014'} vs {row.shadowSource ?? '\u2014'}{row.offsetDays ? ' (offset)' : ''}</small>
+        {row.status === 'pass' || row.status === 'review'
+          ? <>
+            <b>{row.latestDifferencePercent.toFixed(2)}%</b>
+            <span><b>{row.medianReturnDifferencePoints.toFixed(3)} median</b><small>max {row.maxReturnDifferencePoints.toFixed(2)}{row.maxReturnDifferencePoints >= 0.01 ? ` on ${row.worstDate}` : ''} &middot; {row.overlap} days</small></span>
+          </>
+          : <small className="crosscheck-reason">{row.reason}</small>}
+        <strong className={tone[row.status] ?? ''}>{label[row.status] ?? row.status}</strong>
+      </div>)}
+      {check.read ? <p className="dca-read">{check.read}</p> : null}
+      {(check.checks ?? []).filter((row) => row.status === 'review').map((row) => <p className="treasury-note" key={row.symbol}><b>{row.symbol}:</b> {row.breaches.join('; ')}.</p>)}
+    </> : <div className="equity-empty">{check?.reason ?? 'Price histories from two providers are required.'}</div>}
+    <p className="model-footnote">{check?.methodology ?? ''}</p>
+  </article>;
+}
+
 function ConcentrationPanel({ concentration }) {
   const status = concentration?.status ?? 'unavailable';
   const published = status !== 'unavailable';
@@ -1537,6 +1571,7 @@ function MarketsDashboard({ data }) {
     </section>
 
     <SignalRecordsPanel records={data.signalRecords} />
+    <CrossCheckPanel check={data.crossCheck} />
     <section className="heatmap-bottom-grid">
       <article className={`heatmap-method panel ${heatmap?.status === 'calculated' ? '' : 'preview-section'}`}><p className="section-kicker">MODEL DISCIPLINES</p><h3>One screen, seven lenses.</h3><p>Scores combine trend, cross-market alignment, positioning, volatility, and liquidity rather than relying on price direction alone.</p><div><span>Score</span><span>Regime</span><span>Alignment</span><span>Trend</span><span>Crowding</span><span>Volatility</span><span>Liquidity</span></div></article>
       <article className={`heatmap-alert panel ${heatmapRisk?.status === 'calculated' ? '' : 'preview-section'}`}><p className="section-kicker">WEAKEST LINK · {heatmapRisk?.status?.toUpperCase() ?? 'UNAVAILABLE'}</p><h3>{heatmapRisk?.headline ? `${heatmapRisk.headline.type}${heatmapRisk.headline.symbol ? `: ${heatmapRisk.headline.symbol}` : ''}` : heatmapRisk?.status === 'calculated' ? 'No single weak link stands out.' : 'Awaiting calculated markets.'}</h3><p>{heatmapRisk?.read ?? 'The heatmap must publish calculated scores before its weakest link can be identified.'}</p>{(heatmapRisk?.concerns ?? []).slice(1, 4).map((concern) => <div className="risk-concern" key={concern.key}><b>{concern.type}{concern.symbol ? ` · ${concern.symbol}` : ''}</b><small>{concern.read}</small></div>)}{heatmapRisk?.headline?.symbol ? <button onClick={() => { setSelectedSymbol(heatmapRisk.headline.symbol); setGroup('All'); }}>Show {heatmapRisk.headline.symbol} in the matrix →</button> : null}</article>

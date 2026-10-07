@@ -306,6 +306,12 @@ Two readings come out of it. *Within* an asset, where its gold ratio sits in its
 
 The equity indices are read on price **and** total return because the difference is not cosmetic: a price index can be flat in gold terms over a decade while the same index with dividends reinvested is well ahead — and that gap is the real return, delivered as income rather than as price.
 
+### `price-crosscheck-v1`
+
+Every model trusts the price series it is handed, and a provider that misses a split, stamps a close on the wrong day or freezes a symbol produces a series that looks like a market and scores like one. The cross-check (on the Markets page) puts each core symbol's primary history beside Yahoo's and measures the disagreement over the last 60 shared sessions: the latest close, the median daily-return difference, and the worst single day. Daily returns are compared, not only levels, because a wrong close weeks ago leaves today's level untouched.
+
+A source compared with itself proves nothing, so the check refuses to call that a pass. Stored history is attributed to the provider that last wrote it — ingestion falls back to Yahoo when Twelve Data fails, so stored history can be Yahoo's — and an unknown writer is not assumed to be anyone. Bitcoin's sources stamp daily closes on different days (CoinGecko at 00:00 UTC, Yahoo on the close's own date), so a one-day offset is tried each way and the alignment used is reported rather than every day being flagged. A disagreement is a review trigger, not proof of error: session cutoffs, dividend adjustments and venue differences move closes legitimately.
+
 ### Derivatives venues
 
 BTC perpetual funding is read from Binance, Bybit and OKX, and open interest from Binance with OKX as the fallback. Every venue restricts some region — Binance's futures API answers US addresses with 451 and Bybit's CDN refuses some cloud ranges with 403 — so each venue is its own result and the funding read names the venues it was built from and the ones that did not answer. The cross-venue spread is published, and the percentile names the venue whose history it is ranked against (Binance's ~330 days, or OKX's three months when Binance refuses). OKX publishes daily open interest in dollars only, so its coin-equivalent is rebuilt from the same day's close before the price/open-interest quadrant reads it. A leg that fails on a refresh reuses its last good reading, labelled provisional with the reason, never as live.

@@ -30,6 +30,7 @@ export function usePlatformData() {
     treasury: null,
     factors: null,
     signalRecords: null,
+    crossCheck: null,
     news: null,
     screener: null,
     alerts: null,
@@ -40,7 +41,7 @@ export function usePlatformData() {
     let active = true;
 
     const load = async () => {
-      const [health, markets, liquidity, dxyBtc, regimeCorrelations, positioning, heatmap, metals, fx, hardMoney, accumulation, cryptoOptions, treasury, factors, signalRecords, sentiment, bitcoin, equityRisk, news, screener, alerts] = await Promise.allSettled([
+      const [health, markets, liquidity, dxyBtc, regimeCorrelations, positioning, heatmap, metals, fx, hardMoney, accumulation, cryptoOptions, treasury, factors, signalRecords, crossCheck, sentiment, bitcoin, equityRisk, news, screener, alerts] = await Promise.allSettled([
         requestJson('/api/health'),
         requestJson('/api/markets/snapshot'),
         requestJson('/api/macro/liquidity'),
@@ -56,6 +57,7 @@ export function usePlatformData() {
         requestJson('/api/macro/treasury'),
         requestJson('/api/analytics/factors'),
         requestJson('/api/analytics/signal-records'),
+        requestJson('/api/analytics/price-crosscheck'),
         requestJson('/api/analytics/sentiment'),
         requestJson('/api/analytics/bitcoin'),
         requestJson('/api/analytics/equity-risk'),
@@ -80,6 +82,7 @@ export function usePlatformData() {
       const treasuryData = treasury.status === 'fulfilled' ? treasury.value : null;
       const factorsData = factors.status === 'fulfilled' ? factors.value : null;
       const signalRecordsData = signalRecords.status === 'fulfilled' ? signalRecords.value : null;
+      const crossCheckData = crossCheck.status === 'fulfilled' ? crossCheck.value : null;
       const sentimentData = sentiment.status === 'fulfilled' ? sentiment.value : null;
       const bitcoinData = bitcoin.status === 'fulfilled' ? bitcoin.value : null;
       const equityRiskData = equityRisk.status === 'fulfilled' ? equityRisk.value : null;
@@ -113,6 +116,7 @@ export function usePlatformData() {
         treasury: treasuryData,
         factors: factorsData,
         signalRecords: signalRecordsData,
+        crossCheck: crossCheckData,
         sentiment: sentimentData,
         bitcoin: bitcoinData,
         equityRisk: equityRiskData,

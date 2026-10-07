@@ -452,3 +452,18 @@ html[data-theme='dark'] .screener-search { background: #1a221d; border-color: #3
 
 .signal-records-panel { margin: 1.2rem 0; }
 .signal-asset-tabs { flex-wrap: wrap; margin-top: 0.6rem; }
+
+/* Price cross-check: primary history against an independent source. */
+.crosscheck-panel { margin: 1.2rem 0; }
+.crosscheck-head, .crosscheck-row { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.3fr) minmax(0, 0.7fr) minmax(0, 1.4fr) minmax(0, 0.8fr); gap: 0.6rem; align-items: baseline; }
+.crosscheck-head { margin-top: 0.9rem; padding-bottom: 0.4rem; font-size: 0.7rem; letter-spacing: 0.05em; text-transform: uppercase; opacity: 0.55; border-bottom: 1px solid var(--hairline, rgba(255, 255, 255, 0.12)); }
+.crosscheck-row { padding: 0.45rem 0; border-bottom: 1px solid var(--hairline, rgba(255, 255, 255, 0.06)); }
+.crosscheck-row > span { display: flex; flex-direction: column; min-width: 0; }
+.crosscheck-row small { opacity: 0.6; font-size: 0.75em; }
+.crosscheck-reason { grid-column: 3 / 5; }
+@media (max-width: 640px) {
+  .crosscheck-head, .crosscheck-row { grid-template-columns: minmax(0, 0.8fr) minmax(0, 0.7fr) minmax(0, 1.2fr) minmax(0, 0.8fr); }
+  .crosscheck-head span:nth-child(2), .crosscheck-row > small:nth-child(2) { display: none; }
+  .crosscheck-reason { grid-column: 2 / 4; }
+}
+.crosscheck-row > *, .crosscheck-head > * { min-width: 0; overflow-wrap: anywhere; }

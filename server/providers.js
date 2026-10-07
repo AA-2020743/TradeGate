@@ -6,7 +6,7 @@ import { calculateBitcoinTechnicals, calculateMovingAverageStack } from './bitco
 import { calculateRevisionBreadth, calculateThrustLog } from './equityAnalytics.js';
 import { calculateBitcoinRangeModels } from './bitcoinOhlc.js';
 import { buildCoingeckoRequest, buildHeatmapRow, buildSocrataRequest, buildLiquidityNarrative, buildLiquidityTransmission, buildWorkspaceNarrative, calculateBitcoinCyclePhase, calculateChangeCorrelations, calculateCryptoRotation, calculateDollarScenarios, calculateDollarTransmissionRead, calculateLeadLag, calculateLiquidityRunway, calculateOpenInterestQuadrant, calculatePositioningModel, calculateCrossMarketRelationship, calculateGlobalLiquidityModel, calculateHeatmapRisk, calculateMacroRegimeModel, calculateMetalsCostStructure, calculateRsi, calculateScreenerScores, calculateTechnicalSnapshot, calculateTrendQuality, classifyHeadlineSentiment, isPublished, calculateUsdStrengthModel, calculateUsLiquidityModel } from './analytics.js';
-import { getStoredFredSeries, getStoredMarketHistory, getStoredMarketSnapshot, getRecentModelOutputs, isDatabaseConfigured, reserveProviderCredits } from './database.js';
+import { getStoredFredSeries, getStoredMarketHistory, getStoredMarketHistoryWithProvider, getStoredMarketSnapshot, getRecentModelOutputs, isDatabaseConfigured, reserveProviderCredits } from './database.js';
 import { getAllEquityHistorySymbols, getCoreEquityHistorySymbols } from './equityCatalog.js';
 import { buildBackfillRows, calculateConsensusHistory, calculateMacroVerdict, calculateModelConsensus, calculateModelCorrelationMatrix, calculateWeightOverlap, evaluateMacroAlerts } from './macroConsensus.js';
 import { calculateDataSurprise, calculateLiquidityPayoff, calculateNominalDecomposition, calculateRateDivergence, calculateReserveScarcity, calculateTermPremium } from './macroRates.js';
@@ -21,6 +21,7 @@ import { readLargestTextEntry } from './zip.js';
 import { combineFundingVenues, okxPositioningRows } from './derivativesVenues.js';
 import { TECHNICAL_REGIMES, describeTechnicalRecord, technicalTrackRecord } from './technicalTrackRecord.js';
 import { evaluateTrackRecord } from './trackRecord.js';
+import { crossCheckSeries, summarizeCrossChecks } from './priceCrossCheck.js';
 import { resolveVintage, screenVintage } from './vintage.js';
 import { cryptoHistoryGranularity, describeSeriesFreshness, isCryptoHistoryStale, isCotReportStale, isDailyCloseStale, isFredSeriesAbandoned, isFredSeriesStale, isPbocObservationStale, monthsBetween } from './freshness.js';
 import { percentileRank } from './statistics.js';
@@ -520,8 +521,11 @@ export async function getMarketHistory(symbol, requestedRange, options = {}) {
     : isDailyCloseStale(timestamp));
   return withCache(`history:${normalizedSymbol}:${range}:${cacheMode}`, 60_000, async () => {
     let storedPoints = [];
+    let storedProvider = null;
     if (options.preferStored !== false) {
-      storedPoints = await getStoredMarketHistory(normalizedSymbol, range).catch(() => []);
+      const stored = await getStoredMarketHistoryWithProvider(normalizedSymbol, range).catch(() => ({ points: [], provider: null }));
+      storedPoints = stored.points;
+      storedProvider = stored.provider;
       const latestStoredTime = new Date(storedPoints.at(-1)?.timestamp).getTime();
       const storedHistoryIsFresh = Number.isFinite(latestStoredTime) && !historyIsStale(latestStoredTime);
       if (storedPoints.length >= 2 && storedHistoryIsFresh) {
@@ -530,6 +534,7 @@ export async function getMarketHistory(symbol, requestedRange, options = {}) {
           range,
           asOf: storedPoints.at(-1).timestamp,
           source: 'PostgreSQL (stored provider history)',
+          storedProvider,
           configured: true,
           stored: true,
           points: storedPoints,
@@ -1781,6 +1786,60 @@ export async function getSignalTrackRecords() {
       pooled,
       errors,
     };
+  });
+}
+
+const CROSS_CHECK_SYMBOLS = [
+  { symbol: 'SPY', yahoo: 'SPY', name: 'S&P 500 proxy' },
+  { symbol: 'QQQ', yahoo: 'QQQ', name: 'Nasdaq 100 proxy' },
+  { symbol: 'GLD', yahoo: 'GLD', name: 'Gold proxy' },
+  { symbol: 'NVDA', yahoo: 'NVDA', name: 'NVIDIA' },
+  { symbol: 'AAPL', yahoo: 'AAPL', name: 'Apple' },
+  { symbol: 'BTC', yahoo: 'BTC-USD', name: 'Bitcoin', allowOffset: true },
+];
+
+/**
+ * The provider a history label really came from. Stored history is named
+ * after what ingested it - Twelve Data for equities, CoinGecko for bitcoin -
+ * so it counts as independent of Yahoo; a Yahoo fallback does not.
+ */
+export function primaryProvider(label, storedProvider = null) {
+  const text = String(label ?? '');
+  // Stored history is named by the provider that last wrote it - which can be
+  // Yahoo, if Twelve Data failed during ingestion. Unknown stays unknown, and
+  // an unknown primary cannot be called independent of anything.
+  if (/postgres/i.test(text)) {
+    if (!storedProvider) return null;
+    return `${primaryProvider(storedProvider)} (stored)`;
+  }
+  if (/yahoo/i.test(text)) return 'Yahoo';
+  if (/coingecko/i.test(text)) return 'CoinGecko';
+  if (/twelve/i.test(text)) return 'Twelve Data';
+  return text || null;
+}
+
+/**
+ * Each core symbol's primary history beside Yahoo's, so a provider that
+ * misses a split or stamps a close on the wrong day is visible before a model
+ * scores it.
+ */
+export async function getPriceCrossCheck() {
+  return withCache('analytics:price-crosscheck', 60 * 60_000, async () => {
+    const checks = await Promise.all(CROSS_CHECK_SYMBOLS.map(async (entry) => {
+      const [primaryResult, shadowResult] = await Promise.allSettled([getMarketHistory(entry.symbol, '6M'), getYahooHistory(entry.yahoo, '1y')]);
+      if (primaryResult.status !== 'fulfilled') return { symbol: entry.symbol, name: entry.name, status: 'unavailable', reason: `Primary history failed: ${primaryResult.reason?.message ?? 'no response'}` };
+      if (shadowResult.status !== 'fulfilled') return { symbol: entry.symbol, name: entry.name, status: 'unavailable', reason: `Yahoo shadow history failed: ${shadowResult.reason?.message ?? 'no response'}` };
+      return crossCheckSeries({
+        symbol: entry.symbol,
+        name: entry.name,
+        primary: primaryResult.value.points,
+        shadow: shadowResult.value,
+        primarySource: primaryProvider(primaryResult.value.source, primaryResult.value.storedProvider),
+        shadowSource: 'Yahoo',
+        allowOffset: Boolean(entry.allowOffset),
+      });
+    }));
+    return { version: 'price-crosscheck-v1', asOf: new Date().toISOString(), ...summarizeCrossChecks(checks), checks };
   });
 }
 
