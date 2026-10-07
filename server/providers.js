@@ -16,6 +16,8 @@ import { calculateRatioValuation, compareIncomeContribution, rankHardMoneyStreng
 import { allocateAcrossAssets, calculateAccumulationSchedule, describeLadder, pooledTrackRecord } from './accumulation.js';
 import { calculateCryptoOptionsSurface } from './cryptoOptions.js';
 import { calculateTreasuryFunding } from './treasuryFunding.js';
+import { calculateFactorReturns, joinFactorTables, parseFrenchDaily } from './factorReturns.js';
+import { readLargestTextEntry } from './zip.js';
 import { resolveVintage, screenVintage } from './vintage.js';
 import { cryptoHistoryGranularity, describeSeriesFreshness, isCryptoHistoryStale, isCotReportStale, isDailyCloseStale, isFredSeriesAbandoned, isFredSeriesStale, isPbocObservationStale, monthsBetween } from './freshness.js';
 import { percentileRank } from './statistics.js';
@@ -132,6 +134,20 @@ async function fetchJson(url, attempt = 0, maxRetries = 2, extraHeaders = null) 
   }
   if (!response.ok) throw new Error(`Upstream request failed with ${response.status}`);
   return response.json();
+}
+
+/** Binary download for published archives, with the same 429 handling as fetchJson. */
+async function fetchBuffer(url, attempt = 0, maxRetries = 2) {
+  const response = await fetch(url, {
+    headers: { Accept: 'application/zip,application/octet-stream,*/*', 'User-Agent': 'TradeGateResearch/0.1' },
+    signal: AbortSignal.timeout(30_000),
+  });
+  if (response.status === 429 && attempt < maxRetries) {
+    await wait(5_000 * (attempt + 1));
+    return fetchBuffer(url, attempt + 1, maxRetries);
+  }
+  if (!response.ok) throw new Error(`Upstream request failed with ${response.status}`);
+  return Buffer.from(await response.arrayBuffer());
 }
 
 async function fetchText(url, attempt = 0, maxRetries = 2, extraHeaders = null) {
@@ -1649,6 +1665,35 @@ export async function getTreasuryFunding() {
       }),
       errors,
     };
+  });
+}
+
+const FRENCH_LIBRARY = 'https://mba.tuck.dartmouth.edu/pages/faculty/ken.french/ftp';
+
+/**
+ * Fama-French five factors and momentum, daily since 1963, from the Kenneth
+ * R. French Data Library. The library publishes monthly, so a 12-hour cache
+ * costs nothing and spares a 2 MB download on every request.
+ */
+export async function getFactorReturns() {
+  return withCache('analytics:factor-returns', 12 * 60 * 60_000, async () => {
+    const [fiveResult, momentumResult] = await Promise.allSettled([
+      fetchBuffer(`${FRENCH_LIBRARY}/F-F_Research_Data_5_Factors_2x3_daily_CSV.zip`).then((buffer) => parseFrenchDaily(readLargestTextEntry(buffer), 'Mkt-RF')),
+      fetchBuffer(`${FRENCH_LIBRARY}/F-F_Momentum_Factor_daily_CSV.zip`).then((buffer) => parseFrenchDaily(readLargestTextEntry(buffer), 'Mom')),
+    ]);
+    const errors = [
+      ...(fiveResult.status === 'rejected' ? [`Five-factor file: ${fiveResult.reason?.message ?? 'failed'}`] : []),
+      ...(momentumResult.status === 'rejected' ? [`Momentum file: ${momentumResult.reason?.message ?? 'failed'}`] : []),
+    ];
+    if (fiveResult.status === 'rejected') {
+      return { version: 'factor-returns-v1', status: 'unavailable', reason: `The Kenneth French five-factor file could not be read: ${fiveResult.reason?.message ?? 'failed'}`, factors: [], errors };
+    }
+    // Without momentum the other five still publish; momentum reports missing.
+    const rows = momentumResult.status === 'fulfilled'
+      ? joinFactorTables(fiveResult.value, momentumResult.value)
+      : fiveResult.value;
+    const missing = momentumResult.status === 'rejected' ? { Mom: `The momentum file could not be read: ${momentumResult.reason?.message ?? 'failed'}` } : {};
+    return { ...calculateFactorReturns(rows, { missing }), source: 'Kenneth R. French Data Library', errors };
   });
 }
 

@@ -435,3 +435,17 @@ html[data-theme='dark'] .screener-search { background: #1a221d; border-color: #3
 .track-row.current { box-shadow: inset 2px 0 0 var(--verdict-accent, #d2705f); padding-left: 0.5rem; margin-left: -0.5rem; }
 .track-all { font-weight: 600; border-bottom: none; }
 .track-insufficient { opacity: 0.45; }
+
+/* Factor returns: six factors, each against its own history. */
+.factor-panel { grid-column: 1 / -1; }
+.factor-head, .factor-row { display: grid; grid-template-columns: minmax(0, 1.6fr) repeat(3, minmax(0, 0.6fr)) minmax(0, 0.7fr) minmax(0, 1fr) minmax(0, 0.8fr); gap: 0.6rem; align-items: baseline; }
+.factor-head { margin-top: 0.9rem; padding-bottom: 0.4rem; font-size: 0.7rem; letter-spacing: 0.05em; text-transform: uppercase; opacity: 0.55; border-bottom: 1px solid var(--hairline, rgba(255, 255, 255, 0.12)); }
+.factor-row { padding: 0.45rem 0; border-bottom: 1px solid var(--hairline, rgba(255, 255, 255, 0.06)); }
+.factor-row > span { display: flex; flex-direction: column; min-width: 0; }
+.factor-row small { opacity: 0.6; font-size: 0.74em; }
+@media (max-width: 640px) {
+  .factor-head, .factor-row { grid-template-columns: minmax(0, 1.2fr) minmax(0, 0.7fr) minmax(0, 0.8fr) minmax(0, 0.9fr); }
+  .factor-head span:nth-child(2), .factor-head span:nth-child(3), .factor-head span:nth-child(7),
+  .factor-row > :nth-child(2), .factor-row > :nth-child(3), .factor-row > :nth-child(7) { display: none; }
+  .factor-row > span small { display: none; }
+}

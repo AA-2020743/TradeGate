@@ -28,6 +28,7 @@ export function usePlatformData() {
     accumulation: null,
     cryptoOptions: null,
     treasury: null,
+    factors: null,
     news: null,
     screener: null,
     alerts: null,
@@ -38,7 +39,7 @@ export function usePlatformData() {
     let active = true;
 
     const load = async () => {
-      const [health, markets, liquidity, dxyBtc, regimeCorrelations, positioning, heatmap, metals, fx, hardMoney, accumulation, cryptoOptions, treasury, sentiment, bitcoin, equityRisk, news, screener, alerts] = await Promise.allSettled([
+      const [health, markets, liquidity, dxyBtc, regimeCorrelations, positioning, heatmap, metals, fx, hardMoney, accumulation, cryptoOptions, treasury, factors, sentiment, bitcoin, equityRisk, news, screener, alerts] = await Promise.allSettled([
         requestJson('/api/health'),
         requestJson('/api/markets/snapshot'),
         requestJson('/api/macro/liquidity'),
@@ -52,6 +53,7 @@ export function usePlatformData() {
         requestJson('/api/analytics/accumulation'),
         requestJson('/api/analytics/crypto-options'),
         requestJson('/api/macro/treasury'),
+        requestJson('/api/analytics/factors'),
         requestJson('/api/analytics/sentiment'),
         requestJson('/api/analytics/bitcoin'),
         requestJson('/api/analytics/equity-risk'),
@@ -74,6 +76,7 @@ export function usePlatformData() {
       const accumulationData = accumulation.status === 'fulfilled' ? accumulation.value : null;
       const cryptoOptionsData = cryptoOptions.status === 'fulfilled' ? cryptoOptions.value : null;
       const treasuryData = treasury.status === 'fulfilled' ? treasury.value : null;
+      const factorsData = factors.status === 'fulfilled' ? factors.value : null;
       const sentimentData = sentiment.status === 'fulfilled' ? sentiment.value : null;
       const bitcoinData = bitcoin.status === 'fulfilled' ? bitcoin.value : null;
       const equityRiskData = equityRisk.status === 'fulfilled' ? equityRisk.value : null;
@@ -105,6 +108,7 @@ export function usePlatformData() {
         accumulation: accumulationData,
         cryptoOptions: cryptoOptionsData,
         treasury: treasuryData,
+        factors: factorsData,
         sentiment: sentimentData,
         bitcoin: bitcoinData,
         equityRisk: equityRiskData,

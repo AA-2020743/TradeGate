@@ -306,6 +306,16 @@ Two readings come out of it. *Within* an asset, where its gold ratio sits in its
 
 The equity indices are read on price **and** total return because the difference is not cosmetic: a price index can be flat in gold terms over a decade while the same index with dividends reinvested is well ahead — and that gap is the real return, delivered as income rather than as price.
 
+### `factor-returns-v1`
+
+Which equity factors are working, from the Kenneth R. French Data Library — the reference source for academic factor returns, no key. Six long-short US factors: market, size, value, profitability, investment and momentum. A factor's return is what the tilt earned, not what the market did.
+
+Each factor's 1-, 3- and 12-month return, its drawdown from its own high, and its 63-session volatility are ranked against its full history since 1963, because a number alone means little: value losing 8% in a year is unremarkable in one decade and historic in another. The 63-session value-momentum correlation is published because the pair is held together for its usually negative correlation, and when that breaks down the diversification is not there.
+
+Momentum carries one extra reading: its worst losses have historically clustered in a sharp market rebound after a prolonged decline, when the losers it is short are the high-beta names that rebound hardest. The two conditions (a negative two-year market return and a one-month gain of at least 8%) are published with their thresholds, as a known hazard rather than a forecast.
+
+The library publishes monthly with a lag of several weeks, so the final observation is routinely one to two months old; the vintage is printed on the panel and only past 100 days is the data called stale. The archives are zip files, read by a small dependency-free reader (`server/zip.js`) tested against fixtures written by an independent implementation, including the streaming layout in which the local header's sizes are zero.
+
 ### Track records
 
 A model that says "deep value" or "stretched" is making an implicit claim about what comes next. `server/trackRecord.js` measures that claim: for every week a signal was in a given state, what did the asset do over the following 30, 90 and 180 days — and was that any different from what an ordinary week was followed by? It is applied first to the accumulation tiers, per asset and pooled across all six assets.

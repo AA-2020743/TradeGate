@@ -1063,6 +1063,46 @@ function TreasuryFundingPanel({ treasury }) {
   </article>;
 }
 
+/** Which equity factors are working, each placed in its own history since 1963. */
+function FactorReturnsPanel({ factors }) {
+  const status = factors?.status ?? 'unavailable';
+  const published = status !== 'unavailable';
+  // Rounds first so a -0.04 prints as 0.0%, not -0.0%.
+  const signedPct = (value) => { if (!Number.isFinite(value)) return '\u2014'; const shown = Math.round(value * 10) / 10 || 0; return `${shown > 0 ? '+' : ''}${shown.toFixed(1)}%`; };
+  const pct = (value) => (Number.isFinite(value) ? ordinal(value) : '\u2014');
+  const leader = (factors?.factors ?? []).filter((factor) => factor.status === 'calculated' && factor.key !== 'Mkt-RF').sort((left, right) => right.returns.year - left.returns.year)[0];
+  return <article className={`panel factor-panel ${published ? '' : 'preview-section'}`}>
+    <div className="panel-title">
+      <div>
+        <p className="section-kicker">FACTOR RETURNS · {status.toUpperCase()}</p>
+        <h3>{leader ? `${leader.name} leads the style factors over 12 months` : 'Awaiting the Kenneth French data library'}</h3>
+      </div>
+      {published ? <span className={`data-pill ${factors.stale ? 'negative' : ''}`}>data to {factors.asOf}</span> : null}
+    </div>
+    {published ? <>
+      <div className="factor-head"><span>Factor</span><span>1M</span><span>3M</span><span>12M</span><span>12M vs history</span><span>Drawdown</span><span>Vol vs history</span></div>
+      {factors.factors.map((factor) => factor.status !== 'calculated'
+        ? <div className="factor-row" key={factor.key}><span><b>{factor.name}</b></span><small className="treasury-missing">{factor.reason}</small></div>
+        : <div className="factor-row" key={factor.key}>
+          <span><b>{factor.name}</b><small>{factor.description}</small></span>
+          <b className={factor.returns.month >= 0 ? 'positive' : 'negative'}>{signedPct(factor.returns.month)}</b>
+          <b className={factor.returns.quarter >= 0 ? 'positive' : 'negative'}>{signedPct(factor.returns.quarter)}</b>
+          <b className={factor.returns.year >= 0 ? 'positive' : 'negative'}>{signedPct(factor.returns.year)}</b>
+          <small>{pct(factor.yearPercentile)} pct</small>
+          <span><b className={factor.drawdownPercentile >= 90 ? 'negative' : ''}>{factor.drawdownPercent > -0.05 ? 'at its high' : signedPct(factor.drawdownPercent)}</b><small>{factor.drawdownPercent > -0.05 ? 'no drawdown' : factor.drawdownPercentile >= 100 ? 'deepest in its history' : `deeper than ${factor.drawdownPercentile}% of history`}</small></span>
+          <span><b>{Number.isFinite(factor.volatilityPercent) ? `${factor.volatilityPercent.toFixed(1)}%` : '\u2014'}</b><small>{pct(factor.volatilityPercentile)} pct</small></span>
+        </div>)}
+      <div className="options-stats">
+        <div><span>Value vs momentum, 63d corr.</span><b>{Number.isFinite(factors.correlations?.valueMomentum) ? factors.correlations.valueMomentum.toFixed(2) : '\u2014'}</b><small>usually negative: the pair diversifies</small></div>
+        <div><span>Momentum crash setup</span><b className={factors.momentumCrash?.elevated ? 'negative' : ''}>{factors.momentumCrash?.status === 'calculated' ? (factors.momentumCrash.elevated ? 'Present' : 'Absent') : '\u2014'}</b><small>{factors.momentumCrash?.status === 'calculated' ? `market ${signedPct(factors.momentumCrash.marketTwoYearPercent)} over 2y, ${signedPct(factors.momentumCrash.marketOneMonthPercent)} over 1m` : ''}</small></div>
+      </div>
+      {factors.read ? <p className="dca-read">{factors.read}</p> : null}
+      <p className="treasury-note">{factors.freshness}{factors.momentumCrash?.rule ? ` Crash setup rule: ${factors.momentumCrash.rule}` : ''}</p>
+    </> : <div className="equity-empty">{factors?.reason ?? 'The Kenneth French data library is required.'}</div>}
+    <p className="model-footnote">{factors?.methodology ?? ''} {factors?.limits ?? ''}</p>
+  </article>;
+}
+
 function ConcentrationPanel({ concentration }) {
   const status = concentration?.status ?? 'unavailable';
   const published = status !== 'unavailable';
@@ -1254,6 +1294,7 @@ function EquitiesDashboard({ platformData }) {
       <ExpectedMovePanel expectedMove={dashboard?.expectedMove} />
       <ConcentrationPanel concentration={platformData?.equityRisk?.equalWeight?.concentration} />
       <AccumulationPanel accumulation={platformData?.accumulation} only="spx" title="S&amp;P 500 ACCUMULATION" />
+      <FactorReturnsPanel factors={platformData?.factors} />
       <RevisionBreadthPanel revisions={dashboard?.revisions} />
       <ThrustLogPanel breadth={dashboard?.breadth} />
     </section>
