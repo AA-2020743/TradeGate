@@ -88,7 +88,12 @@ export async function getEquityDashboard(requestedSymbol = 'SPY') {
     getStoredTechnicalSnapshot(symbol),
     getLiquiditySnapshot(),
     getEquityRiskAppetite(),
-    getMarketHistory(symbol, '1Y', { preferStored: false }),
+    // Stored history first, as everywhere else: forcing a live read cost one
+    // interactive Twelve Data credit per dashboard load, and the Equities page
+    // polls every five minutes - about 290 credits a day for one open page,
+    // twice the interactive budget. Stale stored history still falls through
+    // to the provider.
+    getMarketHistory(symbol, '1Y'),
     getEquityLongHistory(symbol),
     getEarningsRevisionBreadth(),
   ]);
@@ -102,7 +107,7 @@ export async function getEquityDashboard(requestedSymbol = 'SPY') {
     : liveTechnicalResult.value?.points?.length ? null : 'the live history request returned no observations';
   if (!usableTechnical && liveTechnicalResult.status === 'fulfilled' && liveTechnicalResult.value?.points?.length) {
     usableTechnical = calculateTechnicalSnapshot(liveTechnicalResult.value.points);
-    if (usableTechnical) technicalSource = `live ${liveTechnicalResult.value.source ?? 'provider'} history`;
+    if (usableTechnical) technicalSource = liveTechnicalResult.value.stored ? 'stored history' : `live ${liveTechnicalResult.value.source ?? 'provider'} history`;
   }
 
   const technicalReason = usableTechnical ? null : describeMissingTechnical(technical, liveFailure);

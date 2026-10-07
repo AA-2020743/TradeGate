@@ -183,6 +183,31 @@ describe('undated consensus outputs stored on different days all count toward it
   assert.notEqual(history.status, 'unavailable', history.reason);
 });
 
+describe('fresh stored history is served without a provider request', async () => {
+  // The heatmap and the equity dashboard rely on this to stay inside the
+  // interactive Twelve Data budget: a fresh stored series must not cost a call.
+  await reset();
+  const observations = Array.from({ length: 200 }, (_unused, index) => ({
+    observedAt: new Date(Date.UTC(new Date().getUTCFullYear(), new Date().getUTCMonth(), new Date().getUTCDate()) - (199 - index) * 86_400_000).toISOString(),
+    value: 500 + index,
+    metadata: {},
+  }));
+  await database.persistSeries({ id: 'market:SPY:close:usd', provider: 'Twelve Data', providerSeriesId: 'SPY', name: 'SPY closing price', assetClass: 'Market', frequency: '1day', unit: 'close', currency: 'USD', metadata: {}, observations });
+  const original = globalThis.fetch;
+  const requested = [];
+  globalThis.fetch = async (input) => { requested.push(String(input?.url ?? input)); throw new Error('no network in this test'); };
+  try {
+    const { getMarketHistory } = await import('./providers.js');
+    const history = await getMarketHistory('SPY', '1Y');
+    assert.equal(history.source, 'PostgreSQL (stored provider history)');
+    assert.equal(history.storedProvider, 'Twelve Data');
+    assert.ok(history.points.length >= 200);
+    assert.deepEqual(requested, []);
+  } finally {
+    globalThis.fetch = original;
+  }
+});
+
 describe('an unavailable model is never stored', async () => {
   await reset();
   await database.persistModelOutput('m', { version: 'v1', status: 'unavailable', reason: 'no inputs', asOf: null });
