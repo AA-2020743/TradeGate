@@ -303,7 +303,11 @@ export function supportsHistorySymbol(symbol) {
 export function heatmapSymbols() {
   return HEATMAP_UNIVERSE.map((entry) => entry.symbol);
 }
-const INGESTION_HISTORY_SYMBOLS = new Set(['BTC', ...TWELVE_SYMBOLS.map((asset) => asset.symbol), ...getCoreEquityHistorySymbols()]);
+// The heatmap refreshes every 15 minutes and reads stored history first. A
+// symbol it scores that is not stored here is fetched live from Twelve Data
+// on every refresh, against the 140-credit interactive budget: SLV and GDX
+// alone spent more than that over a day with the page open.
+const INGESTION_HISTORY_SYMBOLS = new Set(['BTC', ...TWELVE_SYMBOLS.map((asset) => asset.symbol), ...getCoreEquityHistorySymbols(), ...HEATMAP_UNIVERSE.map((entry) => entry.symbol)]);
 
 function asNumber(value) {
   const parsed = Number(value);

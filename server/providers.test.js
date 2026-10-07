@@ -111,3 +111,11 @@ test('every market the heatmap scores can be loaded by the history loader', () =
   const unsupported = heatmapSymbols().filter((symbol) => !supportsHistorySymbol(symbol));
   assert.deepEqual(unsupported, []);
 });
+
+test('every market the heatmap scores is stored by the daily history job', async () => {
+  // Unstored symbols are fetched live on each 15-minute heatmap refresh and
+  // drain the interactive Twelve Data budget.
+  const { getIngestionHistorySymbols } = await import('./providers.js');
+  const stored = new Set(getIngestionHistorySymbols());
+  assert.deepEqual(heatmapSymbols().filter((symbol) => !stored.has(symbol)), []);
+});
