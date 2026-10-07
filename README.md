@@ -459,6 +459,18 @@ The Workspace snapshot panel on the Markets page downloads both. Its compare but
 
 Readings are found by walking the payloads rather than from a hand-kept list, so a new model appears in snapshots without being registered anywhere.
 
+## S&P 500 Valuation
+
+`GET /api/analytics/index-valuation` (the S&P 500 valuation panel on the Equities page) reads Robert Shiller's monthly workbook, which goes back to 1871. It is free and needs no key. The download link is read from shillerdata.com on each refresh, because the file's hosting path changes between uploads; the old Yale address is the fallback. The result is cached for a day.
+
+The workbook is a legacy `.xls` file. `server/xls.js` reads it with no dependencies: the OLE2 container, shared strings that span continuation records, and number, RK, MULRK, formula and label cells. Its tests compare it cell for cell against `xlrd`'s reading of the same fixtures.
+
+CAPE is computed here from the raw price (P), earnings (E) and CPI columns, which are found by their headers. The file's own derived columns have moved between editions, so they are not used. The model publishes:
+
+- **CAPE's rank:** today's CAPE against its whole history, and against the years since 1950.
+- **The excess CAPE yield:** the earnings yield less the real 10-year rate. Today's figure is ranked using the same definition as the history (the 10-year Treasury yield less trailing ten-year inflation). The TIPS-based figure is shown beside it as a comparison, not ranked.
+- **The ten-year real returns that followed similar excess yields:** a fitted line plus a table by fifth of history. The evidence amounts to about fifteen independent decades. The fit is tested out of sample: trained on windows that began before 1981, scored on windows that began after 1990, and compared with simply guessing the historical average.
+
 ## Alert Outcomes
 
 `GET /api/analytics/alert-outcomes` scores every stored alert from the last two years against what followed, at 30 and 90 days. It is shown at the foot of the Macro page and needs PostgreSQL, since alerts are only stored there. Alerts carry no direction, so each kind is scored on the claim it implicitly makes:

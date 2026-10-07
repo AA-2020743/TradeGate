@@ -23,6 +23,8 @@ import { TECHNICAL_REGIMES, describeTechnicalRecord, technicalTrackRecord } from
 import { evaluateTrackRecord } from './trackRecord.js';
 import { crossCheckSeries, dataQualityFor, gateOnDataQuality, summarizeCrossChecks } from './priceCrossCheck.js';
 import { resolveVintage, screenVintage } from './vintage.js';
+import { INDEX_VALUATION_VERSION, SHILLER_FALLBACK_URLS, SHILLER_PAGE, calculateIndexValuation, findShillerDataLink, parseShillerRows } from './indexValuation.js';
+import { readWorkbook, sheetRows } from './xls.js';
 import { ALERT_HORIZONS, ALERT_OUTCOMES_VERSION, BENCHMARK, claimFor, scoreAlertOutcomes } from './alertOutcomes.js';
 import { cryptoHistoryGranularity, describeSeriesFreshness, isCryptoHistoryStale, isCotReportStale, isDailyCloseStale, isFredSeriesAbandoned, isFredSeriesStale, isPbocObservationStale, monthsBetween } from './freshness.js';
 import { percentileRank } from './statistics.js';
@@ -1776,6 +1778,60 @@ export async function getAlertOutcomes() {
     }
     const scored = scoreAlertOutcomes({ alerts, histories });
     return { asOf: new Date().toISOString(), ...scored, errors };
+  });
+}
+
+/**
+ * S&P 500 valuation from Shiller's monthly workbook. The file changes monthly,
+ * so it is cached for a day; the live TIPS yield comes from the liquidity
+ * snapshot when FRED is reachable.
+ */
+export async function getIndexValuation() {
+  return withCache('analytics:index-valuation', 24 * 60 * 60_000, async () => {
+    const attempts = [];
+    let workbook = null;
+    let sourceUrl = null;
+    let candidates = [...SHILLER_FALLBACK_URLS];
+    try {
+      const link = findShillerDataLink(await fetchText(SHILLER_PAGE), SHILLER_PAGE);
+      if (link) candidates = [link, ...candidates];
+      else attempts.push(`${SHILLER_PAGE}: no link to ie_data.xls on the page`);
+    } catch (error) {
+      attempts.push(`${SHILLER_PAGE}: ${error.message}`);
+    }
+    for (const url of candidates) {
+      try {
+        workbook = readWorkbook(await fetchBuffer(url));
+        sourceUrl = url;
+        break;
+      } catch (error) {
+        attempts.push(`${url}: ${error.message}`);
+      }
+    }
+    if (!workbook) {
+      return { version: INDEX_VALUATION_VERSION, status: 'unavailable', reason: `Shiller\u2019s data file could not be read (${attempts.join('; ')}).`, attempts };
+    }
+    let parsed = null;
+    for (const sheet of workbook.sheets) {
+      parsed = parseShillerRows(sheetRows(sheet));
+      if (parsed.status === 'ready') break;
+    }
+    if (parsed?.status !== 'ready') {
+      return { version: INDEX_VALUATION_VERSION, status: 'unavailable', reason: parsed?.reason ?? 'The workbook has no sheets.', source: sourceUrl };
+    }
+    let realYield10y = null;
+    let realYieldDate = null;
+    try {
+      const liquidity = await getLiquiditySnapshot();
+      const series = (liquidity.series ?? []).find((entry) => entry.key === 'realYield10y' && !entry.stale);
+      if (series && Number.isFinite(series.value)) {
+        realYield10y = series.value;
+        realYieldDate = series.date ?? null;
+      }
+    } catch {
+      // The valuation stands without it; only the TIPS comparison is lost.
+    }
+    return { asOf: new Date().toISOString(), source: sourceUrl, sourceName: 'Robert Shiller, U.S. Stock Markets 1871-Present', ...calculateIndexValuation(parsed.months, { realYield10y, realYieldDate }) };
   });
 }
 

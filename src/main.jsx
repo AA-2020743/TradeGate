@@ -865,7 +865,7 @@ function AccumulationPanel({ accumulation, only = null, title = 'ACCUMULATION RU
   // asset elsewhere in the payload could not be ranked.
   const shownStatus = single ? single.status : scored.length === all.length && status !== 'unavailable' ? 'calculated' : scored.length ? 'provisional' : 'unavailable';
 
-  return <article className={`panel ${published ? '' : 'preview-section'}`}>
+  return <article className={`panel dca-panel ${published ? '' : 'preview-section'}`}>
     <div className="panel-title">
       <div>
         <p className="section-kicker">{title} · {shownStatus.toUpperCase()}</p>
@@ -1292,6 +1292,84 @@ function SnapshotPanel() {
   </article>;
 }
 
+function CapeHistoryChart({ history, median }) {
+  const [hoveredIndex, setHoveredIndex] = React.useState(null);
+  const points = (history ?? []).filter((point) => Number.isFinite(point.cape));
+  if (points.length < 2) return null;
+  // Drawn at the panel's own proportions and scaled uniformly, so axis text
+  // is never stretched the way a fill-the-box chart stretches it.
+  const width = 440;
+  const height = 190;
+  const padding = { top: 10, right: 10, bottom: 24, left: 28 };
+  const values = points.map((point) => point.cape);
+  const low = Math.min(...values, Number.isFinite(median) ? median : Infinity);
+  const high = Math.max(...values);
+  const spread = high - low || 1;
+  const yOf = (value) => padding.top + ((high - value) / spread) * (height - padding.top - padding.bottom);
+  const xOf = (index) => padding.left + index * ((width - padding.left - padding.right) / (points.length - 1));
+  const polyline = points.map((point, index) => `${xOf(index)},${yOf(point.cape)}`).join(' ');
+  const activeIndex = hoveredIndex ?? points.length - 1;
+  const active = points[activeIndex];
+  const ticks = [0, 0.25, 0.5, 0.75, 1].map((position) => Math.round((points.length - 1) * position));
+  const select = (event) => {
+    const bounds = event.currentTarget.getBoundingClientRect();
+    const ratio = Math.min(1, Math.max(0, ((event.clientX - bounds.left) / bounds.width - padding.left / width) / ((width - padding.left - padding.right) / width)));
+    setHoveredIndex(Math.round(ratio * (points.length - 1)));
+  };
+  return <div className="cape-chart-wrap">
+    <div className="cape-readout" aria-live="polite">
+      <b>{active.date}</b><span>CAPE {active.cape}</span>{Number.isFinite(active.excessYield) ? <span>excess yield {active.excessYield}%</span> : null}
+      {Number.isFinite(median) ? <span className="cape-median-key"><i aria-hidden="true"></i>median {median}</span> : null}
+    </div>
+    <div className="liquidity-history-plot cape-chart" style={{ aspectRatio: `${width} / ${height}` }} onPointerMove={select} onPointerLeave={() => setHoveredIndex(null)}>
+    <svg viewBox={`0 0 ${width} ${height}`} role="img" aria-label={`CAPE from ${points[0].date} to ${points.at(-1).date}, now ${points.at(-1).cape}${Number.isFinite(median) ? ` against a median of ${median}` : ''}`}>
+      {[0, 0.5, 1].map((position) => { const value = high - position * spread; const y = yOf(value); return <g key={position}><line x1={padding.left} x2={width - padding.right} y1={y} y2={y} className="liquidity-grid-line" /><text x={padding.left - 8} y={y + 4} textAnchor="end" className="liquidity-axis-label">{Math.round(value)}</text></g>; })}
+      {Number.isFinite(median) ? <line x1={padding.left} x2={width - padding.right} y1={yOf(median)} y2={yOf(median)} className="cape-median-line" vectorEffect="non-scaling-stroke" /> : null}
+      <polyline points={polyline} fill="none" stroke="#71c45f" strokeWidth="2" vectorEffect="non-scaling-stroke" />
+      <line x1={xOf(activeIndex)} x2={xOf(activeIndex)} y1={padding.top} y2={height - padding.bottom} className="liquidity-crosshair" />
+      <circle cx={xOf(activeIndex)} cy={yOf(active.cape)} r="5" className="liquidity-active-point" vectorEffect="non-scaling-stroke" />
+      {ticks.map((index) => <text key={index} x={xOf(index)} y={height - 8} textAnchor={index === 0 ? 'start' : index === points.length - 1 ? 'end' : 'middle'} className="liquidity-axis-label">{points[index].date.slice(0, 4)}</text>)}
+    </svg>
+    </div>
+  </div>;
+}
+
+function IndexValuationPanel({ valuation }) {
+  const status = valuation?.status ?? 'unavailable';
+  const published = status === 'calculated' || status === 'provisional';
+  const outlook = valuation?.outlook;
+  const hasOutlook = outlook && outlook.status !== 'unavailable';
+  return <article className={`panel valuation-panel ${published ? '' : 'preview-section'}`}>
+    <div className="panel-title">
+      <div>
+        <StatusKicker label="S&P 500 VALUATION · CAPE" published={published} />
+        <h3>{published ? `CAPE ${valuation.cape}, the ${ordinal(valuation.capePercentile)} percentile since ${valuation.historyFrom.slice(0, 4)}` : 'Awaiting Shiller’s monthly data'}</h3>
+      </div>
+      {published ? <span className="data-pill">{valuation.asOf}</span> : null}
+    </div>
+    {published ? <>
+      <div className="valuation-stats">
+        <div><span>CAPE</span><b>{valuation.cape}</b><small>median {valuation.medianCape}{Number.isFinite(valuation.medianCapeSince1950) ? `, ${valuation.medianCapeSince1950} since 1950` : ''}</small></div>
+        <div><span>Earnings yield</span><b>{valuation.earningsYield}%</b><small>earnings through {valuation.earningsThrough}</small></div>
+        <div><span>Excess yield</span><b>{Number.isFinite(valuation.excessYield) ? `${valuation.excessYield}%` : '—'}</b><small>{Number.isFinite(valuation.excessYieldPercentile) ? `${ordinal(valuation.excessYieldPercentile)} percentile` : 'no real rate'}{Number.isFinite(valuation.excessYieldWithTips) ? ` · ${valuation.excessYieldWithTips}% on TIPS` : ''}</small></div>
+        <div><span>Next 10 years, real</span><b>{hasOutlook ? `${valuation.outlook.impliedRealReturn}%` : '—'}</b><small>{hasOutlook ? `a year, ± ${outlook.typicalMissPoints} typical miss` : outlook?.reason ?? 'no outlook'}</small></div>
+      </div>
+      <CapeHistoryChart history={valuation.history} median={valuation.medianCape} />
+      <p className="dca-read">{valuation.read}</p>
+      {hasOutlook ? <div className="valuation-buckets" role="table" aria-label="Ten-year real returns by excess-yield quintile">
+        <div className="valuation-bucket valuation-head" role="row"><span role="columnheader">Excess yield</span><span role="columnheader">Median next 10y</span><span role="columnheader">Worst to best</span><span role="columnheader">Months</span></div>
+        {outlook.buckets.map((bucket) => <div className={`valuation-bucket ${bucket.current ? 'current' : ''}`} role="row" key={bucket.quintile}>
+          <span role="cell">{bucket.fromExcessYield}% to {bucket.toExcessYield}%{bucket.current ? <i className="valuation-now">now</i> : null}</span>
+          <span role="cell" className={bucket.medianForwardReturn >= 0 ? 'positive' : 'negative'}>{bucket.medianForwardReturn > 0 ? '+' : ''}{bucket.medianForwardReturn}% a year</span>
+          <span role="cell">{bucket.worstForwardReturn}% to {bucket.bestForwardReturn}%</span>
+          <span role="cell">{bucket.months}</span>
+        </div>)}
+      </div> : null}
+      <p className="model-footnote">{valuation.methodology} {valuation.limits} Source: {valuation.sourceName}.</p>
+    </> : <div className="equity-empty">{valuation?.reason ?? 'The valuation publishes once Shiller’s workbook can be read.'}</div>}
+  </article>;
+}
+
 function ConcentrationPanel({ concentration }) {
   const status = concentration?.status ?? 'unavailable';
   const published = status !== 'unavailable';
@@ -1482,6 +1560,7 @@ function EquitiesDashboard({ platformData }) {
       <VolatilityTermPanel volatility={dashboard?.volatility} />
       <ExpectedMovePanel expectedMove={dashboard?.expectedMove} />
       <ConcentrationPanel concentration={platformData?.equityRisk?.equalWeight?.concentration} />
+      <IndexValuationPanel valuation={platformData?.indexValuation} />
       <AccumulationPanel accumulation={platformData?.accumulation} only="spx" title="S&amp;P 500 ACCUMULATION" />
       <FactorReturnsPanel factors={platformData?.factors} />
       <RevisionBreadthPanel revisions={dashboard?.revisions} />

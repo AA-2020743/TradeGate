@@ -31,6 +31,7 @@ export function usePlatformData() {
     factors: null,
     signalRecords: null,
     alertOutcomes: null,
+    indexValuation: null,
     crossCheck: null,
     models: null,
     news: null,
@@ -43,7 +44,7 @@ export function usePlatformData() {
     let active = true;
 
     const load = async () => {
-      const [health, markets, liquidity, dxyBtc, regimeCorrelations, positioning, heatmap, metals, fx, hardMoney, accumulation, cryptoOptions, treasury, factors, signalRecords, crossCheck, models, sentiment, bitcoin, equityRisk, news, screener, alerts, alertOutcomes] = await Promise.allSettled([
+      const [health, markets, liquidity, dxyBtc, regimeCorrelations, positioning, heatmap, metals, fx, hardMoney, accumulation, cryptoOptions, treasury, factors, signalRecords, crossCheck, models, sentiment, bitcoin, equityRisk, news, screener, alerts, alertOutcomes, indexValuation] = await Promise.allSettled([
         requestJson('/api/health'),
         requestJson('/api/markets/snapshot'),
         requestJson('/api/macro/liquidity'),
@@ -68,6 +69,7 @@ export function usePlatformData() {
         requestJson('/api/analytics/screener'),
         requestJson('/api/alerts'),
         requestJson('/api/analytics/alert-outcomes'),
+        requestJson('/api/analytics/index-valuation'),
       ]);
       if (!active) return;
 
@@ -87,6 +89,7 @@ export function usePlatformData() {
       const factorsData = factors.status === 'fulfilled' ? factors.value : null;
       const signalRecordsData = signalRecords.status === 'fulfilled' ? signalRecords.value : null;
       const alertOutcomesData = alertOutcomes.status === 'fulfilled' ? alertOutcomes.value : null;
+      const indexValuationData = indexValuation.status === 'fulfilled' ? indexValuation.value : null;
       const crossCheckData = crossCheck.status === 'fulfilled' ? crossCheck.value : null;
       const modelsData = models.status === 'fulfilled' ? models.value : null;
       const sentimentData = sentiment.status === 'fulfilled' ? sentiment.value : null;
@@ -123,6 +126,7 @@ export function usePlatformData() {
         factors: factorsData,
         signalRecords: signalRecordsData,
         alertOutcomes: alertOutcomesData,
+        indexValuation: indexValuationData,
         crossCheck: crossCheckData,
         models: modelsData,
         sentiment: sentimentData,

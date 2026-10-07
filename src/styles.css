@@ -569,3 +569,32 @@ html[data-theme='dark'] .asset-badge { color: #17201b; }
   .track-row > span:first-child { font-size: 0.9em; }
 }
 .heatmap-detail .quality-note { font-size: 11px; line-height: 1.5; margin: 10px 0 0; }
+.valuation-panel { margin: 0; }
+.valuation-stats { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 0.8rem; margin: 0.8rem 0; }
+.valuation-stats > div { display: flex; flex-direction: column; min-width: 0; }
+.valuation-stats span { color: #5f6861; font: 500 0.68rem 'DM Mono', monospace; text-transform: uppercase; letter-spacing: 0.04em; }
+.valuation-stats b { font: 600 1.25rem 'DM Mono', monospace; margin-top: 2px; }
+.valuation-stats small { color: #5f6861; font-size: 0.72rem; line-height: 1.4; }
+.cape-chart { margin: 0.4rem 0 0.6rem; height: auto; }
+.cape-median-line { stroke: #9aa39b; stroke-width: 1; stroke-dasharray: 4 4; }
+.valuation-buckets { display: grid; margin-top: 0.8rem; font-size: 0.82rem; }
+.valuation-bucket { display: grid; grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr) minmax(0, 1fr) minmax(0, 0.5fr); gap: 0.6rem; padding: 0.4rem 0.4rem; border-bottom: 1px solid #e9ebe4; }
+.valuation-bucket > span { min-width: 0; }
+.valuation-bucket.current { box-shadow: inset 2px 0 0 var(--verdict-accent, #d2705f); }
+.valuation-head { color: #5f6861; font: 500 0.68rem 'DM Mono', monospace; text-transform: uppercase; letter-spacing: 0.04em; }
+.valuation-now { font: 500 0.62rem 'DM Mono', monospace; font-style: normal; margin-left: 0.4rem; padding: 0 0.3rem; border: 1px solid currentColor; border-radius: 3px; text-transform: uppercase; }
+@media (max-width: 700px) {
+  .valuation-stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .valuation-bucket { grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr) minmax(0, 1fr); }
+  .valuation-bucket > span:last-child { display: none; }
+}
+/* Wide research panels in the four-column equity grid take half the row, not a quarter: a quarter is 268px, and the DCA tables and the CAPE chart stretched to over 2,000px tall in it. */
+.equity-signal-grid > .valuation-panel, .equity-signal-grid > .dca-panel { grid-column: span 2; align-self: start; }
+@media (max-width: 1180px) { .equity-signal-grid > .valuation-panel, .equity-signal-grid > .dca-panel { grid-column: 1 / -1; } }
+.cape-chart-wrap { margin: 0.4rem 0 0.6rem; }
+.cape-chart-wrap .cape-chart { margin: 0; }
+.cape-readout { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0.3rem 0.9rem; margin-bottom: 0.4rem; font: 0.75rem 'DM Mono', monospace; color: #5f6861; }
+.cape-readout b { color: inherit; font-weight: 600; }
+.cape-median-key { margin-left: auto; display: inline-flex; align-items: center; gap: 0.35rem; }
+.cape-median-key i { display: inline-block; width: 16px; border-top: 1px dashed #8a948b; }
+.cape-chart .liquidity-axis-label { font-size: 11px; }

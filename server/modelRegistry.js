@@ -191,6 +191,19 @@ export const MODEL_REGISTRY = [
     ],
     trackRecord: null,
   },
+  {
+    id: 'index-valuation-v1',
+    name: 'S&P 500 valuation (CAPE)',
+    page: 'Equities',
+    measures: 'CAPE computed from Shiller\u2019s raw monthly price, earnings and CPI since 1871, ranked against its own history, set against the real 10-year rate as an excess yield, and mapped to the ten-year real returns that followed similar excess yields.',
+    inputs: ['Shiller monthly S&P Composite workbook (shillerdata.com)', 'FRED DFII10 10-year TIPS yield, for comparison'],
+    failureModes: [
+      'Ten-year windows overlap, so 150 years hold about fifteen independent decades; the fit statistics overstate the evidence and the out-of-sample test is a single split.',
+      'Earnings lag the price by two to three quarters, so a fast fall in earnings is not yet in the multiple.',
+      'Accounting, buybacks and sector mix have changed what a unit of earnings means; the since-1950 rank is shown for that reason.',
+    ],
+    trackRecord: null,
+  },
 ];
 
 export function registryEntry(id) {
