@@ -36,7 +36,9 @@ const TWELVE_SYMBOLS = [
   { symbol: 'SPY', key: 'SPY', name: 'S&P 500 proxy', kind: 'ETF' },
   { symbol: 'QQQ', key: 'QQQ', name: 'Nasdaq 100 proxy', kind: 'ETF' },
   { symbol: 'GLD', key: 'GLD', name: 'Gold proxy', kind: 'ETF' },
-  { symbol: 'DXY', key: 'DXY', name: 'U.S. Dollar Index', kind: 'Index' },
+  // Twelve Data carries no indices and answers DXY with "symbol not found";
+  // Yahoo lists the ICE dollar index as DX-Y.NYB, so it is read from there.
+  { symbol: 'DXY', key: 'DXY', name: 'U.S. Dollar Index', kind: 'Index', yahoo: 'DX-Y.NYB' },
   { symbol: 'NVDA', key: 'NVDA', name: 'NVIDIA Corp.', kind: 'Equity' },
   { symbol: 'AAPL', key: 'AAPL', name: 'Apple Inc.', kind: 'Equity' },
 ];
@@ -269,6 +271,8 @@ const HEATMAP_UNIVERSE = [
 
 // Every market the heatmap scores must be loadable here: SLV was added to the
 // universe without this list and its row failed on every load.
+const YAHOO_ROUTED_SYMBOLS = new Map(TWELVE_SYMBOLS.filter((asset) => asset.yahoo).map((asset) => [asset.symbol, asset.yahoo]));
+
 const HISTORY_SYMBOLS = new Set(['BTC', 'NVDA', 'AAPL', ...TWELVE_SYMBOLS.map((asset) => asset.symbol), ...getAllEquityHistorySymbols(), ...HEATMAP_UNIVERSE.map((entry) => entry.symbol)]);
 
 export function supportsHistorySymbol(symbol) {
@@ -333,33 +337,57 @@ async function getBitcoin() {
   };
 }
 
+/** A quote from the last two Yahoo daily closes, for symbols Twelve Data does not carry. */
+async function getYahooRoutedQuote(asset) {
+  const points = await getYahooHistory(asset.yahoo, '5d');
+  const latest = points.at(-1);
+  const previous = points.at(-2);
+  if (!latest) throw new Error(`Yahoo returned no closes for ${asset.yahoo}`);
+  const changePercent = previous?.value ? ((latest.value / previous.value) - 1) * 100 : null;
+  return { price: latest.value, changePercent: Number.isFinite(changePercent) ? Math.round(changePercent * 100) / 100 : null, asOf: latest.timestamp };
+}
+
 async function getTwelveQuotes(options = {}) {
-  if (!config.twelveDataApiKey) return { assets: [], errors: [] };
-
-  const symbols = TWELVE_SYMBOLS.map((asset) => asset.symbol).join(',');
-  const url = new URL('https://api.twelvedata.com/quote');
-  url.searchParams.set('symbol', symbols);
-  url.searchParams.set('timezone', 'UTC');
-  url.searchParams.set('apikey', config.twelveDataApiKey);
-  const payload = await fetchTwelveJson(url, { credits: TWELVE_SYMBOLS.length, usage: options.usage });
-  if (payload.status === 'error' || payload.code) throw new Error(payload.message ?? 'Twelve Data quote request failed');
-
   const assets = [];
   const errors = [];
-  for (const asset of TWELVE_SYMBOLS) {
-    const rawQuote = payload[asset.symbol] ?? payload.data?.[asset.symbol];
-    if (rawQuote?.status === 'error' || rawQuote?.code) {
-      errors.push({ provider: 'Twelve Data', symbol: asset.symbol, message: rawQuote.message ?? 'Quote unavailable' });
-      continue;
+  const twelveAssets = TWELVE_SYMBOLS.filter((asset) => !asset.yahoo);
+  if (config.twelveDataApiKey && twelveAssets.length) {
+    const url = new URL('https://api.twelvedata.com/quote');
+    url.searchParams.set('symbol', twelveAssets.map((asset) => asset.symbol).join(','));
+    url.searchParams.set('timezone', 'UTC');
+    url.searchParams.set('apikey', config.twelveDataApiKey);
+    const payload = await fetchTwelveJson(url, { credits: twelveAssets.length, usage: options.usage });
+    if (payload.status === 'error' || payload.code) throw new Error(payload.message ?? 'Twelve Data quote request failed');
+
+    for (const asset of twelveAssets) {
+      const rawQuote = payload[asset.symbol] ?? payload.data?.[asset.symbol];
+      if (rawQuote?.status === 'error' || rawQuote?.code) {
+        errors.push({ provider: 'Twelve Data', symbol: asset.symbol, message: rawQuote.message ?? 'Quote unavailable' });
+        continue;
+      }
+      const quote = parseTwelveQuote(payload, asset.symbol);
+      if (quote) {
+        const stale = isDailyCloseStale(quote.asOf);
+        assets.push({ ...asset, ...quote, source: 'Twelve Data', stale });
+        if (stale) errors.push({ provider: 'Twelve Data', symbol: asset.symbol, message: 'Quote timestamp is stale' });
+      }
+      else errors.push({ provider: 'Twelve Data', symbol: asset.symbol, message: 'Quote missing from provider response' });
     }
-    const quote = parseTwelveQuote(payload, asset.symbol);
-    if (quote) {
-      const stale = isDailyCloseStale(quote.asOf);
-      assets.push({ ...asset, ...quote, source: 'Twelve Data', stale });
-      if (stale) errors.push({ provider: 'Twelve Data', symbol: asset.symbol, message: 'Quote timestamp is stale' });
-    }
-    else errors.push({ provider: 'Twelve Data', symbol: asset.symbol, message: 'Quote missing from provider response' });
   }
+  if (!config.twelveDataApiKey) return { assets, errors };
+
+  const routed = TWELVE_SYMBOLS.filter((asset) => asset.yahoo);
+  const settled = await Promise.allSettled(routed.map(getYahooRoutedQuote));
+  settled.forEach((result, index) => {
+    const asset = routed[index];
+    if (result.status !== 'fulfilled') {
+      errors.push({ provider: 'Yahoo Finance', symbol: asset.symbol, message: result.reason?.message ?? 'Quote unavailable' });
+      return;
+    }
+    const stale = isDailyCloseStale(result.value.asOf);
+    assets.push({ ...asset, ...result.value, source: 'Yahoo Finance', stale });
+    if (stale) errors.push({ provider: 'Yahoo Finance', symbol: asset.symbol, message: 'Quote timestamp is stale' });
+  });
 
   return { assets, errors };
 }
@@ -584,15 +612,21 @@ export async function getMarketHistory(symbol, requestedRange, options = {}) {
       if (normalizedSymbol === 'BTC') {
         points = await getBitcoinHistory(range);
       } else {
-        try {
-          points = await getTwelveHistory(normalizedSymbol, range, options.usage);
-        } catch (twelveError) {
-          if (options.preferStored === false && config.twelveDataApiKey) throw twelveError;
-          points = [];
-        }
-        if (!points.length) {
-          points = await getYahooHistory(normalizedSymbol);
+        const yahooSymbol = YAHOO_ROUTED_SYMBOLS.get(normalizedSymbol);
+        if (yahooSymbol) {
+          points = await getYahooHistory(yahooSymbol, range === 'All' ? 'max' : '1y');
           sourceLabel = 'Yahoo Finance';
+        } else {
+          try {
+            points = await getTwelveHistory(normalizedSymbol, range, options.usage);
+          } catch (twelveError) {
+            if (options.preferStored === false && config.twelveDataApiKey) throw twelveError;
+            points = [];
+          }
+          if (!points.length) {
+            points = await getYahooHistory(normalizedSymbol);
+            sourceLabel = 'Yahoo Finance';
+          }
         }
       }
       points = filterHistoryRange(points, range);
@@ -3117,9 +3151,14 @@ export async function getLiquiditySnapshot(options = {}) {
 
     const errors = failedSeries.map((item) => `${item.id} (${item.name}) could not be fetched: ${item.reason}${item.covered ? ' - a stored observation is standing in.' : ''}`);
     if (!config.fredApiKey && !storedSeries.length && !series.length) errors.push('FRED is unreachable and no stored observations are available');
-    if (staleLiveSeries.length) errors.push(`Latest FRED responses are stale: ${staleLiveSeries.map((item) => item.id).join(', ')}`);
-    if (staleSeries.length) errors.push(`FRED series are past their publication tolerance; their history still feeds the models but the readings they carry are dated: ${staleSeries.map((item) => `${item.id} (${item.freshness?.ageDays ?? '?'}d)`).join(', ')}`);
-    if (abandonedSeries.length) errors.push(`FRED series have stopped publishing and are excluded from models: ${abandonedSeries.map((item) => item.id).join(', ')}`);
+    // Not every macro series is FRED's: the PBoC balance sheet is BIS data
+    // through DBnomics, and a stale one sent readers to the wrong provider.
+    const named = (item) => `${item.id}${item.provider && item.provider !== 'FRED' ? ` (${item.provider} via DBnomics)` : ''}`;
+    // An abandoned series is also stale; it is reported once, as abandoned.
+    const staleOnly = staleLiveSeries.filter((item) => !item.abandoned);
+    if (staleOnly.length) errors.push(`Latest macro responses are stale: ${staleOnly.map(named).join(', ')}`);
+    if (staleSeries.length) errors.push(`Macro series are past their publication tolerance; their history still feeds the models but the readings they carry are dated: ${staleSeries.map((item) => `${named(item)} (${item.freshness?.ageDays ?? '?'}d)`).join(', ')}`);
+    if (abandonedSeries.length) errors.push(`Macro series have stopped publishing and are excluded from models: ${abandonedSeries.map((item) => `${named(item)}, last observation ${item.date ?? 'unknown'}`).join('; ')}`);
     // Spot readings stay strict. A stale series may inform a change over its
     // own history, but its last value must never be printed as today's level.
     const values = Object.fromEntries(series.filter((item) => !item.stale).map((item) => [item.key, item.value * item.multiplier]));
