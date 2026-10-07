@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { crossCheckSeries, summarizeCrossChecks } from './priceCrossCheck.js';
+import { crossCheckSeries, dataQualityFor, gateOnDataQuality, summarizeCrossChecks } from './priceCrossCheck.js';
 import { primaryProvider } from './providers.js';
 
 const DAY = 86_400_000;
@@ -88,4 +88,28 @@ test('history labels resolve to the provider that actually produced them', () =>
 test('stored Yahoo history is not independent of live Yahoo', () => {
   const result = crossCheckSeries({ symbol: 'SPY', primary: points(base), shadow: points(base), primarySource: 'Yahoo (stored)', shadowSource: 'Yahoo' });
   assert.equal(result.status, 'not-independent');
+});
+
+test('a series under review makes its model provisional and says why; its numbers stay', () => {
+  const quality = dataQualityFor({ status: 'review', primarySource: 'Twelve Data', shadowSource: 'Yahoo', breaches: ['latest closes differ by 2.1%'] });
+  assert.equal(quality.status, 'review');
+  assert.match(quality.read, /Twelve Data and Yahoo disagree on this series: latest closes differ by 2\.1%/);
+  const gated = gateOnDataQuality({ status: 'calculated', score: 71 }, quality);
+  assert.equal(gated.status, 'provisional');
+  assert.equal(gated.score, 71, 'the reading is kept, not withheld');
+  assert.equal(gated.provisionalReason, quality.read);
+  // An already-unavailable model is not promoted to provisional.
+  assert.equal(gateOnDataQuality({ status: 'unavailable' }, quality).status, 'unavailable');
+});
+
+test('only an independent pass verifies; anything that could not compare is unverified, not passed', () => {
+  assert.equal(dataQualityFor({ status: 'pass', shadowSource: 'Yahoo', overlap: 60 }).status, 'verified');
+  assert.equal(gateOnDataQuality({ status: 'calculated' }, dataQualityFor({ status: 'pass', shadowSource: 'Yahoo', overlap: 60 })).status, 'calculated');
+  for (const check of [{ status: 'not-independent', reason: 'same provider' }, { status: 'unavailable', reason: 'no overlap' }, null]) {
+    const quality = dataQualityFor(check);
+    assert.equal(quality.status, 'unverified');
+    const gated = gateOnDataQuality({ status: 'calculated' }, quality);
+    assert.equal(gated.status, 'calculated', 'an unchecked series is published as it would have been');
+    assert.equal(gated.dataQuality.status, 'unverified');
+  }
 });

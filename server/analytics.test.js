@@ -1925,3 +1925,11 @@ test('a liquidity driver publishes the window it actually measured', () => {
   assert.equal(byKey.usM2.spanDays, 120);
   assert.ok(byKey.usM2.measuredFrom, 'the driver names the date it measured from');
 });
+
+test('a market under price review still counts toward the risk read', () => {
+  const model = calculateHeatmapRisk([
+    heatmapAsset({ symbol: 'QQQ', name: 'Nasdaq 100', status: 'provisional', score: 38, crowdingPercentile: 88, dataQuality: { status: 'review' } }),
+  ]);
+  assert.notEqual(model.status, 'unavailable');
+  assert.equal(model.headline.symbol, 'QQQ');
+});

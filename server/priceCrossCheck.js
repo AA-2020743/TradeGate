@@ -143,3 +143,42 @@ export function summarizeCrossChecks(checks) {
 }
 
 export { THRESHOLDS as CROSS_CHECK_THRESHOLDS };
+
+/**
+ * What a cross-check means for a model built on the primary series.
+ *
+ * Only an independent comparison can verify or flag a series. A check that
+ * could not run - no second source, too little overlap, a shadow that did
+ * not answer in time - leaves the series unverified, which is not a pass and
+ * not a fault: the model publishes as it would have, saying it is unchecked.
+ */
+export function dataQualityFor(check) {
+  if (!check) return { status: 'unverified', read: 'This symbol is not cross-checked against a second source.' };
+  if (check.status === 'pass') {
+    return { status: 'verified', against: check.shadowSource, read: `Prices agree with ${check.shadowSource} within tolerance over the last ${check.overlap} sessions.` };
+  }
+  if (check.status === 'review') {
+    return {
+      status: 'review',
+      against: check.shadowSource,
+      breaches: check.breaches,
+      read: `${check.primarySource} and ${check.shadowSource} disagree on this series: ${check.breaches.join('; ')}. The reading is built on the ${check.primarySource} series and is provisional until the difference is explained.`,
+    };
+  }
+  return { status: 'unverified', read: check.reason ?? 'The cross-check could not run.' };
+}
+
+/**
+ * A model on a series under review drops from calculated to provisional and
+ * says why; its numbers stay visible. Withholding them would hide a reading
+ * that is often right - a difference is a review trigger, not proof of error
+ * - while publishing them as calculated would vouch for a series an
+ * independent source contradicts.
+ */
+export function gateOnDataQuality(output, quality) {
+  if (!output || typeof output !== 'object') return output;
+  if (quality?.status === 'review' && output.status === 'calculated') {
+    return { ...output, status: 'provisional', dataQuality: quality, provisionalReason: quality.read };
+  }
+  return { ...output, dataQuality: quality ?? dataQualityFor(null) };
+}

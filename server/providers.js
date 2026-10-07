@@ -21,7 +21,7 @@ import { readLargestTextEntry } from './zip.js';
 import { combineFundingVenues, okxPositioningRows } from './derivativesVenues.js';
 import { TECHNICAL_REGIMES, describeTechnicalRecord, technicalTrackRecord } from './technicalTrackRecord.js';
 import { evaluateTrackRecord } from './trackRecord.js';
-import { crossCheckSeries, summarizeCrossChecks } from './priceCrossCheck.js';
+import { crossCheckSeries, dataQualityFor, gateOnDataQuality, summarizeCrossChecks } from './priceCrossCheck.js';
 import { resolveVintage, screenVintage } from './vintage.js';
 import { ALERT_HORIZONS, ALERT_OUTCOMES_VERSION, BENCHMARK, claimFor, scoreAlertOutcomes } from './alertOutcomes.js';
 import { cryptoHistoryGranularity, describeSeriesFreshness, isCryptoHistoryStale, isCotReportStale, isDailyCloseStale, isFredSeriesAbandoned, isFredSeriesStale, isPbocObservationStale, monthsBetween } from './freshness.js';
@@ -625,14 +625,25 @@ export async function getMarketHeatmap() {
       const crowdContract = positioning?.contracts?.find((contract) => contract.key === HEATMAP_CROWDING_KEYS[entry.symbol]);
       return buildHeatmapRow({ symbol: entry.symbol, name: entry.name, group: entry.group, technical, alignment, crowdingPercentile: crowdContract?.percentile ?? null });
     }));
-    const assets = results.flatMap((result) => result.status === 'fulfilled' ? [result.value] : []);
-    const calculated = assets.filter((asset) => asset.status === 'calculated');
+    const rows = results.flatMap((result) => result.status === 'fulfilled' ? [result.value] : []);
+    const qualities = await Promise.all(rows.map((row) => (row.status === 'calculated' ? getCrossCheckQuality(row.symbol) : null)));
+    const assets = rows.map((row, index) => (qualities[index] ? gateOnDataQuality(row, qualities[index]) : row));
+    // Rows under price review stay in the aggregates, flagged: a
+    // disagreement is a reason to look, and dropping the row would move the
+    // universe average on a suspicion.
+    const calculated = assets.filter((asset) => asset.status === 'calculated' || asset.status === 'provisional');
+    const underReview = assets.filter((asset) => asset.dataQuality?.status === 'review');
     return {
       asOf: new Date().toISOString(),
       version: 'market-heatmap-v1',
       status: calculated.length ? 'calculated' : 'unavailable',
       calculatedCount: calculated.length,
       universeSize: HEATMAP_UNIVERSE.length,
+      dataQuality: {
+        review: underReview.map((asset) => asset.symbol),
+        verified: assets.filter((asset) => asset.dataQuality?.status === 'verified').length,
+        unverified: assets.filter((asset) => asset.dataQuality?.status === 'unverified').length,
+      },
       liquidityBackdrop: globalLiquidity ? { score: globalLiquidity.score, regime: globalLiquidity.regime } : null,
       risk: calculateHeatmapRisk(assets),
       assets,
@@ -1823,14 +1834,17 @@ export async function getSignalTrackRecords() {
   });
 }
 
+// The heatmap universe plus the two single names the asset cards lead with:
+// every series a cross-market score is built on gets a second opinion.
 const CROSS_CHECK_SYMBOLS = [
-  { symbol: 'SPY', yahoo: 'SPY', name: 'S&P 500 proxy' },
-  { symbol: 'QQQ', yahoo: 'QQQ', name: 'Nasdaq 100 proxy' },
-  { symbol: 'GLD', yahoo: 'GLD', name: 'Gold proxy' },
+  ...HEATMAP_UNIVERSE.map((entry) => ({ symbol: entry.symbol, yahoo: entry.symbol === 'BTC' ? 'BTC-USD' : entry.symbol, name: entry.name, allowOffset: entry.symbol === 'BTC' })),
   { symbol: 'NVDA', yahoo: 'NVDA', name: 'NVIDIA' },
   { symbol: 'AAPL', yahoo: 'AAPL', name: 'Apple' },
-  { symbol: 'BTC', yahoo: 'BTC-USD', name: 'Bitcoin', allowOffset: true },
 ];
+const CROSS_CHECK_BY_SYMBOL = new Map(CROSS_CHECK_SYMBOLS.map((entry) => [entry.symbol, entry]));
+// A model waits this long for its symbol's check before publishing it as
+// unverified; the check keeps running and is cached for the next request.
+const CROSS_CHECK_GATE_TIMEOUT_MS = 8_000;
 
 /**
  * The provider a history label really came from. Stored history is named
@@ -1857,22 +1871,44 @@ export function primaryProvider(label, storedProvider = null) {
  * misses a split or stamps a close on the wrong day is visible before a model
  * scores it.
  */
+function getSymbolCrossCheck(entry) {
+  return withCache(`analytics:price-crosscheck:${entry.symbol}`, 60 * 60_000, async () => {
+    const [primaryResult, shadowResult] = await Promise.allSettled([getMarketHistory(entry.symbol, '6M'), getYahooHistory(entry.yahoo, '1y')]);
+    if (primaryResult.status !== 'fulfilled') return { symbol: entry.symbol, name: entry.name, status: 'unavailable', reason: `Primary history failed: ${primaryResult.reason?.message ?? 'no response'}` };
+    if (shadowResult.status !== 'fulfilled') return { symbol: entry.symbol, name: entry.name, status: 'unavailable', reason: `Yahoo shadow history failed: ${shadowResult.reason?.message ?? 'no response'}` };
+    return crossCheckSeries({
+      symbol: entry.symbol,
+      name: entry.name,
+      primary: primaryResult.value.points,
+      shadow: shadowResult.value,
+      primarySource: primaryProvider(primaryResult.value.source, primaryResult.value.storedProvider),
+      shadowSource: 'Yahoo',
+      allowOffset: Boolean(entry.allowOffset),
+    });
+  });
+}
+
+/** The data-quality verdict for one symbol, or unverified if it is not covered or not back in time. */
+export async function getCrossCheckQuality(symbol, { timeoutMs = CROSS_CHECK_GATE_TIMEOUT_MS } = {}) {
+  const entry = CROSS_CHECK_BY_SYMBOL.get(String(symbol ?? '').toUpperCase());
+  if (!entry) return dataQualityFor(null);
+  let timer;
+  const timeout = new Promise((resolve) => { timer = setTimeout(() => resolve('timeout'), timeoutMs); });
+  try {
+    const check = await Promise.race([getSymbolCrossCheck(entry).catch((error) => ({ status: 'unavailable', reason: `The cross-check failed: ${error.message}` })), timeout]);
+    return check === 'timeout' ? { status: 'unverified', read: `The cross-check did not finish within ${timeoutMs / 1000}s; it is still running and will apply on the next load.` } : dataQualityFor(check);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 export async function getPriceCrossCheck() {
   return withCache('analytics:price-crosscheck', 60 * 60_000, async () => {
-    const checks = await Promise.all(CROSS_CHECK_SYMBOLS.map(async (entry) => {
-      const [primaryResult, shadowResult] = await Promise.allSettled([getMarketHistory(entry.symbol, '6M'), getYahooHistory(entry.yahoo, '1y')]);
-      if (primaryResult.status !== 'fulfilled') return { symbol: entry.symbol, name: entry.name, status: 'unavailable', reason: `Primary history failed: ${primaryResult.reason?.message ?? 'no response'}` };
-      if (shadowResult.status !== 'fulfilled') return { symbol: entry.symbol, name: entry.name, status: 'unavailable', reason: `Yahoo shadow history failed: ${shadowResult.reason?.message ?? 'no response'}` };
-      return crossCheckSeries({
-        symbol: entry.symbol,
-        name: entry.name,
-        primary: primaryResult.value.points,
-        shadow: shadowResult.value,
-        primarySource: primaryProvider(primaryResult.value.source, primaryResult.value.storedProvider),
-        shadowSource: 'Yahoo',
-        allowOffset: Boolean(entry.allowOffset),
-      });
-    }));
+    const checks = [];
+    // Six at a time: Yahoo throttles a burst of chart requests.
+    for (let index = 0; index < CROSS_CHECK_SYMBOLS.length; index += 6) {
+      checks.push(...await Promise.all(CROSS_CHECK_SYMBOLS.slice(index, index + 6).map((entry) => getSymbolCrossCheck(entry).catch((error) => ({ symbol: entry.symbol, name: entry.name, status: 'unavailable', reason: error.message })))));
+    }
     return { version: 'price-crosscheck-v1', asOf: new Date().toISOString(), ...summarizeCrossChecks(checks), checks };
   });
 }
@@ -2199,6 +2235,7 @@ export async function getEthereumRotation() {
 export async function getTechnicalSnapshot(symbol) {
   const history = await getMarketHistory(symbol, '1Y');
   const model = calculateTechnicalSnapshot(history.points, { annualizationDays: history.symbol === 'BTC' ? 365 : 252 });
+  const published = history.stale || !model ? null : model;
   return {
     symbol: history.symbol,
     source: history.source,
@@ -2206,7 +2243,7 @@ export async function getTechnicalSnapshot(symbol) {
     stored: history.stored ?? false,
     stale: history.stale ?? false,
     asOf: model?.asOf ?? history.asOf,
-    model: history.stale ? null : model,
+    model: published ? gateOnDataQuality({ ...published, status: 'calculated' }, await getCrossCheckQuality(history.symbol)) : null,
   };
 }
 

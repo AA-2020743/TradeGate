@@ -1161,7 +1161,8 @@ const BROAD_STRESS_SHARE = 40;
  * rather than a single blended score.
  */
 export function calculateHeatmapRisk(assets = []) {
-  const calculated = (assets ?? []).filter((asset) => asset?.status === 'calculated');
+  // A row under price review is provisional, not missing: it still counts.
+  const calculated = (assets ?? []).filter((asset) => asset?.status === 'calculated' || asset?.status === 'provisional');
   if (!calculated.length) {
     return { version: 'heatmap-risk-v1', status: 'unavailable', reason: 'No market in the universe has a calculated score.', concerns: [], headline: null };
   }
