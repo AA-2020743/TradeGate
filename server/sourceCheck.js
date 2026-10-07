@@ -76,7 +76,33 @@ export function summarizeSource(source, result, elapsedMs) {
   } catch {
     figure = null;
   }
-  return { ...base, verdict, status, figure, parts, reasons: reasonsFrom(payload) };
+  const values = plausibilityOf(source, payload);
+  const implausible = values.filter((value) => !value.ok);
+  // A source that parsed but reports a value no market has produced is more
+  // likely misread (a percent read as a fraction, millions as billions) than
+  // right, and must not show OK.
+  const adjusted = implausible.length && verdict === 'ok' ? 'partial' : verdict;
+  return { ...base, verdict: adjusted, status, figure, parts, values, reasons: [...implausible.map((value) => `${value.label} = ${value.value}${value.unit ?? ''} is outside the plausible ${value.min}-${value.max}${value.unit ?? ''}: check the reader's units`), ...reasonsFrom(payload)] };
+}
+
+/**
+ * Key figures against generous plausible ranges. The readers for several
+ * sources were written from documentation without a live response to check
+ * against; a range wide enough for any real market and narrow enough to
+ * catch a scale error is the cheapest test that the numbers mean what they
+ * are labelled.
+ */
+export function plausibilityOf(source, payload) {
+  if (typeof source.plausible !== 'function') return [];
+  let entries;
+  try {
+    entries = source.plausible(payload) ?? [];
+  } catch {
+    return [];
+  }
+  return entries
+    .filter((entry) => Number.isFinite(entry?.value))
+    .map((entry) => ({ label: entry.label, value: Math.round(entry.value * 1000) / 1000, min: entry.min, max: entry.max, unit: entry.unit ?? '', ok: entry.value >= entry.min && entry.value <= entry.max }));
 }
 
 const MARKS = { ok: 'OK  ', partial: 'PART', failed: 'FAIL' };
@@ -87,6 +113,7 @@ export function formatReport(summaries) {
     lines.push(`${MARKS[summary.verdict]}  ${summary.name}  [${summary.status}, ${summary.seconds}s]${summary.figure ? `  ${summary.figure}` : ''}`);
     if (summary.endpoint) lines.push(`      ${summary.endpoint}`);
     for (const part of summary.parts.slice(0, 4)) lines.push(`      ${part}`);
+    if (summary.values?.length) lines.push(`      values: ${summary.values.map((value) => `${value.label} ${value.value}${value.unit}${value.ok ? '' : ' (!)'}`).join(', ')}`);
     for (const reason of summary.reasons) lines.push(`      - ${reason.length > 220 ? `${reason.slice(0, 217)}...` : reason}`);
   }
   const ok = summaries.filter((summary) => summary.verdict === 'ok').length;

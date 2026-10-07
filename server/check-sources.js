@@ -9,86 +9,10 @@
  */
 import { config } from './config.js';
 import { closeDatabase, getIngestionStatus, isDatabaseConfigured } from './database.js';
-import {
-  getAccumulationSchedules,
-  getAlertOutcomes,
-  getBitcoinCycleWorkspace,
-  getCryptoOptionsWorkspace,
-  getFactorReturns,
-  getIndexValuation,
-  getLiquiditySnapshot,
-  getMarketSnapshot,
-  getPriceCrossCheck,
-  getTreasuryFunding,
-} from './providers.js';
+import { SOURCES } from './sourceList.js';
 import { formatReport, summarizeIngestion, summarizeSource } from './sourceCheck.js';
 
 const TIMEOUT_MS = 90_000;
-
-const SOURCES = [
-  {
-    name: 'FRED macro series',
-    endpoint: '/api/macro/liquidity',
-    load: getLiquiditySnapshot,
-    answered: (payload) => payload.provider.failedSeries === 0 && payload.provider.abandonedSeries === 0,
-    figure: (payload) => `${payload.provider.requestedSeries - payload.provider.failedSeries} of ${payload.provider.requestedSeries} series fetched (${payload.provider.mode}), ${payload.provider.staleSeries} stale, ${payload.provider.abandonedSeries} abandoned`,
-  },
-  {
-    name: 'Market quotes (Twelve Data, CoinGecko)',
-    endpoint: '/api/markets/snapshot',
-    load: getMarketSnapshot,
-    answered: (payload) => (payload.assets ?? []).some((asset) => Number.isFinite(asset.price)),
-    figure: (payload) => `${(payload.assets ?? []).filter((asset) => Number.isFinite(asset.price)).length} assets priced`,
-  },
-  {
-    name: 'Yahoo 10-year histories (DCA)',
-    endpoint: '/api/analytics/accumulation',
-    load: getAccumulationSchedules,
-    figure: (payload) => `${(payload.schedules ?? []).filter((schedule) => schedule.status !== 'unavailable').length} of ${(payload.schedules ?? []).length} assets ranked, as of ${payload.asOf ?? 'n/a'}`,
-  },
-  {
-    name: 'Shiller S&P data (valuation)',
-    endpoint: '/api/analytics/index-valuation',
-    load: getIndexValuation,
-    figure: (payload) => (Number.isFinite(payload.cape) ? `CAPE ${payload.cape} for ${payload.asOf}, earnings through ${payload.earningsThrough}; from ${payload.source}` : null),
-  },
-  {
-    name: 'Deribit options',
-    endpoint: '/api/analytics/crypto-options',
-    load: getCryptoOptionsWorkspace,
-    figure: (payload) => (payload.surfaces ?? []).map((surface) => `${surface.currency} ${surface.status}`).join(', ') || null,
-  },
-  {
-    name: 'Treasury Fiscal Data',
-    endpoint: '/api/macro/treasury',
-    load: getTreasuryFunding,
-    figure: () => null,
-  },
-  {
-    name: 'Ken French factors',
-    endpoint: '/api/analytics/factors',
-    load: getFactorReturns,
-    figure: (payload) => (payload.asOf ? `through ${String(payload.asOf).slice(0, 10)}` : null),
-  },
-  {
-    name: 'Bitcoin workspace (derivatives venues, on-chain)',
-    endpoint: '/api/analytics/bitcoin',
-    load: getBitcoinCycleWorkspace,
-    figure: (payload) => (payload.leverage?.venue ? `funding from ${payload.leverage.venue}` : null),
-  },
-  {
-    name: 'Price cross-check (primary vs Yahoo)',
-    endpoint: '/api/analytics/price-crosscheck',
-    load: getPriceCrossCheck,
-    figure: (payload) => `${payload.passed?.length ?? 0} verified, ${payload.review?.length ?? 0} under review, ${payload.notIndependent?.length ?? 0} not independent, ${payload.unavailable?.length ?? 0} unavailable`,
-  },
-  {
-    name: 'Stored alerts (PostgreSQL) + outcomes',
-    endpoint: '/api/analytics/alert-outcomes',
-    load: getAlertOutcomes,
-    figure: (payload) => (Number.isFinite(payload.alerts) ? `${payload.alerts} alerts stored, ${payload.scoredAlerts ?? 0} scorable` : null),
-  },
-];
 
 function withTimeout(promise, name) {
   let timer;

@@ -88,3 +88,25 @@ test('ingestion is reported off, stale, or current - a six-week stall cannot pas
   assert.match(current.lines[0], /completed, 2h ago/);
   assert.equal(summarizeIngestion({ enabled: true, databaseConfigured: false, now }).verdict, 'failed');
 });
+
+test('a value outside its plausible range turns OK into PART and names the value - a scale error cannot pass', async () => {
+  const { plausibilityOf } = await import('./sourceCheck.js');
+  const source = {
+    name: 'Deribit',
+    plausible: (payload) => [
+      { label: 'BTC 30d ATM vol', value: payload.iv, min: 10, max: 250, unit: '%' },
+      { label: 'missing', value: payload.nothing, min: 0, max: 1 },
+    ],
+  };
+  const right = summarizeSource(source, fulfilled({ status: 'calculated', iv: 54.2 }), 1);
+  assert.equal(right.verdict, 'ok');
+  assert.deepEqual(right.values.map((value) => [value.label, value.ok]), [['BTC 30d ATM vol', true]], 'a missing value is skipped, not flagged');
+  // A fraction where a percent belongs: the reader parsed, but misread.
+  const misread = summarizeSource(source, fulfilled({ status: 'calculated', iv: 0.542 }), 1);
+  assert.equal(misread.verdict, 'partial');
+  assert.match(misread.reasons[0], /BTC 30d ATM vol = 0\.542% is outside the plausible 10-250%: check the reader's units/);
+  assert.match(formatReport([misread]), /values: BTC 30d ATM vol 0\.542% \(!\)/);
+  // A failed source stays failed; a broken extractor yields no values rather than a crash.
+  assert.equal(summarizeSource(source, fulfilled({ status: 'unavailable', reason: 'x', iv: 0.5 }), 1).verdict, 'failed');
+  assert.deepEqual(plausibilityOf({ plausible: () => { throw new Error('bad'); } }, {}), []);
+});
