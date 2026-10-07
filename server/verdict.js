@@ -1,4 +1,4 @@
-import { mean } from './statistics.js';
+import { mean, ordinal } from './statistics.js';
 
 /**
  * The one-paragraph conclusion a section is actually trying to deliver.
@@ -254,7 +254,7 @@ export function buildCryptoVerdict({ bitcoin, globalLiquidity, usdStrength } = {
         name: 'Perpetual funding (inverted)',
         score: fundingPercentile === null ? null : 100 - fundingPercentile,
         weight: 0.18,
-        detail: Number.isFinite(leverage?.annualizedPercent) ? `${leverage.annualizedPercent}% annualized, ${fundingPercentile}th percentile` : null,
+        detail: Number.isFinite(leverage?.annualizedPercent) ? `${leverage.annualizedPercent}% annualized, ${ordinal(fundingPercentile)} percentile` : null,
         reason: bitcoin?.leverage?.reason ?? 'No perpetual funding data',
       },
       {

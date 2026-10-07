@@ -1,4 +1,4 @@
-import { percentileRank } from './statistics.js';
+import { ordinal, percentileRank } from './statistics.js';
 import { resolveVintage } from './vintage.js';
 
 /**
@@ -194,7 +194,7 @@ export function rankHardMoneyStrength(valuations) {
     strongest: ranked[0],
     weakest: ranked.at(-1),
     diverging: diverging.map((entry) => entry.key),
-    read: `${ranked[0].name} sits highest against its own gold history at the ${ranked[0].percentile}th percentile; ${ranked.at(-1).name} sits lowest at the ${ranked.at(-1).percentile}th.${
+    read: `${ranked[0].name} sits highest against its own gold history at the ${ordinal(ranked[0].percentile)} percentile; ${ranked.at(-1).name} sits lowest at the ${ordinal(ranked.at(-1).percentile)}.${
       diverging.length
         ? ` ${diverging.map((entry) => entry.name).join(', ')} ${diverging.length === 1 ? 'is' : 'are'} higher in dollars over the past year and lower in gold, so that gain was the currency rather than the asset.`
         : ' No asset here is up in dollars and down in gold over the past year.'

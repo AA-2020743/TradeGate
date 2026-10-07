@@ -1,4 +1,4 @@
-import { mean, percentileRank, standardDeviation } from './statistics.js';
+import { mean, ordinal, percentileRank, standardDeviation } from './statistics.js';
 /**
  * Close-only technical models for the bitcoin predictive workspace.
  *
@@ -398,10 +398,10 @@ export function calculateBollingerSqueeze(points, { period = 20, multiplier = 2,
     middle: round(middleNow, 2),
     lower: round(middleNow - (deviationNow * multiplier), 2),
     read: state === 'squeeze'
-      ? `Bandwidth is in the ${round(percentile, 1)}th percentile of the last ${history.length} bars — a compression, which sets up a range break without saying which way.`
+      ? `Bandwidth is in the ${ordinal(round(percentile, 1))} percentile of the last ${history.length} bars — a compression, which sets up a range break without saying which way.`
       : state === 'expansion'
-        ? `Bandwidth is in the ${round(percentile, 1)}th percentile — bands are already wide, so the move is under way rather than pending.`
-        : `Bandwidth sits at the ${round(percentile, 1)}th percentile, neither compressed nor expanded.`,
+        ? `Bandwidth is in the ${ordinal(round(percentile, 1))} percentile — bands are already wide, so the move is under way rather than pending.`
+        : `Bandwidth sits at the ${ordinal(round(percentile, 1))} percentile, neither compressed nor expanded.`,
     methodology: `Bandwidth is (upper - lower) / middle on a ${period}-bar, ${multiplier}-deviation band, ranked against its own last ${lookbackBars} readings. A squeeze is the bottom ${squeezePercentile}% of that distribution rather than an absolute width, because the baseline moves between cycles. A squeeze is direction-neutral by construction.`,
   };
 }
@@ -440,7 +440,7 @@ export function calculateRangePercentile(points, { window = 30, lookbackBars = 3
     positionInRange: round(position, 1),
     high: round(high, 2),
     low: round(low, 2),
-    read: `The ${window}-bar range spans ${round(current, 2)}%, the ${round(percentile, 1)}th percentile of the last ${history.length} readings, with price ${round(position, 1)}% of the way up it.`,
+    read: `The ${window}-bar range spans ${round(current, 2)}%, the ${ordinal(round(percentile, 1))} percentile of the last ${history.length} readings, with price ${round(position, 1)}% of the way up it.`,
     methodology: `Range is high-over-low across ${window} closes, ranked against its own last ${lookbackBars} readings. Closes only: an intraday high or low outside the closing range is not captured, so this reads slightly tighter than a true high/low range.`,
   };
 }

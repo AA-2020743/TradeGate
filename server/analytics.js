@@ -1175,13 +1175,13 @@ export function calculateHeatmapRisk(assets = []) {
         concerns.push({
           key: `${asset.symbol}-crowded-turning`, symbol: asset.symbol, name: asset.name,
           type: 'Crowded and turning', severity: 90 + Math.round((crowding - CROWDED_PERCENTILE) / 4),
-          read: `${asset.name} sits in the ${crowding}th percentile of speculative positioning while its technical score has fallen to ${score}: the crowd is offside rather than early.`,
+          read: `${asset.name} sits in the ${ordinal(crowding)} percentile of speculative positioning while its technical score has fallen to ${score}: the crowd is offside rather than early.`,
         });
       } else if (score >= STRONG_SCORE) {
         concerns.push({
           key: `${asset.symbol}-crowded-consensus`, symbol: asset.symbol, name: asset.name,
           type: 'Crowded consensus', severity: 55 + Math.round((crowding - CROWDED_PERCENTILE) / 4),
-          read: `${asset.name} is working with a score of ${score}, but positioning is already in the ${crowding}th percentile, so the trade is consensus and has less room to absorb bad news.`,
+          read: `${asset.name} is working with a score of ${score}, but positioning is already in the ${ordinal(crowding)} percentile, so the trade is consensus and has less room to absorb bad news.`,
         });
       }
     }
@@ -1215,7 +1215,7 @@ export function calculateHeatmapRisk(assets = []) {
     read: concerns.length
       ? concerns[0].read
       : `No single weak link stands out: nothing in the ${calculated.length} calculated markets is both crowded and turning, and stress is not transmitting across the complex.`,
-    methodology: `Positioning at or above the ${CROWDED_PERCENTILE}th COT percentile is flagged as crowded and turning when the technical score has fallen to ${SOFT_SCORE} or below, and as consensus when the score is still ${STRONG_SCORE} or above. A market scoring ${STRESS_SCORE} or below while holding at least ${HIGH_ALIGNMENT} absolute correlation to SPY is flagged as transmitting stress. Broad stress is raised when at least ${BROAD_STRESS_SHARE}% of the calculated universe scores at or below ${STRESS_SCORE}. Markets without a COT contract contribute no positioning concern rather than an assumed one.`,
+    methodology: `Positioning at or above the ${ordinal(CROWDED_PERCENTILE)} COT percentile is flagged as crowded and turning when the technical score has fallen to ${SOFT_SCORE} or below, and as consensus when the score is still ${STRONG_SCORE} or above. A market scoring ${STRESS_SCORE} or below while holding at least ${HIGH_ALIGNMENT} absolute correlation to SPY is flagged as transmitting stress. Broad stress is raised when at least ${BROAD_STRESS_SHARE}% of the calculated universe scores at or below ${STRESS_SCORE}. Markets without a COT contract contribute no positioning concern rather than an assumed one.`,
   };
 }
 
@@ -1520,7 +1520,7 @@ export function calculateMetalsCostStructure({ crude = [], naturalGas = [], mine
     energyPressure,
     legs,
     read: headline
-      ? `${headline}: miners have moved ${marginChange > 0 ? '+' : ''}${marginChange}% against the metal over 20 sessions with energy input costs in the ${energyPressure === null ? 'unmeasured' : `${energyPressure}th`} percentile of the past year.`
+      ? `${headline}: miners have moved ${marginChange > 0 ? '+' : ''}${marginChange}% against the metal over 20 sessions with energy input costs in the ${energyPressure === null ? 'unmeasured' : `${ordinal(energyPressure)}`} percentile of the past year.`
       : 'Energy histories and a miner-to-metal ratio are required before producer economics can be read.',
     methodology: 'WTI crude and natural gas carry their level, 20-session change, and one-year percentile as the fast-moving input costs. The miner-to-metal ratio is GDX over GLD: a rising ratio means the metal price is outpacing what the market believes it costs to produce, which is the only margin read available without company filings. All-in sustaining cost stays explicitly unavailable.',
   };

@@ -384,3 +384,38 @@ test('a collection member with unusable prices is dropped, not scored', async ()
 
   assert.deepEqual(failures, []);
 });
+
+test('no source file hand-rolls an ordinal suffix', async () => {
+  // A literal "th" after an interpolated number prints "32th", "1th", and -
+  // when the value is missing - "nullth". It was written by hand roughly thirty
+  // times across the UI and the server before being replaced. Only the two
+  // ordinal() implementations may build a suffix.
+  const { readdirSync, readFileSync } = await import('node:fs');
+  const offenders = [];
+  const scan = (directory, keep) => {
+    for (const name of readdirSync(new URL(`../${directory}/`, import.meta.url))) {
+      if (!keep(name)) continue;
+      const source = readFileSync(new URL(`../${directory}/${name}`, import.meta.url), 'utf8');
+      // Drop the ordinal() bodies themselves before scanning.
+      const scrubbed = source.replace(/function ordinal\(value\) \{[\s\S]*?\n\}/g, '');
+      const lines = scrubbed.split('\n');
+      lines.forEach((line, index) => {
+        if (/\$\{[^{}`]+\}th\b/.test(line) || /\}<span>th\b/.test(line)) offenders.push(`${directory}/${name}: ${line.trim().slice(0, 100)}`);
+      });
+    }
+  };
+  scan('server', (name) => name.endsWith('.js') && !name.endsWith('.test.js'));
+  scan('src', (name) => /\.(js|jsx)$/.test(name) && !name.endsWith('.test.js'));
+  assert.deepEqual(offenders, []);
+});
+
+test('the client ordinal matches the server ordinal for every percentile', async () => {
+  const { readFileSync } = await import('node:fs');
+  const { ordinal } = await import('./statistics.js');
+  const source = readFileSync(new URL('../src/main.jsx', import.meta.url), 'utf8');
+  const body = source.match(/function ordinal\(value\) \{[\s\S]*?\n\}/)[0];
+  const clientOrdinal = new Function(`${body}; return ordinal;`)();
+  for (let value = 0; value <= 100; value += 1) assert.equal(clientOrdinal(value), ordinal(value), `ordinal(${value})`);
+  assert.equal(clientOrdinal(11), '11th');
+  assert.equal(clientOrdinal(21), '21st');
+});

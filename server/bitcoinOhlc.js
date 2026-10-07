@@ -1,4 +1,4 @@
-import { mean, percentileRank } from './statistics.js';
+import { mean, ordinal, percentileRank } from './statistics.js';
 /**
  * Models that genuinely need the daily high, low and volume.
  *
@@ -116,8 +116,8 @@ export function calculateAtrExpansion(rows, { period = 14, lookbackBars = 252, c
     ratio: round(ratio, 2),
     state,
     read: state === null
-      ? `True range is ${round(atrPercent, 2)}% of price, the ${round(percentile, 1)}th percentile of the last ${history.length} bars.`
-      : `True range is ${round(atrPercent, 2)}% of price and ${state} — ${round(ratio, 2)}x its level ${comparisonBars} bars ago, at the ${round(percentile, 1)}th percentile of the last ${history.length} bars.`,
+      ? `True range is ${round(atrPercent, 2)}% of price, the ${ordinal(round(percentile, 1))} percentile of the last ${history.length} bars.`
+      : `True range is ${round(atrPercent, 2)}% of price and ${state} — ${round(ratio, 2)}x its level ${comparisonBars} bars ago, at the ${ordinal(round(percentile, 1))} percentile of the last ${history.length} bars.`,
     methodology: `Wilder ATR(${period}) on true ranges, expressed as a share of price so it is comparable across the cycle, ranked against its own last ${lookbackBars} readings and compared with its level ${comparisonBars} bars ago. Percentile and ratio are carried together because a rise from a compressed base and a rise from an already-violent base are different tapes.`,
   };
 }
