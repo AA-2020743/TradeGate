@@ -24,6 +24,7 @@ import { buildAtomFeed } from './analytics.js';
 import { authorizeWrite, contentSecurityPolicy, describeWriteProtection, securityHeaders } from './security.js';
 import { buildInfo } from './buildInfo.js';
 import { MODEL_REGISTRY } from './modelRegistry.js';
+import { buildWorkspaceSnapshot, snapshotToCsv } from './workspaceSnapshot.js';
 
 const app = express();
 const rootDirectory = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -138,6 +139,55 @@ app.get('/api/health', async (_request, response) => {
 
 app.get('/api/models', (_request, response) => {
   response.json({ asOf: new Date().toISOString(), build: buildInfo, models: MODEL_REGISTRY });
+});
+
+// Each loader is cached, so a snapshot after the pages have loaded is cheap;
+// a cold one waits on providers. A loader that hangs is recorded as a failure
+// rather than holding the export open.
+const SNAPSHOT_SOURCES = {
+  macro: () => getLiquiditySnapshot(),
+  accumulation: () => getAccumulationSchedules(),
+  signalRecords: () => getSignalTrackRecords(),
+  bitcoin: () => getBitcoinCycleWorkspace(),
+  metals: () => getMetalsWorkspace(),
+  fx: () => getFxWorkspace(),
+  sentiment: () => getSentimentSnapshot(),
+  equityRisk: () => getEquityRiskAppetite(),
+  cryptoOptions: () => getCryptoOptionsWorkspace(),
+  treasury: () => getTreasuryFunding(),
+  factors: () => getFactorReturns(),
+};
+const SNAPSHOT_LOADER_TIMEOUT_MS = 30_000;
+
+function withTimeout(promise, milliseconds, name) {
+  let timer;
+  return Promise.race([
+    promise,
+    new Promise((_resolve, reject) => { timer = setTimeout(() => reject(new Error(`${name} did not answer within ${milliseconds / 1000}s.`)), milliseconds); }),
+  ]).finally(() => clearTimeout(timer));
+}
+
+app.get('/api/snapshot', async (request, response, next) => {
+  try {
+    const names = Object.keys(SNAPSHOT_SOURCES);
+    const settled = await Promise.allSettled(names.map((name) => withTimeout(Promise.resolve().then(SNAPSHOT_SOURCES[name]), SNAPSHOT_LOADER_TIMEOUT_MS, name)));
+    const snapshot = buildWorkspaceSnapshot({
+      build: buildInfo,
+      registry: MODEL_REGISTRY,
+      sources: Object.fromEntries(names.map((name, index) => [name, settled[index]])),
+    });
+    const stamp = snapshot.takenAt.slice(0, 16).replace(/[-:]/g, '').replace('T', '-');
+    if (request.query.format === 'csv') {
+      response.set('Content-Type', 'text/csv; charset=utf-8');
+      response.set('Content-Disposition', `attachment; filename="tradegate-snapshot-${stamp}.csv"`);
+      response.send(snapshotToCsv(snapshot));
+      return;
+    }
+    if (request.query.download) response.set('Content-Disposition', `attachment; filename="tradegate-snapshot-${stamp}.json"`);
+    response.json(snapshot);
+  } catch (error) {
+    next(error);
+  }
 });
 
 app.get('/api/markets/snapshot', async (_request, response, next) => {
