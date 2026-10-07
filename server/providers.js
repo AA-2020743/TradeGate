@@ -245,7 +245,39 @@ const HISTORY_RANGES = {
   All: { days: 'max', interval: '1week', outputsize: '520' },
 };
 
-const HISTORY_SYMBOLS = new Set(['BTC', 'NVDA', 'AAPL', ...TWELVE_SYMBOLS.map((asset) => asset.symbol), ...getAllEquityHistorySymbols()]);
+const HEATMAP_UNIVERSE = [
+  { symbol: 'BTC', name: 'Bitcoin', group: 'Crypto' },
+  { symbol: 'SPY', name: 'S&P 500', group: 'US indices' },
+  { symbol: 'QQQ', name: 'Nasdaq 100', group: 'US indices' },
+  { symbol: 'DIA', name: 'Dow Jones', group: 'US indices' },
+  { symbol: 'IWM', name: 'Russell 2000', group: 'US indices' },
+  { symbol: 'FEZ', name: 'Euro Stoxx 50', group: 'Europe' },
+  { symbol: 'EWG', name: 'Germany', group: 'Europe' },
+  { symbol: 'EWU', name: 'United Kingdom', group: 'Europe' },
+  { symbol: 'EWQ', name: 'France', group: 'Europe' },
+  { symbol: 'EWJ', name: 'Japan', group: 'Japan' },
+  { symbol: 'ASHR', name: 'China A-shares', group: 'China' },
+  { symbol: 'EWH', name: 'Hong Kong', group: 'China' },
+  { symbol: 'KWEB', name: 'China Internet', group: 'China' },
+  { symbol: 'EWZ', name: 'Brazil', group: 'LatAm' },
+  { symbol: 'EWW', name: 'Mexico', group: 'LatAm' },
+  { symbol: 'EEM', name: 'Emerging Markets', group: 'EM' },
+  { symbol: 'GLD', name: 'Gold', group: 'Metals' },
+  { symbol: 'SLV', name: 'Silver', group: 'Metals' },
+  { symbol: 'GDX', name: 'Gold Miners', group: 'Metals' },
+];
+
+// Every market the heatmap scores must be loadable here: SLV was added to the
+// universe without this list and its row failed on every load.
+const HISTORY_SYMBOLS = new Set(['BTC', 'NVDA', 'AAPL', ...TWELVE_SYMBOLS.map((asset) => asset.symbol), ...getAllEquityHistorySymbols(), ...HEATMAP_UNIVERSE.map((entry) => entry.symbol)]);
+
+export function supportsHistorySymbol(symbol) {
+  return HISTORY_SYMBOLS.has(String(symbol ?? '').trim().toUpperCase());
+}
+
+export function heatmapSymbols() {
+  return HEATMAP_UNIVERSE.map((entry) => entry.symbol);
+}
 const INGESTION_HISTORY_SYMBOLS = new Set(['BTC', ...TWELVE_SYMBOLS.map((asset) => asset.symbol), ...getCoreEquityHistorySymbols()]);
 
 function asNumber(value) {
@@ -587,27 +619,6 @@ export async function getMarketHistory(symbol, requestedRange, options = {}) {
   });
 }
 
-const HEATMAP_UNIVERSE = [
-  { symbol: 'BTC', name: 'Bitcoin', group: 'Crypto' },
-  { symbol: 'SPY', name: 'S&P 500', group: 'US indices' },
-  { symbol: 'QQQ', name: 'Nasdaq 100', group: 'US indices' },
-  { symbol: 'DIA', name: 'Dow Jones', group: 'US indices' },
-  { symbol: 'IWM', name: 'Russell 2000', group: 'US indices' },
-  { symbol: 'FEZ', name: 'Euro Stoxx 50', group: 'Europe' },
-  { symbol: 'EWG', name: 'Germany', group: 'Europe' },
-  { symbol: 'EWU', name: 'United Kingdom', group: 'Europe' },
-  { symbol: 'EWQ', name: 'France', group: 'Europe' },
-  { symbol: 'EWJ', name: 'Japan', group: 'Japan' },
-  { symbol: 'ASHR', name: 'China A-shares', group: 'China' },
-  { symbol: 'EWH', name: 'Hong Kong', group: 'China' },
-  { symbol: 'KWEB', name: 'China Internet', group: 'China' },
-  { symbol: 'EWZ', name: 'Brazil', group: 'LatAm' },
-  { symbol: 'EWW', name: 'Mexico', group: 'LatAm' },
-  { symbol: 'EEM', name: 'Emerging Markets', group: 'EM' },
-  { symbol: 'GLD', name: 'Gold', group: 'Metals' },
-  { symbol: 'SLV', name: 'Silver', group: 'Metals' },
-  { symbol: 'GDX', name: 'Gold Miners', group: 'Metals' },
-];
 const HEATMAP_CROWDING_KEYS = { SPY: 'sp500', QQQ: 'nasdaq100', GLD: 'gold', SLV: 'gold', GDX: 'gold' };
 
 export async function getMarketHeatmap() {

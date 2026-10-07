@@ -1,0 +1,96 @@
+/**
+ * One line of truth per external source: did it answer, with what, and if
+ * not, why.
+ *
+ * Several sources here were built against documented response shapes from a
+ * network that could not reach them, so the first real run is on the
+ * deployment. This turns that run into something readable: each loader is
+ * called once, and its payload is reduced to a verdict, its sub-parts'
+ * states, a key figure, and the upstream reasons it gave for anything it
+ * could not publish.
+ */
+
+const PUBLISHED = new Set(['calculated', 'provisional', 'partial', 'stable', 'updated', 'compared']);
+
+function statusOf(value) {
+  return value && typeof value === 'object' && typeof value.status === 'string' ? value.status : null;
+}
+
+function labelOf(value, fallback) {
+  return String(value?.currency ?? value?.symbol ?? value?.key ?? value?.tenor ?? value?.name ?? fallback);
+}
+
+/** The states of a payload's immediate parts: named sub-models and arrays of them. */
+export function partStates(payload) {
+  const parts = [];
+  if (!payload || typeof payload !== 'object') return parts;
+  for (const [key, value] of Object.entries(payload)) {
+    if (Array.isArray(value)) {
+      const states = value.filter((item) => statusOf(item)).map((item, index) => `${labelOf(item, index)}=${item.status}`);
+      if (states.length) parts.push(`${key}: ${states.slice(0, 8).join(' ')}${states.length > 8 ? ` (+${states.length - 8})` : ''}`);
+    } else if (statusOf(value)) {
+      parts.push(`${key}=${value.status}`);
+    }
+  }
+  return parts;
+}
+
+/** Upstream reasons, de-duplicated, from the payload and its unavailable parts. */
+export function reasonsFrom(payload, limit = 4) {
+  const reasons = [];
+  const add = (text) => {
+    const clean = typeof text === 'string' ? text.trim() : '';
+    if (clean && !reasons.includes(clean)) reasons.push(clean);
+  };
+  if (!payload || typeof payload !== 'object') return reasons;
+  if (!PUBLISHED.has(payload.status)) add(payload.reason);
+  for (const error of Array.isArray(payload.errors) ? payload.errors : []) add(typeof error === 'string' ? error : error?.message);
+  for (const value of Object.values(payload)) {
+    const items = Array.isArray(value) ? value : [value];
+    for (const item of items) if (statusOf(item) === 'unavailable') add(item.reason);
+  }
+  return reasons.slice(0, limit);
+}
+
+/**
+ * @param {{ name: string, endpoint?: string, figure?: (payload: any) => string|null, answered?: (payload: any) => boolean }} source
+ * @param {PromiseSettledResult<any>} result
+ * @param {number} elapsedMs
+ */
+export function summarizeSource(source, result, elapsedMs) {
+  const base = { name: source.name, endpoint: source.endpoint ?? null, seconds: Math.round(elapsedMs / 100) / 10 };
+  if (result.status === 'rejected') {
+    return { ...base, verdict: 'failed', status: 'error', figure: null, parts: [], reasons: [result.reason?.message ?? String(result.reason)] };
+  }
+  const payload = result.value;
+  const parts = partStates(payload);
+  const anyPartPublished = parts.some((part) => /=(calculated|provisional|partial|pass)\b/.test(part));
+  // Some payloads carry no status of their own (the FRED snapshot, the quote
+  // board); the source then says what answering means for it.
+  const answered = typeof source.answered === 'function' ? Boolean(source.answered(payload)) : null;
+  const status = statusOf(payload) ?? (answered === null ? 'unknown' : answered ? 'answered' : 'empty');
+  const verdict = status === 'calculated' || status === 'answered' ? 'ok' : PUBLISHED.has(status) || anyPartPublished ? 'partial' : 'failed';
+  let figure = null;
+  try {
+    figure = source.figure ? source.figure(payload) : null;
+  } catch {
+    figure = null;
+  }
+  return { ...base, verdict, status, figure, parts, reasons: reasonsFrom(payload) };
+}
+
+const MARKS = { ok: 'OK  ', partial: 'PART', failed: 'FAIL' };
+
+export function formatReport(summaries) {
+  const lines = [];
+  for (const summary of summaries) {
+    lines.push(`${MARKS[summary.verdict]}  ${summary.name}  [${summary.status}, ${summary.seconds}s]${summary.figure ? `  ${summary.figure}` : ''}`);
+    if (summary.endpoint) lines.push(`      ${summary.endpoint}`);
+    for (const part of summary.parts.slice(0, 4)) lines.push(`      ${part}`);
+    for (const reason of summary.reasons) lines.push(`      - ${reason.length > 220 ? `${reason.slice(0, 217)}...` : reason}`);
+  }
+  const ok = summaries.filter((summary) => summary.verdict === 'ok').length;
+  const partial = summaries.filter((summary) => summary.verdict === 'partial').length;
+  lines.push('', `${ok} of ${summaries.length} sources fully answered, ${partial} partly, ${summaries.length - ok - partial} not at all.`);
+  return lines.join('\n');
+}

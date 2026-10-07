@@ -13,7 +13,8 @@
     "ingest:once": "node server/ingest-once.js",
     "build": "vite build",
     "preview": "vite preview",
-    "start": "node server/index.js"
+    "start": "node server/index.js",
+    "check:sources": "node server/check-sources.js"
   },
   "dependencies": {
     "dotenv": "^16.6.1",

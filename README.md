@@ -729,3 +729,20 @@ npm start
 ```
 
 The Express server serves both `/api/*` and the built React application from `dist/`.
+
+### Checking data sources
+
+After a deploy, check that every external source answers from the server:
+
+```bash
+cd ~/TradeGate && npm run check:sources
+```
+
+It calls each source-backed loader once, using the app's own `.env`, keys and database, and prints one block per source:
+
+- **verdict:** `OK`, `PART` or `FAIL`;
+- **one key figure**, such as the CAPE and its date, or how many FRED series arrived;
+- **the state of each sub-part;**
+- **the upstream reason for anything that failed**, for example `403`, a timeout, or no database.
+
+Sources run one at a time, so a shared upstream's rate limit is not mistaken for a failure. Add `-- --json` for machine-readable output. The check changes nothing except the in-memory cache.

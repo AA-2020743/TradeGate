@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { alignedRatioSeries, calculateTwelveCreditSlot, mergeFredSeries, mergeMarketSnapshot, parseRssItems, percentileOf, smaOf } from './providers.js';
+import { alignedRatioSeries, calculateTwelveCreditSlot, heatmapSymbols, mergeFredSeries, mergeMarketSnapshot, parseRssItems, percentileOf, smaOf, supportsHistorySymbol } from './providers.js';
 import { buildSocrataRequest } from './analytics.js';
 
 test('simple moving average requires the full window', () => {
@@ -103,4 +103,11 @@ test('a Socrata request carries the app token, and stays usable without one', ()
 
   // Whitespace around a pasted token must not make it look configured.
   assert.equal(buildSocrataRequest('h', 'd', { appToken: '   ' }).authenticated, false);
+});
+
+test('every market the heatmap scores can be loaded by the history loader', () => {
+  // SLV sat in the heatmap universe without being loadable, so its row
+  // failed on every request and the cross-check could never reach it.
+  const unsupported = heatmapSymbols().filter((symbol) => !supportsHistorySymbol(symbol));
+  assert.deepEqual(unsupported, []);
 });
