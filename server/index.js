@@ -19,7 +19,7 @@ import { getEquityDashboard, getSectorDashboard } from './equities.js';
 import { logger } from './log.js';
 import { startIngestionScheduler } from './ingestion.js';
 import { createRateLimiter } from './rateLimit.js';
-import { calculateDollarTransmission, getBitcoinCycleWorkspace, getBlockedSources, getCryptoGlobal, getDxyBitcoinRelationship, getEquityRiskAppetite, getEquityScreener, getEthereumRotation, getAccumulationSchedules, getCryptoOptionsWorkspace, getFxWorkspace, getHardMoneyValuation, getIntradayRotation, getLiquiditySnapshot, getMarketHeatmap, getMarketHistory, getMarketPositioning, getMarketSnapshot, getMetalsWorkspace, getNewsWire, getProviderHealth, getRegimeCorrelations, getSentimentSnapshot, getStablecoinLeadLag, getTechnicalSnapshot } from './providers.js';
+import { calculateDollarTransmission, getBitcoinCycleWorkspace, getBlockedSources, getCryptoGlobal, getDxyBitcoinRelationship, getEquityRiskAppetite, getEquityScreener, getEthereumRotation, getAccumulationSchedules, getCryptoOptionsWorkspace, getFxWorkspace, getHardMoneyValuation, getIntradayRotation, getLiquiditySnapshot, getMarketHeatmap, getMarketHistory, getMarketPositioning, getMarketSnapshot, getMetalsWorkspace, getNewsWire, getProviderHealth, getRegimeCorrelations, getSentimentSnapshot, getStablecoinLeadLag, getTechnicalSnapshot, getTreasuryFunding } from './providers.js';
 import { buildAtomFeed } from './analytics.js';
 import { authorizeWrite, contentSecurityPolicy, describeWriteProtection, securityHeaders } from './security.js';
 
@@ -535,6 +535,14 @@ function trimSnapshotForResponse(snapshot) {
     seriesHistoryNote: `Series histories are trimmed to their most recent ${SNAPSHOT_SERIES_HISTORY_POINTS} observations for transport; the models run on the full history server-side.`,
   };
 }
+
+app.get('/api/macro/treasury', async (request, response, next) => {
+  try {
+    sendJsonWithEtag(request, response, await getTreasuryFunding());
+  } catch (error) {
+    next(error);
+  }
+});
 
 app.get('/api/macro/liquidity', async (_request, response, next) => {
   try {

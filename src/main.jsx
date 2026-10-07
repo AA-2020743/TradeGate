@@ -966,6 +966,61 @@ function CryptoOptionsPanel({ options }) {
   </article>;
 }
 
+/**
+ * Treasury funding: whether the government is finding buyers for its debt,
+ * and what its cash management is doing to bank reserves. Each auction is
+ * judged against its own tenor's history, never against another tenor's.
+ */
+function TreasuryFundingPanel({ treasury }) {
+  const status = treasury?.status ?? 'unavailable';
+  const published = status !== 'unavailable';
+  const auctions = treasury?.auctions;
+  const cash = treasury?.cash;
+  const net = treasury?.net;
+  const debt = treasury?.debt;
+  const interest = treasury?.interest;
+  const wall = treasury?.wall;
+  // At the extremes a percentile is easier to read as what it means.
+  const pct = (value, prior) => (!Number.isFinite(value) ? '\u2014' : value === 0 ? `below all ${prior}` : value === 100 ? `above all ${prior}` : `${ordinal(value)} pct`);
+  const tone = (demand) => (demand <= 25 ? 'negative' : demand >= 75 ? 'positive' : '');
+  return <article className={`panel treasury-panel ${published ? '' : 'preview-section'}`}>
+    <div className="panel-title">
+      <div>
+        <p className="section-kicker">TREASURY FUNDING · {status.toUpperCase()}</p>
+        <h3>{auctions?.state ? `${auctions.state} at Treasury auctions` : published ? 'Auction demand needs more history' : 'Awaiting Treasury Fiscal Data'}</h3>
+      </div>
+      {cash?.status === 'calculated' ? <span className="data-pill">TGA ${cash.billions}bn</span> : null}
+    </div>
+
+    {published ? <>
+      {auctions?.tenors?.length ? <>
+        <div className="treasury-head"><span>Tenor</span><span>Auction</span><span>Bid/cover</span><span>Indirect</span><span>Dealers</span><span>Demand</span></div>
+        {auctions.tenors.map((tenor) => tenor.status === 'unavailable'
+          ? <div className="treasury-row" key={tenor.tenor}><span>{tenor.tenor}</span><small className="treasury-missing">{tenor.reason}</small></div>
+          : <div className={`treasury-row ${tenor.ageDays > 60 ? 'treasury-stale' : ''}`} key={tenor.tenor}>
+            <span>{tenor.tenor}</span>
+            <small>{tenor.date}{Number.isFinite(tenor.sizeBillions) ? ` \u00b7 $${tenor.sizeBillions}bn` : ''}</small>
+            <span><b>{tenor.bidToCover?.toFixed(2)}</b><small>{pct(tenor.bidToCoverPercentile, tenor.priorAuctions)}</small></span>
+            <span><b>{Number.isFinite(tenor.indirectShare) ? `${tenor.indirectShare}%` : '\u2014'}</b><small>{pct(tenor.indirectPercentile, tenor.priorAuctions)}</small></span>
+            <span><b>{Number.isFinite(tenor.dealerShare) ? `${tenor.dealerShare}%` : '\u2014'}</b><small>{pct(tenor.dealerPercentile, tenor.priorAuctions)}</small></span>
+            <strong className={tone(tenor.demand)}>{Number.isFinite(tenor.demand) ? tenor.demand : '\u2014'}</strong>
+          </div>)}
+        <p className="treasury-note">Percentiles rank each auction against its own tenor's previous {auctions.tenors.find((tenor) => tenor.priorAuctions)?.priorAuctions ?? 24}. A high dealer share counts against demand: dealers absorb what investors did not take. Demand is the mean of those ranks, 0&ndash;100.{auctions.missingMeasures?.length ? ` Not in this response: ${auctions.missingMeasures.join(', ')}.` : ''}{auctions.pendingAuctions ? ` ${auctions.pendingAuctions} announced auction${auctions.pendingAuctions === 1 ? '' : 's'} pending.` : ''}</p>
+      </> : null}
+
+      <div className="options-stats treasury-stats">
+        {cash?.status === 'calculated' ? <div><span>Cash balance, 4 weeks</span><b className={cash.liquidityEffect28Billions <= -50 ? 'negative' : cash.liquidityEffect28Billions >= 50 ? 'positive' : ''}>{Number.isFinite(cash.change28Billions) ? `${cash.change28Billions > 0 ? '+' : ''}$${cash.change28Billions}bn` : '\u2014'}</b><small>{Number.isFinite(cash.liquidityEffect28Billions) ? `${cash.liquidityEffect28Billions >= 0 ? 'adds' : 'drains'} $${Math.abs(cash.liquidityEffect28Billions)}bn of reserves` : 'change unavailable'}</small></div> : null}
+        {net?.status === 'calculated' ? <div><span>Daily net liquidity</span><b>${net.trillions.toFixed(2)}tn</b><small>{Number.isFinite(net.change28Billions) ? `${net.change28Billions >= 0 ? '+' : '\u2212'}$${Math.abs(net.change28Billions)}bn over 4 weeks` : `as of ${net.asOf}`}</small></div> : null}
+        {debt?.status === 'calculated' ? <div><span>Debt held by public</span><b>${debt.heldByPublicTrillions}tn</b><small>{Number.isFinite(debt.growth90dAnnualizedPercent) ? `${debt.growth90dAnnualizedPercent}% ann. (90d) vs ${debt.growth1yPercent}% (1y)` : ''}</small></div> : null}
+        {interest?.status === 'calculated' ? <div><span>Avg rate, marketable debt</span><b>{interest.averageRate}%</b><small>{`${interest.change12mPoints >= 0 ? '+' : ''}${interest.change12mPoints.toFixed(2)} pts in 12 months`}</small></div> : null}
+        {wall?.status === 'calculated' ? <div><span>Matures within 12 months</span><b>{wall.within12mPercent}%</b><small>{`$${wall.within12mTrillions}tn \u00b7 avg ${wall.weightedYearsToMaturity}y to maturity`}</small></div> : null}
+      </div>
+      {treasury.read ? <p className="dca-read">{treasury.read}</p> : null}
+    </> : <div className="equity-empty">{treasury?.reason ?? 'The Treasury Fiscal Data API is required.'}</div>}
+    <p className="model-footnote">{treasury?.methodology ?? ''} {treasury?.limits ?? ''}</p>
+  </article>;
+}
+
 function ConcentrationPanel({ concentration }) {
   const status = concentration?.status ?? 'unavailable';
   const published = status !== 'unavailable';
@@ -1851,6 +1906,8 @@ function MacroDashboard({ data }) {
         <div className="model-action"><span>{usdStrength?.version ?? 'No model output'}</span><button onClick={() => setActiveModel('FX')}>Open model →</button></div>
       </article>
     </section>
+
+    <TreasuryFundingPanel treasury={data.treasury} />
 
     <section className="workspace-pulse panel">
       <div className="panel-title"><div><p className="section-kicker">WORKSPACE PULSE · CALCULATED</p><h3>Headlines from every calculated workspace</h3></div><span className="data-pill">Live</span></div>

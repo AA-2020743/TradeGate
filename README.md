@@ -306,6 +306,19 @@ Two readings come out of it. *Within* an asset, where its gold ratio sits in its
 
 The equity indices are read on price **and** total return because the difference is not cosmetic: a price index can be flat in gold terms over a decade while the same index with dividends reinvested is well ahead — and that gap is the real return, delivered as income rather than as price.
 
+### `treasury-funding-v1`
+
+Whether the US Treasury is finding buyers for its debt, and what its cash management is doing to bank reserves — from the Treasury's own Fiscal Data API, no key.
+
+- **Auction demand.** For each coupon tenor (2, 3, 5, 7, 10, 20, 30 years): bid-to-cover, the indirect share, and the primary-dealer takedown — dealers absorb what end investors did not take, so a high takedown is a weak auction. Each is ranked against **that tenor's own previous 24 auctions** (a rank needs 12); a 2-year routinely covers higher than a 30-year, so ranking across tenors would call every long-bond auction weak. Three tenors auctioned within 60 days sitting in the bottom quarter of their own history is soft demand; three in the top quarter is firm.
+- **The cash balance (TGA), daily** from the Daily Treasury Statement. Building cash drains bank reserves dollar for dollar; spending it down adds them. The weekly FRED series smears this across the week while tax dates move it by a hundred billion in days.
+- **Daily net liquidity**: the Fed balance sheet (carried forward at most seven days) less the daily TGA and overnight reverse repo, so the nowcast ends rather than freezing if a series stops.
+- **Debt growth** (last quarter annualized against the last year), the **average rate on marketable debt** and its 12-month change, and the share of marketable debt **maturing within a year**.
+
+Three rules come from failures found in an earlier implementation of the same idea, and each is tested. An announced auction is not a result: the dataset lists upcoming auctions with an offering size and no outcome, and reading the newest row as "latest" silently dropped the tenor. A percentile needs a history: ranking against the newest 200 auctions of every kind leaves about five per coupon tenor once weekly bills take their share, so the request is restricted to notes and bonds. And a measure whose field is absent says so: that implementation read an indirect-bidder field that does not exist in the dataset, so its indirect-demand signal had been null on every auction without anything reporting it. Here, each demand measure publishes whether its field was present at all.
+
+Auction tails against the when-issued yield are not measured: the dataset carries no pre-auction market yield, and the prior day's close is contaminated by the session's own move.
+
 ### `crypto-options-v1`
 
 The BTC and ETH option surfaces from Deribit's public API (no key). Options do not say where price goes; they say what the market will pay to be protected, and against what. Four readings carry most of it: implied vol at fixed tenors, the 25-delta risk reversal (negative means downside protection costs more than upside), the term structure (near above far means something is priced soon), and implied minus realized (whether options are rich or cheap against what the asset has actually done). DVOL history places today's 30-day implied vol in its past year.

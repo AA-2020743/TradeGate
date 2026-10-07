@@ -15,6 +15,7 @@ import { buildCryptoVerdict, buildFxVerdict, buildMetalsVerdict } from './verdic
 import { calculateRatioValuation, compareIncomeContribution, rankHardMoneyStrength } from './hardMoney.js';
 import { allocateAcrossAssets, calculateAccumulationSchedule, describeLadder } from './accumulation.js';
 import { calculateCryptoOptionsSurface } from './cryptoOptions.js';
+import { calculateTreasuryFunding } from './treasuryFunding.js';
 import { resolveVintage, screenVintage } from './vintage.js';
 import { cryptoHistoryGranularity, describeSeriesFreshness, isCryptoHistoryStale, isCotReportStale, isDailyCloseStale, isFredSeriesAbandoned, isFredSeriesStale, isPbocObservationStale, monthsBetween } from './freshness.js';
 import { percentileRank } from './statistics.js';
@@ -1574,6 +1575,72 @@ export async function getCryptoOptionsWorkspace() {
       reason: published.length ? undefined : 'Neither option chain could be read from Deribit.',
       source: 'Deribit public API (book summaries and DVOL)',
       surfaces,
+      errors,
+    };
+  });
+}
+
+const FISCAL_DATA = 'https://api.fiscaldata.treasury.gov/services/api/fiscal_service';
+
+async function getFiscalData(endpoint, params) {
+  const url = new URL(`${FISCAL_DATA}${endpoint}`);
+  for (const [key, value] of Object.entries(params)) url.searchParams.set(key, String(value));
+  const payload = await fetchJson(url);
+  if (!Array.isArray(payload?.data)) throw new Error(`Fiscal Data ${endpoint} returned no data list`);
+  return payload.data;
+}
+
+/**
+ * Treasury funding from the Treasury's own Fiscal Data API (no key), plus the
+ * Fed and reverse-repo histories the liquidity snapshot already holds for the
+ * daily net-liquidity nowcast. Every leg is independent; one failing degrades
+ * the workspace and says which.
+ */
+export async function getTreasuryFunding() {
+  return withCache('macro:treasury-funding', 2 * 60 * 60_000, async () => {
+    const legs = {
+      // Notes and bonds only: in a mixed window, weekly bills crowd the coupon
+      // tenors down to a handful of auctions each.
+      auctions: () => getFiscalData('/v1/accounting/od/auctions_query', { filter: 'security_type:in:(Note,Bond)', sort: '-auction_date', 'page[size]': 400 }),
+      cash: () => getFiscalData('/v1/accounting/dts/operating_cash_balance', { sort: '-record_date', 'page[size]': 2400, fields: 'record_date,account_type,close_today_bal,open_today_bal' }),
+      debt: () => getFiscalData('/v2/accounting/od/debt_to_penny', { sort: '-record_date', 'page[size]': 450, fields: 'record_date,debt_held_public_amt,intragov_hold_amt,tot_pub_debt_out_amt' }),
+      interest: () => getFiscalData('/v2/accounting/od/avg_interest_rates', { sort: '-record_date', 'page[size]': 500, fields: 'record_date,security_desc,avg_interest_rate_amt' }),
+      // The monthly statement is CUSIP-level: ask for the latest record date
+      // first, then only that month, rather than pulling twenty months of it.
+      maturities: async () => {
+        const [latest] = await getFiscalData('/v1/debt/mspd/mspd_table_3_market', { sort: '-record_date', 'page[size]': 1, fields: 'record_date' });
+        if (!latest?.record_date) throw new Error('The monthly statement returned no record date');
+        return getFiscalData('/v1/debt/mspd/mspd_table_3_market', { filter: `record_date:eq:${latest.record_date}`, 'page[size]': 1500 });
+      },
+      liquidity: () => getLiquiditySnapshot(),
+    };
+    const keys = Object.keys(legs);
+    const settled = await Promise.allSettled(keys.map((key) => legs[key]()));
+    const results = Object.fromEntries(keys.map((key, index) => [key, settled[index]]));
+    const errors = keys.flatMap((key) => (results[key].status === 'rejected' ? [`${key}: ${results[key].reason?.message ?? 'request failed'}`] : []));
+    const value = (key) => (results[key].status === 'fulfilled' ? results[key].value : []);
+
+    const liquiditySeries = results.liquidity.status === 'fulfilled' ? results.liquidity.value.series ?? [] : [];
+    const seriesPointsFor = (key) => {
+      const series = liquiditySeries.find((item) => item.key === key);
+      return (series?.history ?? [])
+        .filter((point) => Number.isFinite(point.value))
+        .map((point) => ({ date: String(point.date).slice(0, 10), value: point.value * (series.multiplier ?? 1) }))
+        .sort((left, right) => left.date.localeCompare(right.date));
+    };
+
+    return {
+      asOf: new Date().toISOString(),
+      source: 'US Treasury Fiscal Data (auctions, Daily Treasury Statement, Debt to the Penny, average interest rates, Monthly Statement of the Public Debt); FRED for the Fed balance sheet and reverse repo',
+      ...calculateTreasuryFunding({
+        auctions: value('auctions'),
+        cash: value('cash'),
+        debt: value('debt'),
+        interest: value('interest'),
+        maturities: value('maturities'),
+        fed: seriesPointsFor('fedBalanceSheet'),
+        reverseRepo: seriesPointsFor('reverseRepo'),
+      }),
       errors,
     };
   });

@@ -405,3 +405,19 @@ html[data-theme='dark'] .screener-search { background: #1a221d; border-color: #3
 .options-stats span { font-size: 0.7rem; letter-spacing: 0.05em; text-transform: uppercase; opacity: 0.55; }
 .options-stats b { font-size: 1.02rem; }
 .options-stats small { font-size: 0.75rem; opacity: 0.6; }
+
+/* Treasury funding: per-tenor auction demand, then the funding stats. */
+.treasury-panel { margin-top: 1.2rem; }
+.treasury-head, .treasury-row { display: grid; grid-template-columns: minmax(0, 0.7fr) minmax(0, 1.2fr) repeat(3, minmax(0, 0.8fr)) minmax(0, 0.6fr); gap: 0.6rem; align-items: baseline; }
+.treasury-head { margin-top: 0.9rem; padding-bottom: 0.4rem; font-size: 0.72rem; letter-spacing: 0.06em; text-transform: uppercase; opacity: 0.55; border-bottom: 1px solid var(--hairline, rgba(255, 255, 255, 0.12)); }
+.treasury-row { padding: 0.45rem 0; border-bottom: 1px solid var(--hairline, rgba(255, 255, 255, 0.06)); }
+.treasury-row > span { display: flex; flex-direction: column; min-width: 0; }
+.treasury-row small { opacity: 0.6; font-size: 0.76em; }
+.treasury-stale { opacity: 0.55; }
+.treasury-missing { grid-column: 2 / -1; }
+.treasury-note { margin: 0.6rem 0 0; font-size: 0.78rem; opacity: 0.62; line-height: 1.5; }
+.treasury-stats { margin-top: 1rem; }
+@media (max-width: 640px) {
+  .treasury-head, .treasury-row { grid-template-columns: minmax(0, 0.8fr) repeat(3, minmax(0, 0.9fr)) minmax(0, 0.6fr); }
+  .treasury-head span:nth-child(2), .treasury-row > small:nth-child(2) { display: none; }
+}
