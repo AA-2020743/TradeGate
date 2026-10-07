@@ -222,6 +222,21 @@ export async function insertModelAlerts(modelId, entries, ingestionRunId = null)
   return inserted;
 }
 
+/**
+ * Every alert in a window, oldest first, for scoring against what followed.
+ * The feed reads the newest 50; a record needs all of them.
+ */
+export async function getModelAlertsSince(sinceDays = 730, limit = 5000) {
+  if (!pool) return [];
+  const result = await pool.query(
+    `SELECT model_id, entry_key, text, detected_at FROM model_alerts
+     WHERE detected_at >= now() - make_interval(days => $1)
+     ORDER BY detected_at ASC, id ASC LIMIT $2`,
+    [sinceDays, limit],
+  );
+  return result.rows.map((row) => ({ modelId: row.model_id, key: row.entry_key, text: row.text, detectedAt: row.detected_at }));
+}
+
 export async function getRecentModelAlerts(limit = 50) {
   if (!pool) return [];
   const result = await pool.query(

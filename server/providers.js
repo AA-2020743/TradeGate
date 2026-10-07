@@ -6,7 +6,7 @@ import { calculateBitcoinTechnicals, calculateMovingAverageStack } from './bitco
 import { calculateRevisionBreadth, calculateThrustLog } from './equityAnalytics.js';
 import { calculateBitcoinRangeModels } from './bitcoinOhlc.js';
 import { buildCoingeckoRequest, buildHeatmapRow, buildSocrataRequest, buildLiquidityNarrative, buildLiquidityTransmission, buildWorkspaceNarrative, calculateBitcoinCyclePhase, calculateChangeCorrelations, calculateCryptoRotation, calculateDollarScenarios, calculateDollarTransmissionRead, calculateLeadLag, calculateLiquidityRunway, calculateOpenInterestQuadrant, calculatePositioningModel, calculateCrossMarketRelationship, calculateGlobalLiquidityModel, calculateHeatmapRisk, calculateMacroRegimeModel, calculateMetalsCostStructure, calculateRsi, calculateScreenerScores, calculateTechnicalSnapshot, calculateTrendQuality, classifyHeadlineSentiment, isPublished, calculateUsdStrengthModel, calculateUsLiquidityModel } from './analytics.js';
-import { getStoredFredSeries, getStoredMarketHistory, getStoredMarketHistoryWithProvider, getStoredMarketSnapshot, getRecentModelOutputs, isDatabaseConfigured, reserveProviderCredits } from './database.js';
+import { getStoredFredSeries, getStoredMarketHistory, getStoredMarketHistoryWithProvider, getStoredMarketSnapshot, getModelAlertsSince, getRecentModelOutputs, isDatabaseConfigured, reserveProviderCredits } from './database.js';
 import { getAllEquityHistorySymbols, getCoreEquityHistorySymbols } from './equityCatalog.js';
 import { buildBackfillRows, calculateConsensusHistory, calculateMacroVerdict, calculateModelConsensus, calculateModelCorrelationMatrix, calculateWeightOverlap, evaluateMacroAlerts } from './macroConsensus.js';
 import { calculateDataSurprise, calculateLiquidityPayoff, calculateNominalDecomposition, calculateRateDivergence, calculateReserveScarcity, calculateTermPremium } from './macroRates.js';
@@ -23,6 +23,7 @@ import { TECHNICAL_REGIMES, describeTechnicalRecord, technicalTrackRecord } from
 import { evaluateTrackRecord } from './trackRecord.js';
 import { crossCheckSeries, summarizeCrossChecks } from './priceCrossCheck.js';
 import { resolveVintage, screenVintage } from './vintage.js';
+import { ALERT_HORIZONS, ALERT_OUTCOMES_VERSION, BENCHMARK, claimFor, scoreAlertOutcomes } from './alertOutcomes.js';
 import { cryptoHistoryGranularity, describeSeriesFreshness, isCryptoHistoryStale, isCotReportStale, isDailyCloseStale, isFredSeriesAbandoned, isFredSeriesStale, isPbocObservationStale, monthsBetween } from './freshness.js';
 import { percentileRank } from './statistics.js';
 
@@ -1734,6 +1735,39 @@ export async function getFactorReturns() {
  * histories, plus the record pooled across them. Each asset's weekly
  * observations are kept only long enough to pool, then dropped.
  */
+// Screener breakouts can name hundreds of symbols over two years; the most
+// recent are loaded and the rest are reported as unscored rather than
+// fetched one by one on a page load.
+const ALERT_OUTCOME_SYMBOL_LIMIT = 60;
+
+/** Stored alerts scored against what followed. Needs PostgreSQL: alerts only exist there. */
+export async function getAlertOutcomes() {
+  return withCache('analytics:alert-outcomes', 6 * 60 * 60_000, async () => {
+    if (!isDatabaseConfigured()) {
+      return { version: ALERT_OUTCOMES_VERSION, status: 'unavailable', reason: 'Alerts are stored in PostgreSQL; with no database configured there is no alert history to score.', groups: [], recent: [], horizons: ALERT_HORIZONS };
+    }
+    const alerts = await getModelAlertsSince(730, 5000);
+    const symbols = [BENCHMARK];
+    for (const alert of [...alerts].reverse()) {
+      const asset = claimFor(alert)?.asset;
+      if (asset && !symbols.includes(asset) && symbols.length < ALERT_OUTCOME_SYMBOL_LIMIT) symbols.push(asset);
+    }
+    const histories = new Map();
+    const errors = [];
+    // A few at a time: Yahoo throttles a burst of chart requests.
+    for (let index = 0; index < symbols.length; index += 6) {
+      const batch = symbols.slice(index, index + 6);
+      const settled = await Promise.allSettled(batch.map((symbol) => getYahooHistory(symbol, '5y')));
+      settled.forEach((result, offset) => {
+        if (result.status === 'fulfilled' && result.value?.length) histories.set(batch[offset], result.value);
+        else errors.push(`${batch[offset]}: ${result.reason?.message ?? 'no observations'}`);
+      });
+    }
+    const scored = scoreAlertOutcomes({ alerts, histories });
+    return { asOf: new Date().toISOString(), ...scored, errors };
+  });
+}
+
 export async function getSignalTrackRecords() {
   return withCache('analytics:signal-records', 12 * 60 * 60_000, async () => {
     const settled = await Promise.allSettled(ACCUMULATION_SYMBOLS.map((asset) => getYahooHistory(asset.symbol, '10y')));

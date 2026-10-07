@@ -2106,6 +2106,73 @@ function ConsensusHistoryPanel({ history }) {
   </article>;
 }
 
+function formatSignedPercent(value) {
+  return Number.isFinite(value) ? `${value > 0 ? '+' : ''}${value}%` : '—';
+}
+
+function AlertOutcomeCell({ stats, claim }) {
+  if (stats.status === 'insufficient') {
+    return <span className="outcome-cell outcome-empty" title={stats.reason}>
+      no rate<small>{stats.matured ? `${stats.matured} matured, ${stats.effective} independent` : 'none matured'}{stats.pending ? ` · ${stats.pending} pending` : ''}</small>
+    </span>;
+  }
+  const detail = claim === 'eventful'
+    ? `median move ${stats.medianMove}× typical`
+    : `${formatSignedPercent(stats.medianRelativePercent)} vs typical`;
+  return <span className="outcome-cell">
+    <b className={stats.versusChance === 'above' ? 'positive' : stats.versusChance === 'below' ? 'negative' : ''}>{stats.rightRate}% right<i className="outcome-chance">{stats.versusChance === 'above' ? 'beats chance' : stats.versusChance === 'below' ? 'worse than chance' : 'within chance'}</i></b>
+    <small>{detail} · {stats.matured} alerts, {stats.effective} independent{stats.status === 'thin' ? ' (thin)' : ''}{stats.pending ? ` · ${stats.pending} pending` : ''}</small>
+  </span>;
+}
+
+function alertOutcomeLabel(outcome, claim) {
+  if (outcome.state === 'pending') return { text: 'pending', className: 'outcome-pending' };
+  if (outcome.state !== 'matured') return { text: 'no data', className: 'outcome-pending' };
+  // A breakout is scored on its excess over SPY, so that is the number shown.
+  return { text: `${outcome.right ? 'right' : 'wrong'} ${formatSignedPercent(outcome.returnPercent)}${claim === 'outperform' ? ' vs SPY' : ''}`, className: outcome.right ? 'outcome-right' : 'outcome-wrong' };
+}
+
+function AlertOutcomesPanel({ outcomes }) {
+  const status = outcomes?.status ?? 'unavailable';
+  const groups = outcomes?.groups ?? [];
+  const horizons = outcomes?.horizons ?? [30, 90];
+  const published = status !== 'unavailable' && groups.length > 0;
+  return <article className={`panel alert-outcomes-panel ${published ? '' : 'preview-section'}`}>
+    <div className="panel-title">
+      <div>
+        <StatusKicker label="ALERT OUTCOMES" published={published} />
+        <h3>{published ? 'Did the alerts mean anything?' : 'Awaiting stored alerts with an outcome'}</h3>
+      </div>
+      {Number.isFinite(outcomes?.alerts) && outcomes.alerts > 0 ? <span className="data-pill">{outcomes.alerts} stored</span> : null}
+    </div>
+    <p className="dca-read">{published ? outcomes.read : outcomes?.reason ?? 'Alert outcomes need PostgreSQL and a few months of stored alerts.'}</p>
+    {published ? <>
+      <div className="outcome-table" role="table" aria-label="Alert outcomes by kind">
+        <div className="outcome-row outcome-head" role="row">
+          <span role="columnheader">Alert kind</span>
+          {horizons.map((horizon) => <span role="columnheader" key={horizon}>{horizon} days</span>)}
+        </div>
+        {groups.map((group) => <div className="outcome-row" role="row" key={group.id}>
+          <span role="cell"><b>{group.label}</b><small>Right when {group.claimPhrase} · {group.alerts} {group.alerts === 1 ? 'alert' : 'alerts'}{group.assets.length === 1 ? ` · ${group.assets[0]}` : ` · ${group.assets.length} assets`}</small></span>
+          {group.horizons.map((stats) => <span role="cell" data-label={`${stats.horizon} days`} key={stats.horizon}><AlertOutcomeCell stats={stats} claim={group.claim} /></span>)}
+        </div>)}
+      </div>
+      {(outcomes.recent ?? []).length ? <details className="outcome-recent">
+        <summary>Latest {outcomes.recent.length} alerts and what followed</summary>
+        {outcomes.recent.map((entry) => <div className="outcome-alert" key={`${entry.modelId}-${entry.key}-${entry.detectedAt}`}>
+          <p>{entry.text}<small>{entry.group} · {String(entry.detectedAt).slice(0, 10)} · {entry.asset}</small></p>
+          <div>{entry.outcomes.map((outcome) => {
+            const label = alertOutcomeLabel(outcome, entry.claim);
+            return <span key={outcome.horizon} className={`outcome-chip ${label.className}`}>{outcome.horizon}d {label.text}</span>;
+          })}</div>
+        </div>)}
+      </details> : null}
+      {(outcomes.unscored ?? []).length ? <p className="snapshot-note">Not scored, since no claim is assigned to them: {outcomes.unscored.map((entry) => `${entry.count} from ${entry.modelId}`).join(', ')}.</p> : null}
+    </> : null}
+    <p className="model-footnote">{outcomes?.methodology ?? ''} {outcomes?.limits ?? ''}</p>
+  </article>;
+}
+
 function MacroDashboard({ data }) {
   const [activeModel, setActiveModel] = React.useState('Overview');
   const [correlationWindow, setCorrelationWindow] = React.useState('60D');
@@ -2266,6 +2333,7 @@ function MacroDashboard({ data }) {
       <article className={`sensitivity-panel panel ${regimeCorrelations?.status === 'calculated' ? '' : 'preview-section'}`}><div className="panel-title"><div><StatusKicker label="ASSET SENSITIVITY" published={sensitivityRows.some((row) => Number.isFinite(row.value))} /><h3>Current macro exposures</h3></div><button onClick={() => setActiveModel('Correlations')}>Details →</button></div><div className="sensitivity-list">{sensitivityRows.map((row) => <div key={row.asset}><b>{row.asset}</b><span>{row.driver} <i>{row.strength}</i></span><small>{Number.isFinite(row.value) ? `${row.value > 0 ? '+' : ''}${row.value.toFixed(2)}` : '—'}</small></div>)}</div><p className="model-footnote">Sensitivities are the {correlationWindow} correlations from <code>regime-correlation-v1</code>; strength labels derive from |r| thresholds of 0.25 and 0.50.</p></article>
       <article className="sources-panel panel"><p className="section-kicker">DATA PROVENANCE</p><h3>Connected and target sources.</h3><p>FRED is connected, including ECB and BoJ balance sheets with H.10 FX conversion, and PBoC total assets arrive via BIS WS_CBTA on DBnomics. BoE, IMF broad money, and institutional market feeds remain planned inputs.</p><button>Explore sources and lags →</button></article>
     </section>
+    <AlertOutcomesPanel outcomes={data.alertOutcomes} />
     <p className="independence-note">TradeGate is an independent market research platform and is not affiliated with Tradegate AG.</p>
     {liquidityChartOpen && <LiquidityChartDialog history={liquidityModel?.history ?? []} title="Calculated net US liquidity" description="Move across the chart to inspect a date. Click or tap to pin the observation for comparison." onClose={() => setLiquidityChartOpen(false)} />}
     {globalChartOpen && <LiquidityChartDialog history={globalLiquidity?.history ?? []} title="Calculated global central-bank liquidity" description="US net liquidity plus ECB and BoJ balance sheets in USD. Move across the chart to inspect a date; click to pin." label="global central-bank liquidity" onClose={() => setGlobalChartOpen(false)} />}

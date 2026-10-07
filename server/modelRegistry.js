@@ -178,6 +178,19 @@ export const MODEL_REGISTRY = [
     failureModes: ['Refuses when fewer than three inputs report, which a late BoJ release used to cause.'],
     trackRecord: null,
   },
+  {
+    id: 'alert-outcomes-v1',
+    name: 'Alert outcomes',
+    page: 'Macro',
+    measures: 'Each stored alert scored on the claim it implicitly makes - macro warnings against SPY lagging its typical return, screener breakouts against beating SPY, everything else against a larger-than-usual move - over 30 and 90 days.',
+    inputs: ['Stored model alerts (PostgreSQL)', '5-year daily closes from Yahoo for SPY and each alerted asset'],
+    failureModes: [
+      'The claims are assigned here, not stated by the alerts: a warning scored as risk-off may have been meant as a timing note.',
+      'The record starts when alert storage did, so for months it holds too few independent outcomes to say anything.',
+      'Screener breakouts beyond the 60 most recent symbols are not loaded and go unscored.',
+    ],
+    trackRecord: null,
+  },
 ];
 
 export function registryEntry(id) {

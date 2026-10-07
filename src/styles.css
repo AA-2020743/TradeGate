@@ -521,3 +521,29 @@ html[data-theme='dark'] .snapshot-row { border-color: #2c3830; }
 html[data-theme='dark'] .snapshot-row small, html[data-theme='dark'] .snapshot-head { color: #9aa79b; }
 /* The badge's background is the asset's colour, set inline and bright in both themes, so its letter stays dark. */
 html[data-theme='dark'] .asset-badge { color: #17201b; }
+.alert-outcomes-panel { margin: 1.2rem 0; }
+.outcome-table { display: grid; margin-top: 0.8rem; font-size: 0.85rem; }
+.outcome-row { display: grid; grid-template-columns: minmax(0, 1.4fr) repeat(2, minmax(0, 1fr)); gap: 0.8rem; padding: 0.55rem 0; border-bottom: 1px solid #e9ebe4; align-items: start; }
+.outcome-row > span { min-width: 0; display: flex; flex-direction: column; }
+.outcome-row small, .outcome-cell small { color: #5f6861; font-size: 0.74rem; line-height: 1.4; margin-top: 2px; }
+.outcome-head { color: #5f6861; font: 500 0.7rem 'DM Mono', monospace; text-transform: uppercase; letter-spacing: 0.04em; }
+.outcome-cell { display: flex; flex-direction: column; }
+.outcome-cell b { font: 600 0.9rem 'DM Mono', monospace; }
+.outcome-empty { color: #5f6861; font-family: 'DM Mono', monospace; font-size: 0.8rem; }
+.outcome-recent { margin-top: 0.9rem; }
+.outcome-recent summary { cursor: pointer; font-size: 0.85rem; color: #3f4a42; }
+.outcome-alert { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 0.4rem 1rem; padding: 0.5rem 0; border-bottom: 1px solid #e9ebe4; }
+.outcome-alert p { margin: 0; flex: 1 1 320px; font-size: 0.82rem; line-height: 1.45; }
+.outcome-alert p small { display: block; color: #5f6861; font-size: 0.72rem; margin-top: 2px; }
+.outcome-alert > div { display: flex; gap: 0.35rem; align-items: flex-start; flex-wrap: wrap; }
+.outcome-chip { font: 500 0.7rem 'DM Mono', monospace; padding: 0.1rem 0.45rem; border-radius: 4px; border: 1px solid currentColor; white-space: nowrap; }
+.outcome-right { color: #2a7a40; }
+.outcome-wrong { color: #a14a39; }
+.outcome-pending { color: #5f6861; }
+@media (max-width: 640px) {
+  .outcome-row { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
+  .outcome-row > span:first-child { grid-column: 1 / -1; }
+  .outcome-head { display: none; }
+  .outcome-row > span[data-label]::before { content: attr(data-label); color: #5f6861; font: 500 0.66rem 'DM Mono', monospace; text-transform: uppercase; letter-spacing: 0.04em; margin-bottom: 2px; }
+}
+.outcome-chance { font: 500 0.66rem 'DM Mono', monospace; font-style: normal; margin-left: 0.45rem; color: #5f6861; text-transform: uppercase; letter-spacing: 0.03em; }

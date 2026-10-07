@@ -457,6 +457,16 @@ The Workspace snapshot panel on the Markets page downloads both. Its compare but
 
 Readings are found by walking the payloads rather than from a hand-kept list, so a new model appears in snapshots without being registered anywhere.
 
+## Alert Outcomes
+
+`GET /api/analytics/alert-outcomes` scores every stored alert from the last two years against what followed, at 30 and 90 days. It is shown at the foot of the Macro page and needs PostgreSQL, since alerts are only stored there. Alerts carry no direction, so each kind is scored on the claim it implicitly makes:
+
+- **Macro warnings** (curve un-inversion or inversion, reserve tightening, reverse-repo exhaustion, quarter-end, term-premium repricing) are right when SPY then returned less than its own typical return over the horizon.
+- **Screener breakouts** are right when the stock then beat SPY by more than it usually does.
+- **Everything else** (workspace state shifts, divided models, a regime near a boundary, cleared conditions) is right when a larger-than-usual move followed.
+
+The entry is the first close after the detection day. Alerts of one kind that fire within a horizon of each other count once in the effective sample. With fewer than 4 effective alerts no rate is shown, and fewer than 10 is marked thin. A kind of alert is described as beating chance, or as worse than chance, only when its right-rate is more than two standard errors from 50% on the effective count. The summary names only those kinds, never simply the best-scoring one.
+
 ## Dark Theme
 
 The stylesheet is written light-first with literal colours. At build time `src/darkTheme.js`, a Vite plugin, derives a dark counterpart for every light colour that has no hand-written `html[data-theme='dark']` rule:

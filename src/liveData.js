@@ -30,6 +30,7 @@ export function usePlatformData() {
     treasury: null,
     factors: null,
     signalRecords: null,
+    alertOutcomes: null,
     crossCheck: null,
     models: null,
     news: null,
@@ -42,7 +43,7 @@ export function usePlatformData() {
     let active = true;
 
     const load = async () => {
-      const [health, markets, liquidity, dxyBtc, regimeCorrelations, positioning, heatmap, metals, fx, hardMoney, accumulation, cryptoOptions, treasury, factors, signalRecords, crossCheck, models, sentiment, bitcoin, equityRisk, news, screener, alerts] = await Promise.allSettled([
+      const [health, markets, liquidity, dxyBtc, regimeCorrelations, positioning, heatmap, metals, fx, hardMoney, accumulation, cryptoOptions, treasury, factors, signalRecords, crossCheck, models, sentiment, bitcoin, equityRisk, news, screener, alerts, alertOutcomes] = await Promise.allSettled([
         requestJson('/api/health'),
         requestJson('/api/markets/snapshot'),
         requestJson('/api/macro/liquidity'),
@@ -66,6 +67,7 @@ export function usePlatformData() {
         requestJson('/api/news/wire'),
         requestJson('/api/analytics/screener'),
         requestJson('/api/alerts'),
+        requestJson('/api/analytics/alert-outcomes'),
       ]);
       if (!active) return;
 
@@ -84,6 +86,7 @@ export function usePlatformData() {
       const treasuryData = treasury.status === 'fulfilled' ? treasury.value : null;
       const factorsData = factors.status === 'fulfilled' ? factors.value : null;
       const signalRecordsData = signalRecords.status === 'fulfilled' ? signalRecords.value : null;
+      const alertOutcomesData = alertOutcomes.status === 'fulfilled' ? alertOutcomes.value : null;
       const crossCheckData = crossCheck.status === 'fulfilled' ? crossCheck.value : null;
       const modelsData = models.status === 'fulfilled' ? models.value : null;
       const sentimentData = sentiment.status === 'fulfilled' ? sentiment.value : null;
@@ -119,6 +122,7 @@ export function usePlatformData() {
         treasury: treasuryData,
         factors: factorsData,
         signalRecords: signalRecordsData,
+        alertOutcomes: alertOutcomesData,
         crossCheck: crossCheckData,
         models: modelsData,
         sentiment: sentimentData,
