@@ -138,3 +138,35 @@ test('an unknown page falls through to the SPA document instead of 404', async (
   assert.equal(response.headers.get('content-type')?.startsWith('text/html'), true);
   assert.equal(response.headers.get('cache-control'), 'no-cache');
 });
+
+test('a write that arrives through a proxy is refused when no token is configured', async () => {
+  const response = await fetch(`${origin}/api/watchlists`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json', 'X-Forwarded-For': '203.0.113.9' },
+    body: JSON.stringify({ Core: ['AAPL'] }),
+  });
+  assert.equal(response.status, 403);
+  const payload = await response.json();
+  // The client reads `saved` to decide whether to fall back to its local copy.
+  assert.equal(payload.saved, false);
+  assert.equal(payload.writeProtected, true);
+});
+
+test('a cross-origin write is refused', async () => {
+  const response = await fetch(`${origin}/api/watchlists`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json', Origin: 'https://evil.example' },
+    body: JSON.stringify({ Core: ['AAPL'] }),
+  });
+  assert.equal(response.status, 403);
+});
+
+test('responses carry a content security policy and health reports the write mode', async () => {
+  const response = await get('/api/health');
+  const csp = response.headers.get('content-security-policy') ?? '';
+  assert.match(csp, /default-src 'self'/);
+  assert.match(csp, /frame-ancestors 'none'/);
+  assert.equal(response.headers.get('cross-origin-opener-policy'), 'same-origin');
+  const payload = await response.json();
+  assert.equal(payload.writes.mode, 'local-only');
+});

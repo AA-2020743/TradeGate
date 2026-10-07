@@ -30,6 +30,9 @@ export const config = {
   twelveQuoteRefreshMs: numberFromEnvironment('TWELVE_QUOTE_REFRESH_MS', 15 * 60_000),
   fredApiKey: process.env.FRED_API_KEY ?? '',
   cftcAppToken: process.env.CFTC_APP_TOKEN ?? '',
+  // Bearer token for the one mutating endpoint. Unset means writes are
+  // accepted only from a local, unproxied connection - see security.js.
+  writeToken: process.env.TRADEGATE_WRITE_TOKEN ?? '',
   coingeckoApiKey: process.env.COINGECKO_API_KEY ?? '',
   coingeckoPlan: (process.env.COINGECKO_API_PLAN ?? 'demo').toLowerCase() === 'pro' ? 'pro' : 'demo',
   databaseUrl: process.env.DATABASE_URL ?? '',

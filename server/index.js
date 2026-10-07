@@ -1,5 +1,5 @@
 import express from 'express';
-import { existsSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
@@ -21,6 +21,7 @@ import { startIngestionScheduler } from './ingestion.js';
 import { createRateLimiter } from './rateLimit.js';
 import { calculateDollarTransmission, getBitcoinCycleWorkspace, getBlockedSources, getCryptoGlobal, getDxyBitcoinRelationship, getEquityRiskAppetite, getEquityScreener, getEthereumRotation, getAccumulationSchedules, getFxWorkspace, getHardMoneyValuation, getIntradayRotation, getLiquiditySnapshot, getMarketHeatmap, getMarketHistory, getMarketPositioning, getMarketSnapshot, getMetalsWorkspace, getNewsWire, getProviderHealth, getRegimeCorrelations, getSentimentSnapshot, getStablecoinLeadLag, getTechnicalSnapshot } from './providers.js';
 import { buildAtomFeed } from './analytics.js';
+import { authorizeWrite, contentSecurityPolicy, describeWriteProtection, securityHeaders } from './security.js';
 
 const app = express();
 const rootDirectory = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -32,12 +33,10 @@ const rateLimiter = createRateLimiter({ limit: config.apiRateLimit, windowMs: co
 app.disable('x-powered-by');
 app.set('trust proxy', 'loopback');
 app.use(express.json({ limit: '64kb' }));
-app.use((_request, response, next) => {
-  response.setHeader('X-Content-Type-Options', 'nosniff');
-  response.setHeader('X-Frame-Options', 'DENY');
-  response.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
-  next();
-});
+// The policy hashes the inline scripts in the HTML actually being served, so it
+// is read from the built page rather than restated here.
+const servedHtml = existsSync(distIndexFile) ? readFileSync(distIndexFile, 'utf8') : '';
+app.use(securityHeaders({ csp: contentSecurityPolicy(servedHtml) }));
 /**
  * Cache policy per route, matched to how often the thing behind it can change.
  *
@@ -126,7 +125,7 @@ app.use('/api', (request, response, next) => {
 app.get('/api/health', async (_request, response) => {
   const database = await getDatabaseHealth();
   const databaseDegraded = database.configured && (!database.connected || !database.migrated);
-  response.json({ status: databaseDegraded ? 'degraded' : 'ok', asOf: new Date().toISOString(), providers: { ...getProviderHealth(), database }, blockedSources: getBlockedSources() });
+  response.json({ status: databaseDegraded ? 'degraded' : 'ok', asOf: new Date().toISOString(), providers: { ...getProviderHealth(), database }, blockedSources: getBlockedSources(), writes: describeWriteProtection(config.writeToken) });
 });
 
 app.get('/api/markets/snapshot', async (_request, response, next) => {
@@ -302,6 +301,13 @@ app.get('/api/watchlists', async (_request, response, next) => {
 
 app.put('/api/watchlists', async (request, response, next) => {
   try {
+    const authorization = authorizeWrite(request, { token: config.writeToken });
+    if (!authorization.allowed) {
+      // Same shape as an unconfigured save, so the client falls back to its
+      // local copy instead of treating a refusal as a crash.
+      response.status(authorization.status).json({ status: 'refused', saved: false, error: authorization.reason, writeProtected: Boolean(authorization.writeProtected) });
+      return;
+    }
     const payload = request.body ?? {};
     if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
       response.status(400).json({ error: 'Watchlist payload must be an object of name to symbol arrays.' });

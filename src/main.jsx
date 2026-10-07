@@ -2073,9 +2073,14 @@ function WatchlistsDashboard({ data }) {
     if (syncTimerRef.current) clearTimeout(syncTimerRef.current);
     syncTimerRef.current = setTimeout(() => {
       setSyncState('syncing');
-      fetch('/api/watchlists', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(normalizeWatchlists(lists)) })
+      // The server refuses writes it cannot attribute to the owner. The token is
+      // kept in this browser only and sent as a bearer header; without it the
+      // lists stay local and the pill says why instead of claiming a failure.
+      let token = null;
+      try { token = window.localStorage.getItem('tradegate-write-token'); } catch { token = null; }
+      fetch('/api/watchlists', { method: 'PUT', headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) }, body: JSON.stringify(normalizeWatchlists(lists)) })
         .then((response) => response.json())
-        .then((payload) => setSyncState(payload?.saved ? 'synced' : 'local'))
+        .then((payload) => setSyncState(payload?.saved ? 'synced' : payload?.writeProtected ? 'protected' : 'local'))
         .catch(() => setSyncState('failed'));
     }, 1500);
     return () => clearTimeout(syncTimerRef.current);
@@ -2157,7 +2162,12 @@ function WatchlistsDashboard({ data }) {
   return <div className="watchlists-dashboard">
     <section className="macro-intro">
       <div><p className="eyebrow">WATCHLIST WORKSPACE</p><h1>Your names, calculated.</h1><p className="intro">Live provider histories, technical scores, and regimes for the symbols you track. Lists persist in this browser{syncState === 'synced' ? ' and mirror to the server database.' : '.'}</p></div>
-      <div className="model-tabs">{syncState !== 'idle' && syncState !== 'local' && <span className="watch-sync-pill" data-state={syncState}>{syncState === 'syncing' ? 'SYNCING…' : syncState === 'failed' ? 'LOCAL ONLY · SYNC FAILED' : 'SERVER SYNCED'}</span>}<button className="active">Local lists</button></div>
+      <div className="model-tabs">{syncState !== 'idle' && syncState !== 'local' && <span className="watch-sync-pill" data-state={syncState}>{syncState === 'syncing' ? 'SYNCING…' : syncState === 'failed' ? 'LOCAL ONLY · SYNC FAILED' : syncState === 'protected' ? 'LOCAL ONLY · SERVER WRITE-PROTECTED' : 'SERVER SYNCED'}</span>}{syncState === 'protected' && <button onClick={() => {
+        const entered = window.prompt('Enter this server\u2019s write token (TRADEGATE_WRITE_TOKEN). It is stored in this browser only.');
+        if (!entered) return;
+        try { window.localStorage.setItem('tradegate-write-token', entered.trim()); } catch { return; }
+        setLists((current) => ({ ...current }));
+      }}>Connect</button>}<button className="active">Local lists</button></div>
     </section>
     <DataDisclosure data={data} message="Each row pulls live market history and the technical-v1 snapshot from the server. Nothing is fabricated; unavailable providers show blanks." />
     <section className="screener-controls-row">
