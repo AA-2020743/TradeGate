@@ -1938,9 +1938,12 @@ export function primaryProvider(label, storedProvider = null) {
  * misses a split or stamps a close on the wrong day is visible before a model
  * scores it.
  */
+// The primary is read at the same 1Y range the heatmap and technical scores
+// use: the gate runs right after those reads, so the history cache answers it.
+// A range of its own cost a Twelve Data request per symbol per hour.
 function getSymbolCrossCheck(entry) {
   return withCache(`analytics:price-crosscheck:${entry.symbol}`, 60 * 60_000, async () => {
-    const [primaryResult, shadowResult] = await Promise.allSettled([getMarketHistory(entry.symbol, '6M'), getYahooHistory(entry.yahoo, '1y')]);
+    const [primaryResult, shadowResult] = await Promise.allSettled([getMarketHistory(entry.symbol, '1Y'), getYahooHistory(entry.yahoo, '1y')]);
     if (primaryResult.status !== 'fulfilled') return { symbol: entry.symbol, name: entry.name, status: 'unavailable', reason: `Primary history failed: ${primaryResult.reason?.message ?? 'no response'}` };
     if (shadowResult.status !== 'fulfilled') return { symbol: entry.symbol, name: entry.name, status: 'unavailable', reason: `Yahoo shadow history failed: ${shadowResult.reason?.message ?? 'no response'}` };
     return crossCheckSeries({
