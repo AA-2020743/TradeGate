@@ -96,6 +96,30 @@ function ordering(cells) {
   return round(agree / total, 2);
 }
 
+// A year of weekly readings before a week is placed against its own past.
+const OWN_HISTORY_MINIMUM = 52;
+
+/**
+ * Each reading's third within the readings before it - top, middle or bottom
+ * - using only earlier weeks, so no label knows the future. Ties count half
+ * below and half above, so a component pinned at 0 or 100 for weeks is not
+ * pushed to one end by the tie alone.
+ */
+export function ownHistoryBands(values, minimum = OWN_HISTORY_MINIMUM) {
+  const prior = [];
+  return values.map((value) => {
+    let band = null;
+    if (Number.isFinite(value) && prior.length >= minimum) {
+      const below = prior.filter((entry) => entry < value).length;
+      const equal = prior.filter((entry) => entry === value).length;
+      const share = (below + (equal / 2)) / prior.length;
+      band = share >= 2 / 3 ? 'high' : share <= 1 / 3 ? 'low' : 'middle';
+    }
+    if (Number.isFinite(value)) prior.push(value);
+    return band;
+  });
+}
+
 export function evaluateTrackRecord({ observations, order, horizons, stepDays = 7, holdoutFraction = 0.3, stepLabel = null }) {
   const sorted = [...(observations ?? [])].sort((left, right) => String(left.date).localeCompare(String(right.date)));
   if (sorted.length < 40) {

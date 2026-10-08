@@ -21,6 +21,7 @@ import { calculateFactorMomentum } from './factorMomentum.js';
 import { GOLD_SILVER_RECORD_VERSION, calculateGoldSilverRecord } from './goldSilverRecord.js';
 import { calculateFxMomentumRecord } from './fxMomentumRecord.js';
 import { BITCOIN_CYCLE_RECORD_VERSION, calculateBitcoinCycleRecord } from './bitcoinCycleRecord.js';
+import { VERDICT_RECORD_VERSION, VERDICT_REPLAYS, replayVerdicts } from './verdictTrackRecord.js';
 import { readLargestTextEntry } from './zip.js';
 import { combineFundingVenues, okxPositioningRows } from './derivativesVenues.js';
 import { TECHNICAL_REGIMES, describeTechnicalComponents, describeTechnicalRecord, pooledComponentRecords, technicalTrackRecord } from './technicalTrackRecord.js';
@@ -2122,6 +2123,43 @@ export async function getGoldRealYield() {
       return { calculatedAt: new Date().toISOString(), ...result, status: 'provisional', reason: `FRED DFII10 last printed ${yieldResult.value.date}, later than its daily schedule.` };
     }
     return { calculatedAt: new Date().toISOString(), ...result };
+  });
+}
+
+/**
+ * The section verdicts replayed on every second week of their inputs' history,
+ * each call followed forward by the asset it is about. The macro series are
+ * the liquidity snapshot's own, so the replay reads what the page reads.
+ */
+export async function getVerdictTrackRecords() {
+  return withCache('analytics:verdict-records', 24 * 60 * 60_000, async () => {
+    const [snapshotResult, goldResult, bitcoinResult] = await Promise.allSettled([
+      getLiquiditySnapshot(),
+      getYahooDailyHistory('GC=F', '2002-12-01'),
+      getYahooDailyHistory('BTC-USD', '2014-09-17'),
+    ]);
+    const errors = [
+      snapshotResult.status === 'rejected' ? `Macro series: ${snapshotResult.reason?.message ?? 'failed'}` : null,
+      goldResult.status === 'rejected' ? `Yahoo GC=F: ${goldResult.reason?.message ?? 'failed'}` : null,
+      bitcoinResult.status === 'rejected' ? `Yahoo BTC-USD: ${bitcoinResult.reason?.message ?? 'failed'}` : null,
+    ].filter(Boolean);
+    const seriesList = snapshotResult.status === 'fulfilled' ? (snapshotResult.value.series ?? []).filter((item) => !item.abandoned) : [];
+    if (!seriesList.length) return { version: VERDICT_RECORD_VERSION, status: 'unavailable', reason: `The macro series every verdict reads did not load${errors.length ? ` (${errors.join('; ')})` : ''}.`, records: {}, errors };
+    const closes = {
+      gold: goldResult.status === 'fulfilled' ? goldResult.value : [],
+      bitcoin: bitcoinResult.status === 'fulfilled' ? bitcoinResult.value : [],
+    };
+    const records = await replayVerdicts({ seriesList, closes });
+    const published = Object.values(records).filter((record) => record.status === 'calculated');
+    return {
+      version: VERDICT_RECORD_VERSION,
+      calculatedAt: new Date().toISOString(),
+      asOf: published.map((record) => record.asOf).sort()[0] ?? null,
+      status: published.length ? (published.length === Object.keys(VERDICT_REPLAYS).length ? 'calculated' : 'provisional') : 'unavailable',
+      reason: published.length ? undefined : 'No verdict could be replayed on enough dates.',
+      records,
+      errors,
+    };
   });
 }
 

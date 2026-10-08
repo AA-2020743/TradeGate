@@ -19,7 +19,7 @@ import { getEquityDashboard, getSectorDashboard } from './equities.js';
 import { logger } from './log.js';
 import { startIngestionScheduler } from './ingestion.js';
 import { createRateLimiter } from './rateLimit.js';
-import { calculateDollarTransmission, getBitcoinCycleWorkspace, getBlockedSources, getCryptoGlobal, getDxyBitcoinRelationship, getEquityRiskAppetite, getEquityScreener, getEthereumRotation, getAccumulationSchedules, getAlertOutcomes, getCryptoOptionsWorkspace, getIndexValuation, getScreenerTrackRecord, getFactorReturns, getFxWorkspace, getHardMoneyValuation, getIntradayRotation, getLiquiditySnapshot, getMarketHeatmap, getMarketHistory, getMarketPositioning, getMarketSnapshot, getMetalsWorkspace, getNewsWire, getPriceCrossCheck, getProviderHealth, getRegimeCorrelations, getSentimentSnapshot, getSignalTrackRecords, getStablecoinLeadLag, getBitcoinCrossAsset, getBitcoinCycleRecord, getDiversificationRegime, getFxCarry, getGoldRealYield, getGoldSilverRecord, getRecessionProbability, getTechnicalSnapshot, getTreasuryFunding, getVixTermRecord, getWatchlistRisk, parseWatchlistSymbols } from './providers.js';
+import { calculateDollarTransmission, getBitcoinCycleWorkspace, getBlockedSources, getCryptoGlobal, getDxyBitcoinRelationship, getEquityRiskAppetite, getEquityScreener, getEthereumRotation, getAccumulationSchedules, getAlertOutcomes, getCryptoOptionsWorkspace, getIndexValuation, getScreenerTrackRecord, getFactorReturns, getFxWorkspace, getHardMoneyValuation, getIntradayRotation, getLiquiditySnapshot, getMarketHeatmap, getMarketHistory, getMarketPositioning, getMarketSnapshot, getMetalsWorkspace, getNewsWire, getPriceCrossCheck, getProviderHealth, getRegimeCorrelations, getSentimentSnapshot, getSignalTrackRecords, getStablecoinLeadLag, getBitcoinCrossAsset, getBitcoinCycleRecord, getDiversificationRegime, getFxCarry, getGoldRealYield, getGoldSilverRecord, getRecessionProbability, getTechnicalSnapshot, getTreasuryFunding, getVerdictTrackRecords, getVixTermRecord, getWatchlistRisk, parseWatchlistSymbols } from './providers.js';
 import { buildAtomFeed } from './analytics.js';
 import { authorizeWrite, contentSecurityPolicy, describeWriteProtection, securityHeaders } from './security.js';
 import { buildInfo } from './buildInfo.js';
@@ -347,6 +347,8 @@ const SCORECARD_SOURCES = [
   { key: 'goldSilver', name: 'Gold/silver ratio extremes', page: 'Metals', assumption: 'A high ratio followed by silver catching up the most, a low one by the least (mean reversion)', measure: 'Silver minus gold', load: () => getGoldSilverRecord(), pick: (payload) => payload.record },
   { key: 'vixReturns', name: 'VIX term structure, returns', page: 'Equities', assumption: 'Contango followed by the best SPY returns, backwardation by the worst', measure: 'Forward return', load: () => getVixTermRecord(), pick: (payload) => payload.returns },
   { key: 'vixDrawdowns', name: 'VIX term structure, worst falls', page: 'Equities', assumption: 'Contango followed by the shallowest SPY falls, backwardation by the deepest', measure: 'Worst fall', load: () => getVixTermRecord(), pick: (payload) => payload.drawdowns },
+  { key: 'goldVerdict', name: 'Gold verdict, replayed', page: 'Metals', assumption: 'Constructive calls followed by the best gold returns, Guarded by the worst', measure: 'Forward return', load: () => getVerdictTrackRecords(), pick: (payload) => payload.records?.metals?.record ?? payload.records?.metals },
+  { key: 'bitcoinVerdict', name: 'Bitcoin verdict, replayed without funding and stablecoins', page: 'Crypto', assumption: 'Constructive calls followed by the best bitcoin returns, Guarded by the worst', measure: 'Forward return', load: () => getVerdictTrackRecords(), pick: (payload) => payload.records?.crypto?.record ?? payload.records?.crypto },
 ];
 const SCORECARD_LOADER_TIMEOUT_MS = 45_000;
 
@@ -354,6 +356,14 @@ app.get('/api/analytics/scorecard', async (_request, response, next) => {
   try {
     const settled = await Promise.allSettled(SCORECARD_SOURCES.map((source) => withTimeout(Promise.resolve().then(source.load), SCORECARD_LOADER_TIMEOUT_MS, source.name)));
     response.json(buildScorecard(SCORECARD_SOURCES.map((source, index) => ({ ...source, result: settled[index] }))));
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.get('/api/analytics/verdict-records', async (_request, response, next) => {
+  try {
+    response.json(await getVerdictTrackRecords());
   } catch (error) {
     next(error);
   }

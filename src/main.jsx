@@ -1841,6 +1841,37 @@ function GoldSilverRecordPanel() {
   </article>;
 }
 
+/**
+ * Whether a section's verdict has meant anything: the call replayed every two
+ * weeks with each model recomputed on what had been published by then, and
+ * followed forward by the asset it is about.
+ */
+function VerdictRecordPanel({ section, liveCall = null }) {
+  const { status: loadStatus, data: payload, error } = useLazyResource('/api/analytics/verdict-records');
+  const model = payload?.records?.[section] ?? null;
+  const published = model?.status === 'calculated';
+  const asset = section === 'crypto' ? 'bitcoin' : 'gold';
+  return <article className={`panel verdict-record-panel ${published ? '' : 'preview-section'}`}>
+    <div className="panel-title">
+      <div>
+        <StatusKicker label={`${asset.toUpperCase()} VERDICT · TRACK RECORD`} published={published} />
+        <h3>{published ? `Has the ${asset} verdict meant anything?` : loadStatus === 'loading' ? 'Replaying the verdict on every second week of its inputs\u2026' : 'Awaiting the macro series and price history'}</h3>
+      </div>
+      {published ? <span className="data-pill">{model.readings} replays from {model.from}</span> : null}
+    </div>
+    {published ? <>
+      <div className="portfolio-stats">
+        {model.timeInCall.map((entry) => <div key={entry.key}><span>{entry.label}</span><b>{entry.sharePercent}%</b><small>of replayed dates{entry.key === (liveCall ?? model.current.call) ? ' \u00b7 live call' : ''}</small></div>)}
+      </div>
+      <p className="dca-read">{model.read}</p>
+      {model.omitted?.length ? <p className="treasury-note">Replayed without {model.omitted.join(' and ').toLowerCase()}, which have no long history; the live verdict reads them.</p> : null}
+      <TrackRecordTable record={model.record} current={liveCall ?? model.current.call} title={`${asset.toUpperCase()} RETURN THAT FOLLOWED, BY REPLAYED CALL`} stateLabel="Call" assumption="the verdict assumes" unit="dates" />
+      <ComponentRecordsTable components={model.legs} spreadLabel="Top minus bottom third, held out" />
+      <p className="model-footnote">{model.legNote} {model.methodology} {model.limits}</p>
+    </> : <div className="equity-empty">{model?.reason ?? payload?.reason ?? (loadStatus === 'loading' ? 'The first replay after a restart takes several seconds; it is cached for a day.' : `The verdict record could not be loaded: ${error ?? 'no record for this section'}`)}</div>}
+  </article>;
+}
+
 function VixTermRecordPanel() {
   const { status: loadStatus, data: model, error } = useLazyResource('/api/analytics/vix-term-record');
   const published = model?.status === 'calculated';
@@ -2432,6 +2463,7 @@ function MetalsDashboard({ data }) {
       <div className="metals-research-wide"><HardMoneyPanel hardMoney={data.hardMoney} /></div>
       <div className="metals-research-wide"><GoldRealYieldPanel /></div>
       <div className="metals-research-wide"><GoldSilverRecordPanel /></div>
+      <div className="metals-research-wide"><VerdictRecordPanel section="metals" liveCall={workspace?.verdict?.call ?? null} /></div>
     </section>
 
     <section className="metals-section-heading"><div><p className="section-kicker">POSITIONING AND FLOWS</p><h2>Who owns the trade, and where is demand coming from?</h2></div><span className="data-pill">{cot ? 'COT calculated' : 'Flows preview'}</span></section>
@@ -3629,6 +3661,7 @@ function CryptoDashboard({ data }) {
       <p className="model-footnote">{cyclePhase?.methodology ?? 'Trend, valuation, drawdown and derivatives legs are required before a cycle phase can be placed.'}</p>
     </section>
     <BitcoinCycleRecordPanel livePhase={cyclePhase?.leading?.key ?? null} />
+    <VerdictRecordPanel section="crypto" liveCall={btc?.verdict?.call ?? null} />
     <BitcoinTechnicalsSection technicals={btc?.technicals} rangeAvailable={btc?.rangeModels?.modules?.tdCountdown?.status === 'calculated'} />
     <BitcoinRangeSection rangeModels={btc?.rangeModels} />
     <section className="macro-section-heading"><div><p className="section-kicker">DOLLAR TRANSMISSION · {transmission?.status?.toUpperCase() ?? 'UNAVAILABLE'}</p><h2>{transmission?.linkSign === 0 ? 'The dollar link is too weak to move bitcoin' : `${tailwindLabel} for bitcoin`}</h2></div><span className="data-pill">Favorability read</span></section>

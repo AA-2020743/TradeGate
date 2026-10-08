@@ -198,6 +198,9 @@ export function buildVerdict({
     margin,
     supporting: supporting.map(({ pull, ...rest }) => rest),
     opposing: opposing.map(({ pull, ...rest }) => rest),
+    // Every reading that scored, including any sitting exactly at neutral,
+    // which leans neither way and so appears in neither list above.
+    readings: withLean.map(({ key, name, score, weight }) => ({ key, name, score, weight })),
     missing,
     read: `${call} at ${score}/100${decisive ? `, ${meaning[callLean] ?? 'balanced'} on this scale` : `, only ${Math.abs(score - neutral)} ${Math.abs(score - neutral) === 1 ? 'point' : 'points'} off neutral`}. ${supporting.length ? `${supporting[0].name} is the strongest contributor at ${supporting[0].score}${supporting[0].detail ? ` (${supporting[0].detail})` : ''}.` : ''}${opposing.length ? ` ${opposing[0].name} argues the other way at ${opposing[0].score}${opposing[0].detail ? ` (${opposing[0].detail})` : ''}.` : ' No reading argues the other way.'}${margin ? ` ${withArticle(margin.points).replace(/^a/, 'A').replace(/^an/, 'An')}-point move ${margin.direction} would make this ${margin.becomes}.` : ''}${missing.length ? ` ${missing.length} input${missing.length === 1 ? '' : 's'} did not report: ${missing.map((entry) => entry.name).join(', ')}.` : ''}`,
     methodology: 'The score is a weighted average renormalised by the weight that actually reported, so a missing input cannot pull the verdict toward its own absence. Contributions are ranked by distance from neutral times weight - how much a reading is moving the verdict, not how extreme it is on its own. Confidence is the weakest link rather than an average: thin coverage, split readings, a wide spread, a call near its boundary, or a stale input each hold it back, and the reasons are listed. Readings pointing against the call are always published.',

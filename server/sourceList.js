@@ -21,6 +21,7 @@ import {
   getRecessionProbability,
   getScreenerTrackRecord,
   getTreasuryFunding,
+  getVerdictTrackRecords,
   getVixTermRecord,
 } from './providers.js';
 import { ordinal } from './statistics.js';
@@ -165,6 +166,23 @@ export const SOURCES = [
       { label: 'sessions since 2007', value: payload.sessions, min: 4000, max: 5200 },
       { label: 'VIX', value: payload.vix, min: 8, max: 90 },
       { label: 'days in backwardation', value: payload.timeInState?.backwardation, min: 1, max: 20, unit: '%' },
+    ],
+  },
+  {
+    name: 'Section verdicts replayed (macro series + Yahoo gold and bitcoin)',
+    endpoint: '/api/analytics/verdict-records',
+    load: getVerdictTrackRecords,
+    figure: (payload) => {
+      const parts = ['metals', 'crypto'].map((key) => payload.records?.[key]).filter((record) => record?.status === 'calculated')
+        .map((record) => `${record.name}: ${record.readings} replays from ${record.from}, now ${record.current.call}`);
+      return parts.length ? parts.join('; ') : null;
+    },
+    // Daily FRED series capped at 2,500 observations start the gold replay in
+    // 2016; full CSV histories start it in 2007. Bitcoin's technicals need four
+    // years of closes, so its replay starts in 2018.
+    plausible: (payload) => [
+      { label: 'gold verdict replays', value: payload.records?.metals?.readings, min: 150, max: 560 },
+      { label: 'bitcoin verdict replays', value: payload.records?.crypto?.readings, min: 100, max: 260 },
     ],
   },
   {

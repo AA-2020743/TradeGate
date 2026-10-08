@@ -715,6 +715,7 @@ html[data-theme='dark'] .heldout-band { fill: #222c25; }
 
 /* Bitcoin cycle phase track record (Crypto) */
 .cycle-record-panel { margin-top: 14px; }
+.verdict-record-panel { margin-top: 14px; }
 
 .component-records { margin-top: 0.9rem; }
 .component-records .scorecard-row { grid-template-columns: minmax(0, 1.6fr) minmax(0, 0.5fr) minmax(0, 0.5fr) minmax(0, 0.6fr) minmax(0, 1fr); }

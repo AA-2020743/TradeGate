@@ -84,7 +84,10 @@ export function normalizeCloses(points = []) {
       if (!Number.isFinite(close) || close <= 0 || !date) return null;
       const time = new Date(date).getTime();
       if (!Number.isFinite(time)) return null;
-      return { date: new Date(time).toISOString().slice(0, 10), close, time };
+      // A plain YYYY-MM-DD string already is the day it parses to; formatting
+      // it back through toISOString cost more than every indicator here.
+      const day = typeof date === 'string' && date.length === 10 && date[4] === '-' && date[7] === '-' ? date : new Date(time).toISOString().slice(0, 10);
+      return { date: day, close, time };
     })
     .filter(Boolean)
     .sort((left, right) => left.time - right.time);

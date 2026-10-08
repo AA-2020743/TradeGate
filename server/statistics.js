@@ -52,7 +52,8 @@ export function percentileRank(values, value, { round = true } = {}) {
 /** The typical gap between observations, which is a series' real resolution. */
 export function medianSpacingDays(points) {
   if (points.length < 3) return null;
-  const gaps = points.slice(1).map((point, index) => (new Date(point.date) - new Date(points[index].date)) / DAY_MS);
+  const times = points.map((point) => new Date(point.date).getTime());
+  const gaps = times.slice(1).map((time, index) => (time - times[index]) / DAY_MS);
   const sorted = gaps.filter((gap) => gap > 0).sort((left, right) => left - right);
   if (!sorted.length) return null;
   const middle = Math.floor(sorted.length / 2);

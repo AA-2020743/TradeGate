@@ -417,10 +417,12 @@ export function calculateTechnicalSnapshot(inputPoints, options = {}) {
 }
 
 function pointsForSeries(series) {
+  // Each date is parsed once, not twice per comparison inside the sort.
   return (series?.history ?? [])
     .filter((point) => Number.isFinite(point.value) && point.date)
-    .map((point) => ({ date: point.date, value: point.value * (series.multiplier ?? 1) }))
-    .sort((left, right) => new Date(left.date) - new Date(right.date));
+    .map((point) => ({ point: { date: point.date, value: point.value * (series.multiplier ?? 1) }, time: new Date(point.date).getTime() }))
+    .sort((left, right) => left.time - right.time)
+    .map((entry) => entry.point);
 }
 
 function latestAtOrBefore(points, date) {
