@@ -19,6 +19,7 @@ import {
   getRecessionProbability,
   getScreenerTrackRecord,
   getTreasuryFunding,
+  getVixTermRecord,
 } from './providers.js';
 
 const seriesValue = (payload, key) => {
@@ -131,6 +132,18 @@ export const SOURCES = [
     endpoint: '/api/analytics/price-crosscheck',
     load: getPriceCrossCheck,
     figure: (payload) => `${payload.passed?.length ?? 0} verified, ${payload.review?.length ?? 0} under review, ${payload.notIndependent?.length ?? 0} not independent, ${payload.unavailable?.length ?? 0} unavailable`,
+  },
+  {
+    name: 'Yahoo VIX, VIX3M, SPY since 2007 (VIX term record)',
+    endpoint: '/api/analytics/vix-term-record',
+    load: getVixTermRecord,
+    figure: (payload) => (Number.isFinite(payload.ratio) ? `VIX/VIX3M ${payload.ratio} (${payload.state}) on ${payload.date}; ${payload.sessions} sessions from ${payload.from}` : null),
+    // Fewer sessions than this means Yahoo coarsened or truncated the history.
+    plausible: (payload) => [
+      { label: 'sessions since 2007', value: payload.sessions, min: 4000, max: 5200 },
+      { label: 'VIX', value: payload.vix, min: 8, max: 90 },
+      { label: 'days in backwardation', value: payload.timeInState?.backwardation, min: 1, max: 20, unit: '%' },
+    ],
   },
   {
     name: 'FRED OECD 3-month rates + Yahoo FX (carry)',

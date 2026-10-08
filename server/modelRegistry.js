@@ -218,6 +218,19 @@ export const MODEL_REGISTRY = [
     trackRecord: 'screener-track-record-v1',
   },
   {
+    id: 'vix-term-record-v1',
+    name: 'VIX term structure track record',
+    page: 'Equities',
+    measures: 'Every session since 2007 labeled by VIX/VIX3M (contango, flat, backwardation) with the risk dashboard\u2019s thresholds, followed forward 30 and 90 days by SPY\u2019s return and its worst fall, through the shared track-record evaluator.',
+    inputs: ['Daily CBOE VIX and VIX3M index closes and SPY (Yahoo), since December 2007'],
+    failureModes: [
+      'Backwardation comes in a handful of sell-offs; its sessions are many and its independent readings few.',
+      'Each episode\u2019s path dominates its state: one crash that kept falling, or one that rebounded fast, moves the median.',
+      'Price returns only, before dividends.',
+    ],
+    trackRecord: 'vix-term-record-v1',
+  },
+  {
     id: 'fx-carry-v1',
     name: 'Currency carry',
     page: 'Forex',

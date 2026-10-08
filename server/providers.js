@@ -31,6 +31,7 @@ import { GOLD_REAL_YIELD_VERSION, calculateGoldRealYield } from './goldRealYield
 import { BITCOIN_CROSS_ASSET_VERSION, calculateBitcoinCrossAsset } from './bitcoinCrossAsset.js';
 import { DIVERSIFICATION_ASSETS, DIVERSIFICATION_VERSION, calculateDiversificationRegime } from './diversificationRegime.js';
 import { CARRY_CURRENCIES, FX_CARRY_VERSION, US_RATE_SERIES, calculateFxCarry, dollarsPerUnit } from './fxCarry.js';
+import { VIX_BACKWARDATION_RATIO, VIX_FLAT_RATIO, VIX_TERM_RECORD_VERSION, calculateVixTermRecord } from './vixTermRecord.js';
 import { INDEX_VALUATION_VERSION, SHILLER_FALLBACK_URLS, SHILLER_PAGE, calculateIndexValuation, findShillerDataLink, parseShillerRows } from './indexValuation.js';
 import { readWorkbook, sheetRows } from './xls.js';
 import { ALERT_HORIZONS, ALERT_OUTCOMES_VERSION, BENCHMARK, claimFor, scoreAlertOutcomes } from './alertOutcomes.js';
@@ -546,6 +547,24 @@ async function getYahooHistory(symbol, yahooRange = '1y') {
     const value = asNumber(rawClose);
     if (value === null || !Number.isFinite(seconds)) return [];
     return [{ timestamp: new Date(seconds * 1000).toISOString(), value }];
+  });
+}
+
+/**
+ * Daily closes between two dates. Asking by `period1`/`period2` rather than
+ * `range=max` keeps the bars daily: Yahoo may coarsen a `max` range.
+ */
+async function getYahooDailyHistory(symbol, fromDate) {
+  const period1 = Math.floor(Date.parse(`${fromDate}T00:00:00Z`) / 1000);
+  const period2 = Math.floor(Date.now() / 1000);
+  const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}?period1=${period1}&period2=${period2}&interval=1d`;
+  const payload = await fetchJson(url, 0, 2, BROWSER_HEADERS);
+  const result = payload?.chart?.result?.[0];
+  const timestamps = result?.timestamp ?? [];
+  const closes = result?.indicators?.quote?.[0]?.close ?? [];
+  return timestamps.flatMap((seconds, index) => {
+    const value = asNumber(closes[index]);
+    return Number.isFinite(seconds) && value !== null && value > 0 ? [{ date: new Date(seconds * 1000).toISOString().slice(0, 10), value }] : [];
   });
 }
 
@@ -1238,7 +1257,7 @@ export async function getEquityRiskAppetite() {
         vix3m: Math.round(vix3m.at(-1) * 100) / 100,
         vixVix3m: Math.round(ratio * 100) / 100,
         percentile: percentileOf(ratios, ratio),
-        state: ratio >= 1 ? 'Backwardation — stress pricing' : ratio >= 0.92 ? 'Flat curve' : 'Contango — calm regime',
+        state: ratio >= VIX_BACKWARDATION_RATIO ? 'Backwardation — stress pricing' : ratio >= VIX_FLAT_RATIO ? 'Flat curve' : 'Contango — calm regime',
         observations: ratios.length,
       } : { status: 'unavailable', reason: 'VIX index histories were incomplete.' };
     }
@@ -2113,6 +2132,18 @@ export async function getFxCarry() {
     });
     const spots = new Map(CARRY_CURRENCIES.map((currency) => [currency.code, dollarsPerUnit(spotResult.value.get(currency.ticker), currency.usdPerUnit)]));
     return { asOf: new Date().toISOString(), rateErrors, ...calculateFxCarry({ spots, rates, usRate }) };
+  });
+}
+
+/** VIX term-structure states since VIX3M began (December 2007), against SPY. */
+export async function getVixTermRecord() {
+  return withCache('analytics:vix-term-record', 12 * 60 * 60_000, async () => {
+    const symbols = ['^VIX', '^VIX3M', 'SPY'];
+    const settled = await Promise.allSettled(symbols.map((symbol) => getYahooDailyHistory(symbol, '2007-12-01')));
+    const failed = symbols.flatMap((symbol, index) => (settled[index].status === 'rejected' || !settled[index].value.length ? [`${symbol}: ${settled[index].reason?.message ?? 'no closes'}`] : []));
+    if (failed.length) return { version: VIX_TERM_RECORD_VERSION, status: 'unavailable', reason: `Yahoo did not return every history (${failed.join('; ')}).` };
+    const [vix, vix3m, spy] = settled.map((result) => result.value);
+    return { asOf: new Date().toISOString(), source: 'Yahoo Finance daily closes', ...calculateVixTermRecord({ vix, vix3m, spy }) };
   });
 }
 

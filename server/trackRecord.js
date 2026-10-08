@@ -96,7 +96,7 @@ function ordering(cells) {
   return round(agree / total, 2);
 }
 
-export function evaluateTrackRecord({ observations, order, horizons, stepDays = 7, holdoutFraction = 0.3 }) {
+export function evaluateTrackRecord({ observations, order, horizons, stepDays = 7, holdoutFraction = 0.3, stepLabel = null }) {
   const sorted = [...(observations ?? [])].sort((left, right) => String(left.date).localeCompare(String(right.date)));
   if (sorted.length < 40) {
     return { status: 'unavailable', reason: `Needs 40 dated observations of the signal; ${sorted.length} available.` };
@@ -146,7 +146,7 @@ export function evaluateTrackRecord({ observations, order, horizons, stepDays = 
     observations: sorted.length,
     stepDays,
     horizons: results,
-    methodology: `Every ${stepDays}-day step is classified by the signal as it stood then, using only data available at that date, and followed forward ${horizons.map((horizon) => horizon.days).join(', ')} days. The newest ${Math.round(holdoutFraction * 100)}% of observations form a held-out block reported separately. Each state is compared with the median for all observations in the same block. Effective sample size discounts overlapping windows (n × step / horizon); fewer than ${MINIMUM_EFFECTIVE} effective observations publish no statistics, fewer than ${SOLID_EFFECTIVE} are marked thin.`,
+    methodology: `Every ${stepLabel ?? `${stepDays}-day step`} is classified by the signal as it stood then, using only data available at that date, and followed forward ${horizons.map((horizon) => horizon.days).join(', ')} days. The newest ${Math.round(holdoutFraction * 100)}% of observations form a held-out block reported separately. Each state is compared with the median for all observations in the same block. Effective sample size discounts overlapping windows (n × step / horizon); fewer than ${MINIMUM_EFFECTIVE} effective observations publish no statistics, fewer than ${SOLID_EFFECTIVE} are marked thin.`,
     limits: 'Descriptive, not predictive: what followed a state in this history is not a forecast of what follows it next. One asset over one decade is one path, and the held-out block is short by construction.',
   };
 }

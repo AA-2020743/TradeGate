@@ -153,7 +153,7 @@ export function calculateDiversificationRegime({ histories }) {
     balancedDrawdownPercent: round((balanced.at(-1) / peak - 1) * 100, 1),
     assets: DIVERSIFICATION_ASSETS,
     windows: { short: SHORT_WINDOW, long: LONG_WINDOW },
-    record: record.status === 'calculated' ? { ...record, readHorizonDays: 90 } : record,
+    record: record.status === 'calculated' ? { ...record, readHorizonDays: 90, limits: 'Descriptive, not predictive. One portfolio over one decade, which holds a single shift from bonds hedging to falling with stocks.' } : record,
     history: usable.filter((_row, index) => (usable.length - 1 - index) % 5 === 0).map((row) => ({ date: row.date, stockBond: round(row.stockBond), effectiveBets: round(row.effectiveBets, 2) })),
   };
   return {
