@@ -12,6 +12,7 @@ import {
   getLiquiditySnapshot,
   getMarketSnapshot,
   getPriceCrossCheck,
+  getRecessionProbability,
   getScreenerTrackRecord,
   getTreasuryFunding,
 } from './providers.js';
@@ -126,6 +127,20 @@ export const SOURCES = [
     endpoint: '/api/analytics/price-crosscheck',
     load: getPriceCrossCheck,
     figure: (payload) => `${payload.passed?.length ?? 0} verified, ${payload.review?.length ?? 0} under review, ${payload.notIndependent?.length ?? 0} not independent, ${payload.unavailable?.length ?? 0} unavailable`,
+  },
+  {
+    name: 'FRED monthly curve + NBER dates (recession model)',
+    endpoint: '/api/analytics/recession-probability',
+    load: getRecessionProbability,
+    figure: (payload) => (Number.isFinite(payload.probability) ? `${payload.probability}% for ${payload.targetMonth} on ${payload.month}'s spread of ${payload.spread}; NBER dated through ${payload.nberDatedThrough}` : null),
+    // A 1959-2009 refit far from the published -0.53 / -0.63 means the inputs
+    // are not being built the way the New York Fed builds them.
+    plausible: (payload) => [
+      { label: 'spread', value: payload.spread, min: -5, max: 5, unit: ' pts' },
+      { label: 'refit alpha (1959-2009)', value: payload.refit?.fitWindow?.alpha, min: -0.9, max: -0.2 },
+      { label: 'refit beta (1959-2009)', value: payload.refit?.fitWindow?.beta, min: -1, max: -0.3 },
+      { label: 'recessions since 1959', value: payload.recessionsInSample, min: 8, max: 14 },
+    ],
   },
   {
     name: 'Yahoo 5-year constituent closes (screener record)',

@@ -63,6 +63,11 @@ const FRED_RELEASE = {
   // Monthly series, all dated at the start of the month they describe. These
   // are the ones the old table got wrong.
   JPNASSETS: { cadenceDays: 30.44, lagDays: 5, datedAt: 'start' },
+  // Monthly averages of daily Treasury rates, posted on the first business days of the next month.
+  GS10: { cadenceDays: 30.44, lagDays: 4, datedAt: 'start' },
+  TB3MS: { cadenceDays: 30.44, lagDays: 4, datedAt: 'start' },
+  // NBER's recession indicator is extended monthly, with zeros until NBER dates a peak.
+  USREC: { cadenceDays: 30.44, lagDays: 10, datedAt: 'start' },
   PAYEMS: { cadenceDays: 30.44, lagDays: 5, datedAt: 'start' },
   CPIAUCSL: { cadenceDays: 30.44, lagDays: 12, datedAt: 'start' },
   INDPRO: { cadenceDays: 30.44, lagDays: 16, datedAt: 'start' },

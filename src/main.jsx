@@ -1334,6 +1334,128 @@ function CapeHistoryChart({ history, median }) {
   </div>;
 }
 
+/** The rendered width of an element, so a chart can draw at 1:1 instead of scaling its text with the panel. */
+function useElementWidth(fallback) {
+  const ref = React.useRef(null);
+  const [width, setWidth] = React.useState(fallback);
+  React.useLayoutEffect(() => {
+    const element = ref.current;
+    if (!element) return undefined;
+    const update = () => { const next = element.clientWidth; if (next > 0) setWidth(next); };
+    update();
+    if (typeof ResizeObserver === 'undefined') return undefined;
+    const observer = new ResizeObserver(update);
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, []);
+  return [ref, width];
+}
+
+function RecessionHistoryChart({ history, periods, signal }) {
+  const [hoveredIndex, setHoveredIndex] = React.useState(null);
+  const [plotRef, measured] = useElementWidth(640);
+  const points = (history ?? []).filter((point) => Number.isFinite(point.probability));
+  if (points.length < 2) return null;
+  const width = Math.max(280, measured);
+  const height = width < 520 ? 170 : 230;
+  const padding = { top: 10, right: 10, bottom: 24, left: 38 };
+  // Each probability is drawn at the month it is about, twelve months after
+  // the curve it was read from, so a good signal rises into the shaded
+  // recession rather than ahead of it.
+  const monthIndex = (month) => { const [year, number] = month.split('-').map(Number); return year * 12 + number - 1; };
+  const first = monthIndex(points[0].target);
+  const last = monthIndex(points.at(-1).target);
+  const xOf = (month) => padding.left + ((monthIndex(month) - first) / (last - first)) * (width - padding.left - padding.right);
+  const yOf = (value) => padding.top + ((100 - value) / 100) * (height - padding.top - padding.bottom);
+  const polyline = points.map((point) => `${xOf(point.target).toFixed(1)},${yOf(point.probability).toFixed(1)}`).join(' ');
+  const activeIndex = hoveredIndex ?? points.length - 1;
+  const active = points[activeIndex];
+  const years = [];
+  const yearStep = width < 520 ? 20 : 10;
+  for (let year = Math.ceil(points[0].target.slice(0, 4) / yearStep) * yearStep; year <= Number(points.at(-1).target.slice(0, 4)); year += yearStep) years.push(year);
+  const select = (event) => {
+    const bounds = event.currentTarget.getBoundingClientRect();
+    const ratio = Math.min(1, Math.max(0, ((event.clientX - bounds.left) / bounds.width - padding.left / width) / ((width - padding.left - padding.right) / width)));
+    setHoveredIndex(Math.round(ratio * (points.length - 1)));
+  };
+  return <div className="cape-chart-wrap">
+    <div className="cape-readout" aria-live="polite">
+      <b>{active.target}</b><span>{active.probability}% recession odds</span><span>from {active.month}’s spread of {active.spread > 0 ? '+' : ''}{active.spread}</span>
+      <span className="cape-median-key"><i className="recession-key" aria-hidden="true"></i>NBER recession</span>
+    </div>
+    <div ref={plotRef} className="liquidity-history-plot cape-chart recession-chart" style={{ height: `${height}px` }} onPointerMove={select} onPointerLeave={() => setHoveredIndex(null)}>
+    <svg viewBox={`0 0 ${width} ${height}`} width={width} height={height} role="img" aria-label={`Recession probability twelve months ahead, ${points[0].target} to ${points.at(-1).target}, latest ${points.at(-1).probability}%`}>
+      {(periods ?? []).filter((period) => period.to >= points[0].target && period.from <= points.at(-1).target).map((period) => <rect key={period.from} className="recession-band" x={xOf(period.from)} width={Math.max(1.5, xOf(period.to) - xOf(period.from))} y={padding.top} height={height - padding.top - padding.bottom} />)}
+      {[0, 50, 100].map((value) => <g key={value}><line x1={padding.left} x2={width - padding.right} y1={yOf(value)} y2={yOf(value)} className="liquidity-grid-line" /><text x={padding.left - 6} y={yOf(value) + 4} textAnchor="end" className="liquidity-axis-label">{value}%</text></g>)}
+      <line x1={padding.left} x2={width - padding.right} y1={yOf(signal)} y2={yOf(signal)} className="cape-median-line" vectorEffect="non-scaling-stroke" />
+      <polyline points={polyline} fill="none" stroke="#71c45f" strokeWidth="1.6" vectorEffect="non-scaling-stroke" />
+      <line x1={xOf(active.target)} x2={xOf(active.target)} y1={padding.top} y2={height - padding.bottom} className="liquidity-crosshair" />
+      <circle cx={xOf(active.target)} cy={yOf(active.probability)} r="4" className="liquidity-active-point" vectorEffect="non-scaling-stroke" />
+      {years.map((year) => <text key={year} x={xOf(`${year}-01`)} y={height - 8} textAnchor="middle" className="liquidity-axis-label">{year}</text>)}
+    </svg>
+    </div>
+  </div>;
+}
+
+const RECESSION_OUTCOME_LABELS = { followed: 'Recession followed', 'not followed': 'No recession within 2 years', pending: 'Too soon to judge', late: 'Recession already underway' };
+
+function RecessionProbabilityPanel() {
+  const { status: loadStatus, data: model, error } = useLazyResource('/api/analytics/recession-probability');
+  const published = model?.status === 'calculated' || model?.status === 'provisional';
+  const fits = published ? [
+    { label: 'Published (New York Fed)', alpha: model.coefficients.alpha, beta: model.coefficients.beta, now: model.probability, span: '1959\u20132009' },
+    model.refit.fitWindow ? { label: 'Refit, same window', alpha: model.refit.fitWindow.alpha, beta: model.refit.fitWindow.beta, now: model.refit.fitWindow.probabilityNow, span: `${model.refit.fitWindow.from.slice(0, 4)}\u2013${model.refit.fitWindow.through.slice(0, 4)}` } : null,
+    model.refit.allConfirmed ? { label: 'Refit, all dated months', alpha: model.refit.allConfirmed.alpha, beta: model.refit.allConfirmed.beta, now: model.refit.allConfirmed.probabilityNow, span: `${model.refit.allConfirmed.from.slice(0, 4)}\u2013${model.refit.allConfirmed.through.slice(0, 7)}` } : null,
+  ].filter(Boolean) : [];
+  return <article className={`panel recession-panel ${published ? '' : 'preview-section'}`}>
+    <div className="panel-title">
+      <div>
+        <StatusKicker label="RECESSION PROBABILITY · YIELD CURVE" published={published} />
+        <h3>{published ? `${model.probability}% chance of a U.S. recession in ${model.targetMonth}` : loadStatus === 'loading' ? 'Reading the curve since 1959\u2026' : 'Awaiting FRED’s monthly curve and NBER dates'}</h3>
+      </div>
+      {published ? <span className="data-pill">{model.month} curve · NBER dated to {model.nberDatedThrough}</span> : null}
+    </div>
+    {published ? <>
+      {model.status === 'provisional' ? <p className="portfolio-missing" role="status">Provisional: {model.reason}</p> : null}
+      <div className="portfolio-stats">
+        <div><span>Probability</span><b>{model.probability}%</b><small>of recession in {model.targetMonth}</small></div>
+        <div><span>10y less 3m bill</span><b className={model.spread < 0 ? 'negative' : undefined}>{model.spread > 0 ? '+' : ''}{model.spread}</b><small>{model.tenYear}% less {model.billBondEquivalent}% (bond-equivalent)</small></div>
+        <div><span>Inverted run</span><b>{model.invertedMonths} {model.invertedMonths === 1 ? 'month' : 'months'}</b><small>{model.invertedMonths ? 'consecutive months below zero' : 'curve not inverted'}</small></div>
+        <div><span>2-year peak</span><b>{model.peakLast24Months.probability}%</b><small>in {model.peakLast24Months.month}</small></div>
+      </div>
+      <RecessionHistoryChart history={model.history} periods={model.recessionPeriods} signal={model.signalPercent} />
+      <p className="dca-read">{model.read}</p>
+      <div className="recession-columns">
+        <div className="valuation-buckets recession-episodes" role="table" aria-label="Each time the probability rose above 30%">
+          <div className="valuation-bucket valuation-head" role="row"><span role="columnheader">Above {model.signalPercent}% from</span><span role="columnheader">Peak</span><span role="columnheader">What followed</span></div>
+          {model.episodes.map((episode) => <div className={`valuation-bucket ${episode.ongoing ? 'current' : ''}`} role="row" key={episode.start}>
+            <span role="cell">{episode.start}{episode.end !== episode.start ? ` to ${episode.ongoing ? 'now' : episode.end}` : ''}</span>
+            <span role="cell">{episode.peakProbability}%</span>
+            <span role="cell" className={episode.outcome === 'followed' ? 'positive' : episode.outcome === 'not followed' ? 'negative' : undefined}>{RECESSION_OUTCOME_LABELS[episode.outcome]}{episode.recessionStart ? `, ${episode.recessionStart} (${episode.leadMonths} mo.)` : ''}</span>
+          </div>)}
+          {model.missedRecessions.length ? <p className="portfolio-note">Recessions with no signal in the two years before: {model.missedRecessions.join(', ')}.</p> : null}
+        </div>
+        <div>
+          <div className="valuation-buckets" role="table" aria-label="Months by probability band and what followed">
+            <div className="valuation-bucket recession-band-row valuation-head" role="row"><span role="columnheader">Probability</span><span role="columnheader">Months</span><span role="columnheader">Recession a year on</span><span role="columnheader">Recessions</span></div>
+            {model.bands.map((band) => <div className="valuation-bucket recession-band-row" role="row" key={band.key}>
+              <span role="cell">{band.label}</span><span role="cell">{band.months}</span><span role="cell">{Number.isFinite(band.inRecessionAfter12Months) ? `${band.inRecessionAfter12Months}%` : '\u2014'}</span><span role="cell">{band.distinctRecessions}</span>
+            </div>)}
+          </div>
+          <p className="portfolio-note">Base rate: {model.baseRatePercent}% of scored months were in recession twelve months later. Months scored through {model.outcomesConfirmedThrough}.</p>
+          <div className="valuation-buckets" role="table" aria-label="Published and refit coefficients">
+            <div className="valuation-bucket recession-band-row valuation-head" role="row"><span role="columnheader">Fit</span><span role="columnheader">Alpha</span><span role="columnheader">Beta</span><span role="columnheader">Reads now</span></div>
+            {fits.map((fit) => <div className="valuation-bucket recession-band-row" role="row" key={fit.label}>
+              <span role="cell">{fit.label}<small className="recession-span">{fit.span}</small></span><span role="cell">{fit.alpha}</span><span role="cell">{fit.beta}</span><span role="cell">{fit.now}%</span>
+            </div>)}
+          </div>
+        </div>
+      </div>
+      <p className="model-footnote">{model.methodology} {model.limits}</p>
+    </> : <div className="equity-empty">{model?.reason ?? (loadStatus === 'loading' ? 'Three monthly FRED series; cached for twelve hours.' : `The recession model could not be loaded: ${error}`)}</div>}
+  </article>;
+}
+
 function IndexValuationPanel({ valuation }) {
   const status = valuation?.status ?? 'unavailable';
   const published = status === 'calculated' || status === 'provisional';
@@ -2400,6 +2522,7 @@ function MacroDashboard({ data }) {
       <article className="regime-panel panel"><div className="panel-title"><div><p className="section-kicker">DYNAMIC REGIME SETTINGS</p><h3>{macroRegime?.regime ?? 'Regime unavailable'}</h3></div><span className={`data-pill ${macroRegime?.proximity?.borderline ? 'pill-warning' : ''}`}>{macroRegime?.proximity?.borderline ? 'Borderline' : macroRegime?.status ?? 'unavailable'}</span></div>{macroRegime?.vintage?.oldestInput ? <p className="regime-proximity">{`As of ${macroRegime.asOf} — the date of the oldest input still binding on the score (${macroRegime.vintage.oldestInput.name})${macroRegime.vintage.spreadDays ? `, ${macroRegime.vintage.spreadDays} days behind the freshest (${macroRegime.vintage.freshestInput.name})` : ''}.${macroRegime.partialDrivers?.length ? ` ${macroRegime.partialDrivers.join(' and ')} ${macroRegime.partialDrivers.length === 1 ? 'is scoring' : 'are scoring'} on level alone — the 91-day change is unavailable.` : ''}`}</p> : null}{macroRegime?.proximity ? <p className="regime-proximity">{macroRegime.score}/100 · {macroRegime.proximity.higher ? `${macroRegime.proximity.higher.distance} up to ${macroRegime.proximity.higher.regime}` : 'top of the scale'} · {macroRegime.proximity.lower ? `${macroRegime.proximity.lower.distance} down to ${macroRegime.proximity.lower.regime}` : 'bottom of the scale'}.{macroRegime.proximity.borderline ? ' The call is one step from flipping.' : ''}</p> : macroRegime?.panicConfirmed ? <p className="regime-proximity">Panic confirmation overrides the score bands, so distance to a neighbouring regime is not published while it holds.</p> : null}{macroRegime?.settings ? <div className="regime-settings"><div><span>Risk budget</span><b>{macroRegime.settings.riskBudget}</b></div><div><span>Alert threshold</span><b>{macroRegime.settings.alertThreshold}/100</b></div><div><span>Holding period</span><b>{macroRegime.settings.holdingPeriod}</b></div><div><span>Factor emphasis</span><b>{macroRegime.settings.emphasis}</b></div></div> : <div className="calculation-empty">No dynamic settings are published without a regime.</div>}<p className="model-footnote">Stress requires simultaneous VIX, high-yield spread, and financial-condition confirmation. No panic probability is fabricated.</p></article>
       <RegimeHistoryPanel history={data.liquidity?.regimeHistory} />
     </section> : activeModel === 'Rates' ? <section className="risk-detail-grid">
+      <RecessionProbabilityPanel />
       <YieldCurvePanel curve={data.liquidity?.yieldCurve} />
       <RatePathPanel ratePath={data.liquidity?.ratePath} />
       <NominalDecompositionPanel decomposition={data.liquidity?.nominalDecomposition} />

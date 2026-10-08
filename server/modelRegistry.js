@@ -218,6 +218,19 @@ export const MODEL_REGISTRY = [
     trackRecord: 'screener-track-record-v1',
   },
   {
+    id: 'recession-probability-v1',
+    name: 'Recession probability from the yield curve',
+    page: 'Macro',
+    measures: 'The New York Fed\u2019s probit on the monthly 10-year less 3-month bill spread: the chance the U.S. is in recession twelve months ahead, refit here on NBER dates for 1959-2009 and on every month dated since, with each past signal judged by whether a recession followed within two years.',
+    inputs: ['FRED GS10 monthly 10-year Treasury yield', 'FRED TB3MS monthly 3-month bill rate (discount basis, converted to bond-equivalent)', 'FRED USREC NBER recession months'],
+    failureModes: [
+      'Nine or so recessions since 1959: the evidence is a handful of episodes, however many months it spans.',
+      'NBER dates recessions months late, so the latest year of outcomes cannot be scored and a recession already underway would not show.',
+      'Term premia and policy regimes change what a given spread means; a deep inversion has been followed by no recession before.',
+    ],
+    trackRecord: null,
+  },
+  {
     id: 'portfolio-risk-v1',
     name: 'Watchlist as a portfolio',
     page: 'Watchlists',

@@ -638,3 +638,24 @@ html[data-theme='dark'] .asset-badge { color: #17201b; }
   .portfolio-row > span { overflow-wrap: normal; white-space: nowrap; }
   .portfolio-pairs { grid-template-columns: minmax(0, 1fr); gap: 0.6rem; }
 }
+
+/* Recession probability (Macro, rates tab) */
+.risk-detail-grid > .recession-panel { grid-column: 1 / -1; margin: 0; }
+.recession-band { fill: #dfe3da; }
+.recession-key { display: inline-block; width: 12px; height: 10px; border: 0 !important; background: #dfe3da; }
+html[data-theme='dark'] .recession-band { fill: #2f3b33; }
+html[data-theme='dark'] .recession-key { background: #2f3b33; }
+.recession-chart { width: 100%; overflow: hidden; }
+.recession-chart svg { display: block; }
+.recession-chart .liquidity-axis-label { font-size: 10px; }
+.recession-columns { display: grid; grid-template-columns: minmax(0, 1.1fr) minmax(0, 1fr); gap: 1.4rem; align-items: start; }
+.recession-episodes .valuation-bucket { grid-template-columns: minmax(0, 1.2fr) minmax(0, 0.5fr) minmax(0, 1.6fr); }
+.valuation-bucket.recession-band-row { grid-template-columns: minmax(0, 1.4fr) minmax(0, 0.6fr) minmax(0, 1fr) minmax(0, 0.7fr); }
+.recession-span { display: block; color: #5f6861; font-size: 0.7rem; }
+@media (max-width: 900px) {
+  .recession-columns { grid-template-columns: minmax(0, 1fr); gap: 0.6rem; }
+}
+@media (max-width: 700px) {
+  .valuation-bucket.recession-band-row > span:last-child { display: block; }
+  .recession-episodes .valuation-bucket > span:last-child { display: block; }
+}

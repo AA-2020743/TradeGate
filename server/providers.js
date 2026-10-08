@@ -26,6 +26,7 @@ import { resolveVintage, screenVintage } from './vintage.js';
 import { parseBisMonthlySeries } from './bisData.js';
 import { SCREENER_TRACK_RECORD_VERSION, calculateScreenerTrackRecord } from './screenerTrackRecord.js';
 import { PORTFOLIO_RISK_VERSION, calculatePortfolioRisk, yahooTickerFor } from './portfolioRisk.js';
+import { RECESSION_PROBABILITY_VERSION, calculateRecessionProbability } from './recessionProbability.js';
 import { INDEX_VALUATION_VERSION, SHILLER_FALLBACK_URLS, SHILLER_PAGE, calculateIndexValuation, findShillerDataLink, parseShillerRows } from './indexValuation.js';
 import { readWorkbook, sheetRows } from './xls.js';
 import { ALERT_HORIZONS, ALERT_OUTCOMES_VERSION, BENCHMARK, claimFor, scoreAlertOutcomes } from './alertOutcomes.js';
@@ -2004,6 +2005,34 @@ export async function getWatchlistRisk(symbols) {
     }
     const result = calculatePortfolioRisk({ histories: found, benchmark });
     return { asOf: new Date().toISOString(), source: 'Yahoo Finance daily closes', requested: symbols.length, ...result, missing };
+  });
+}
+
+/**
+ * The New York Fed's yield-curve recession probability, from monthly FRED
+ * series: GS10, TB3MS and NBER's USREC. All three change once a month, so the
+ * reading is cached for twelve hours.
+ */
+export async function getRecessionProbability() {
+  return withCache('analytics:recession-probability', 12 * 60 * 60_000, async () => {
+    const wanted = [
+      { id: 'GS10', key: 'tenYear', name: '10-year Treasury, monthly average' },
+      { id: 'TB3MS', key: 'billDiscount', name: '3-month Treasury bill, monthly average (discount basis)' },
+      { id: 'USREC', key: 'recessions', name: 'NBER recession indicator' },
+    ];
+    const settled = await Promise.allSettled(wanted.map((series) => (config.fredApiKey ? getFredSeries(series) : getFredCsvSeries(series))));
+    const failed = wanted.flatMap((series, index) => (settled[index].status === 'rejected' ? [`${series.id}: ${settled[index].reason?.message ?? 'failed'}`] : []));
+    if (failed.length) {
+      return { version: RECESSION_PROBABILITY_VERSION, status: 'unavailable', reason: `FRED did not return every input (${failed.join('; ')}).` };
+    }
+    const [tenYear, billDiscount, recessions] = settled.map((result) => result.value);
+    const inputs = [tenYear, billDiscount, recessions].map((series) => ({ id: series.id, name: series.name, date: series.date, stale: series.stale }));
+    const result = calculateRecessionProbability({ tenYear: tenYear.history, billDiscount: billDiscount.history, recessions: recessions.history });
+    const staleInputs = inputs.filter((input) => input.stale && input.id !== 'USREC');
+    if (result.status === 'calculated' && staleInputs.length) {
+      return { asOf: new Date().toISOString(), inputs, ...result, status: 'provisional', reason: `${staleInputs.map((input) => `${input.id} last printed ${input.date}`).join(' and ')}, later than its monthly schedule.` };
+    }
+    return { asOf: new Date().toISOString(), inputs, ...result };
   });
 }
 
