@@ -476,3 +476,19 @@ test('without a benchmark the track record refuses and says why', () => {
   assert.equal(model.trackRecord.status, 'unavailable');
   assert.match(model.trackRecord.reason, /benchmark/);
 });
+
+test('a leg with a short history does not cut the regime replay to its span', () => {
+  // Financial conditions and VIX for ten years; the high-yield spread only for
+  // the last three, as FRED now serves the ICE series.
+  const count = 3650;
+  const recent = 1095;
+  const conditions = series('financialConditions', (index) => (Math.floor(index / 400) % 2 ? 0.6 : -0.6), { count });
+  const vix = series('vix', (index) => (Math.floor(index / 400) % 2 ? 30 : 13), { count });
+  const spread = { key: 'highYieldSpread', multiplier: 1, history: Array.from({ length: recent }, (_, index) => ({ date: day(count - recent + index), value: 4 })) };
+  const benchmark = Array.from({ length: count }, (_, index) => ({ date: day(index), value: 100 + index * 0.02 }));
+  const model = calculateRegimeTransitions([conditions, spread, vix], benchmark);
+  assert.equal(model.status, 'calculated', model.reason);
+  assert.ok(model.trackRecord.from <= day(30), `${model.trackRecord.from}`);
+  assert.ok(model.trackRecord.observations > 450, `${model.trackRecord.observations}`);
+  assert.match(model.methodology, /Any two of the three legs are enough/);
+});

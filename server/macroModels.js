@@ -540,8 +540,12 @@ export function calculateRegimeTransitions(seriesList, benchmarkPoints, { stepDa
     return unavailable(version, 'Needs at least two of financial conditions, high-yield spreads and volatility to recompute a historical score.', { transitions: [] });
   }
 
-  const start = legs.map((points) => points[0].date).sort().at(-1);
-  const end = legs.map((points) => points.at(-1).date).sort().at(0);
+  // The score needs two of its three legs, so the replay runs wherever two
+  // have data rather than only where all three do. FRED now carries just the
+  // last three years of the ICE high-yield spread; requiring every leg cut the
+  // whole history to those three years and left the track record empty.
+  const start = legs.map((points) => points[0].date).sort()[1];
+  const end = legs.map((points) => points.at(-1).date).sort().at(-2);
   if (new Date(end) - new Date(start) < minimumHistoryDays * DAY_MS) {
     return unavailable(version, `Needs ${Math.round(minimumHistoryDays / 365)} years of overlapping history; ${Math.round((new Date(end) - new Date(start)) / DAY_MS)} days available.`, { transitions: [] });
   }
@@ -674,7 +678,7 @@ export function calculateRegimeTransitions(seriesList, benchmarkPoints, { stepDa
       : trackRecord,
     dwellDays: Object.fromEntries(Object.entries(dwell).map(([regime, lengths]) => [regime, { episodes: lengths.length, medianDays: Math.round(mean(lengths)) }])),
     read: `${transitions.length} regime ${transitions.length === 1 ? 'change' : 'changes'} across ${samples.length} recomputed readings since ${samples[0].date}. The tape has been in ${current.regime} for ${currentRun} days${typicalDwell ? `, against a ${typicalDwell}-day average for that regime in this history` : ''}.`,
-    methodology: `The score is recomputed every ${stepDays} days from financial conditions, high-yield spreads and volatility using the same weights and clamps the live regime applies to them, then bucketed into the same bands. ${pointInTime ? `Point-in-time observations are used for ${Object.keys(pointInTimeByKey).join(', ')}: each score sees only values that had actually been published by that date, which makes those legs a genuine backtest rather than hindsight.` : 'This is a hindsight study rather than a backtest: the series carry their current vintage, so a revised observation is used at a date when its revision did not exist. A FRED API key would unlock the point-in-time vintages that fix this.'} Forward returns are the benchmark's move over the following sessions from the transition date, and are omitted where the history does not extend far enough.`,
+    methodology: `The score is recomputed every ${stepDays} days from financial conditions, high-yield spreads and volatility using the same weights and clamps the live regime applies to them, then bucketed into the same bands. Any two of the three legs are enough, so weeks before the high-yield spread’s history begins are scored from the other two, reweighted. ${pointInTime ? `Point-in-time observations are used for ${Object.keys(pointInTimeByKey).join(', ')}: each score sees only values that had actually been published by that date, which makes those legs a genuine backtest rather than hindsight.` : 'This is a hindsight study rather than a backtest: the series carry their current vintage, so a revised observation is used at a date when its revision did not exist. A FRED API key would unlock the point-in-time vintages that fix this.'} Forward returns are the benchmark's move over the following sessions from the transition date, and are omitted where the history does not extend far enough.`,
   };
 }
 

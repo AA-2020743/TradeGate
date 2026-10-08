@@ -43,7 +43,7 @@ test('trending currencies read as carrying forward, in and out of sample', () =>
   assert.equal(result.status, 'calculated', result.reason);
   const horizon = result.record.horizons.find((entry) => entry.days === 30);
   assert.ok(horizon.development.ordering >= 0.6, `${horizon.development.ordering}`);
-  assert.match(result.read, /tended to carry forward, as the outlook label implies/);
+  assert.match(result.read, /tended to carry forward/);
 });
 
 test('random-walk currencies read as carrying little information', () => {

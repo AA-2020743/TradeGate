@@ -83,15 +83,15 @@ function describeFxMomentumRecord(result) {
   const weak = cell('usdWeak');
   const strong = cell('usdStrong');
   const when = block === 'heldOut' ? `Since ${result.record.holdoutFrom}` : `Before ${result.record.holdoutFrom}`;
-  if (!Number.isFinite(weak) || !Number.isFinite(strong)) return `${when}, too few independent sessions to compare the outlook’s labels.`;
+  if (!Number.isFinite(weak) || !Number.isFinite(strong)) return `${when}, too few independent sessions to compare the 20-session labels.`;
   // An order can flip on a few hundredths of a point; under a quarter point
   // apart, the two labels were followed by the same thing.
   // A direction is claimed only when both blocks agree on it, as the
   // scorecard requires for "held up"; one block alone can be noise.
   const apart = Math.abs(weak - strong) >= MEANINGFUL_GAP;
   const orderings = [horizon.development.ordering, horizon.heldOut.ordering].filter(Number.isFinite);
-  const verdict = apart && orderings.length && orderings.every((value) => value >= 0.6) ? 'the 20-session move tended to carry forward, as the outlook label implies'
-    : apart && orderings.length && orderings.every((value) => value <= -0.2) ? 'the 20-session move tended to reverse, against what the outlook label implies'
+  const verdict = apart && orderings.length && orderings.every((value) => value >= 0.6) ? 'the 20-session move tended to carry forward'
+    : apart && orderings.length && orderings.every((value) => value <= -0.2) ? 'the 20-session move tended to reverse rather than carry on'
       : 'the 20-session move carried little consistent information about the next month';
   return `${when}, a currency labeled "USD weak" moved a median ${signed(weak)} against the dollar over the next 30 days and one labeled "USD strong" ${signed(strong)}: ${verdict}. This describes what followed, not what will.`;
 }
