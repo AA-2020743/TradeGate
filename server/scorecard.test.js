@@ -16,7 +16,7 @@ test('verdicts follow the evaluator thresholds, and a thin held-out block is nev
   assert.equal(verdictFor(0.9, -0.4), 'reversed');
   assert.equal(verdictFor(0.1, 0.1), 'no-order');
   assert.equal(verdictFor(1, null), 'untested');
-  assert.equal(verdictFor(null, null), 'unavailable');
+  assert.equal(verdictFor(null, null), 'thin');
 });
 
 test('the score reads the horizon the panel reads, or the longest one with a held-out score', () => {

@@ -277,3 +277,32 @@ test('a distribution with real spread still ranks', () => {
     assert.equal(Number.isFinite(indicator.percentile), true, `${indicator.key} could not be ranked`);
   });
 });
+
+test('the liquidity impulse record ranks each impulse only against earlier ones and holds out the newest weeks', async () => {
+  const { liquidityImpulseRecord } = await import('./macroRates.js');
+  const DAY = 86_400_000;
+  const date = (offset) => new Date(Date.UTC(2014, 0, 6) + offset * DAY).toISOString().slice(0, 10);
+  // Weekly liquidity that grows and shrinks in 30-week phases; the asset
+  // drifts up while liquidity is growing and down while it shrinks.
+  const liquidity = [];
+  let level = 5000;
+  for (let week = 0; week < 600; week += 1) {
+    level *= Math.floor(week / 30) % 2 ? 0.996 : 1.006;
+    liquidity.push({ date: date(week * 7), value: level });
+  }
+  const asset = [];
+  let price = 100;
+  for (let day = 0; day < 600 * 7 + 120; day += 1) {
+    const week = Math.floor(day / 7);
+    price *= Math.floor(week / 30) % 2 ? 0.9995 : 1.001;
+    asset.push({ date: date(day), value: price });
+  }
+  const record = liquidityImpulseRecord(liquidity, asset);
+  assert.equal(record.status, 'calculated', record.reason);
+  assert.equal(record.version, 'liquidity-impulse-record-v1');
+  const horizon = record.horizons.find((entry) => entry.days === 30);
+  assert.ok(horizon.development.ordering >= 0.6, `${horizon.development.ordering}`);
+  assert.ok(record.from > date(51 * 7), 'the first year only seeds the ranking');
+  const short = liquidityImpulseRecord(liquidity.slice(0, 60), asset);
+  assert.equal(short.status, 'unavailable');
+});

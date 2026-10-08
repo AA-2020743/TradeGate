@@ -1,4 +1,5 @@
 import { mean, medianSpacingDays, ordinal, percentileRank, standardDeviation } from './statistics.js';
+import { evaluateTrackRecord } from './trackRecord.js';
 
 /**
  * Rate-structure models: what is inside a nominal yield, how the US curve sits
@@ -418,7 +419,57 @@ export function calculateLiquidityPayoff(liquidityPoints, assetPoints, { changeD
     buckets,
     edgePercent: edge,
     read: `Across ${samples.length} overlapping observations, the strongest third of ${changeDays}-day liquidity impulses was followed by ${strong.averageForwardPercent}% over the next ${forwardDays} days against ${weak.averageForwardPercent}% for the weakest third — a ${edge > 0 ? '+' : ''}${edge}-point spread.`,
-    methodology: `Each liquidity observation is scored by its ${changeDays}-day impulse and paired with the asset's return over the following ${forwardDays} days; samples whose forward window has not closed are dropped rather than counted as zero. The observations overlap, so they are not independent and the spread between terciles is descriptive of this history rather than a tested edge. Nothing here is out of sample.`,
+    methodology: `Each liquidity observation is scored by its ${changeDays}-day impulse and paired with the asset's return over the following ${forwardDays} days; samples whose forward window has not closed are dropped rather than counted as zero. The observations overlap, so they are not independent and the spread between terciles is descriptive of this history rather than a tested edge. Nothing here is out of sample; the point-in-time record below is.`,
+    record: liquidityImpulseRecord(liquidity, asset, { changeDays, maxGapDays }),
+  };
+}
+
+const LIQUIDITY_IMPULSE_STATES = [
+  { key: 'strong', label: 'Strongest third of impulses' },
+  { key: 'middle', label: 'Middle third' },
+  { key: 'weak', label: 'Weakest third of impulses' },
+];
+const MINIMUM_PRIOR_IMPULSES = 52;
+
+/**
+ * The Macro page's headline - liquidity leads, risk confirms - tested without
+ * hindsight. The tercile table above ranks every impulse against the whole
+ * history, future ones included. Here each week's impulse is ranked only
+ * against the impulses before it, labeled strong, middle or weak, and
+ * followed by the asset's return over the next 30 and 90 days through the
+ * shared evaluator, which holds out the newest 30%.
+ */
+export function liquidityImpulseRecord(liquidity, asset, { changeDays = 91, maxGapDays = 10, horizons = [{ days: 30 }, { days: 90 }] } = {}) {
+  const assetAt = (date) => {
+    const point = latestAtOrBefore(asset, date);
+    return point && ((new Date(date) - new Date(point.date)) / DAY_MS) <= maxGapDays ? point : null;
+  };
+  const impulses = [];
+  const observations = [];
+  for (const point of liquidity) {
+    const priorTarget = new Date(new Date(point.date).getTime() - (changeDays * DAY_MS)).toISOString().slice(0, 10);
+    const prior = latestAtOrBefore(liquidity, priorTarget);
+    if (!prior || prior.value <= 0 || (new Date(point.date) - new Date(prior.date)) / DAY_MS > changeDays * 1.3) continue;
+    const impulse = ((point.value / prior.value) - 1) * 100;
+    const ranked = impulses.length >= MINIMUM_PRIOR_IMPULSES ? percentileRank([...impulses, impulse], impulse) : null;
+    impulses.push(impulse);
+    if (!Number.isFinite(ranked)) continue;
+    const label = ranked > 200 / 3 ? 'strong' : ranked <= 100 / 3 ? 'weak' : 'middle';
+    const from = assetAt(point.date);
+    if (!from || from.value <= 0) continue;
+    const returns = Object.fromEntries(horizons.map((horizon) => {
+      const to = assetAt(new Date(new Date(point.date).getTime() + (horizon.days * DAY_MS)).toISOString().slice(0, 10));
+      return [horizon.days, to && to.date > from.date ? ((to.value / from.value) - 1) * 100 : null];
+    }));
+    observations.push({ date: point.date, label, returns });
+  }
+  const record = evaluateTrackRecord({ observations, order: LIQUIDITY_IMPULSE_STATES, horizons, stepDays: Math.max(1, Math.round(medianSpacingDays(liquidity) ?? 7)) });
+  if (record.status !== 'calculated') return { version: 'liquidity-impulse-record-v1', ...record };
+  return {
+    version: 'liquidity-impulse-record-v1',
+    ...record,
+    readHorizonDays: 90,
+    limits: `Descriptive, not predictive. Each impulse is ranked only against the ones before it, after the first ${MINIMUM_PRIOR_IMPULSES}. The liquidity series carries its current vintage, and one decade of it spans a single long cycle of balance-sheet expansion and runoff.`,
   };
 }
 

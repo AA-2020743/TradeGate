@@ -62,7 +62,7 @@ export const MODEL_REGISTRY = [
       'Weekly Fed data: between prints the TGA and reverse repo move alone, so the level is carried while part of it changes.',
       'Monthly M2 lags by about a month and moves the score in steps.',
     ],
-    trackRecord: null,
+    trackRecord: 'liquidity-impulse-record-v1',
   },
   {
     id: 'global-liquidity-v1',

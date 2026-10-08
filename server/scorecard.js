@@ -25,6 +25,7 @@ export const SCORECARD_VERDICTS = {
   reversed: 'Ran against its assumed order since',
   'no-order': 'No reliable order in either block',
   untested: 'Held-out block too thin to judge',
+  thin: 'Too few independent observations in either block',
   unavailable: 'No track record available',
 };
 
@@ -37,7 +38,9 @@ function horizonFor(record, preferredDays) {
 }
 
 export function verdictFor(development, heldOut) {
-  if (!Number.isFinite(heldOut)) return Number.isFinite(development) ? 'untested' : 'unavailable';
+  // A record that exists but cannot rank its states in either block is thin,
+  // not missing: the model has a record, it just does not say anything yet.
+  if (!Number.isFinite(heldOut)) return Number.isFinite(development) ? 'untested' : 'thin';
   if (heldOut <= REVERSED) return 'reversed';
   if (heldOut >= HOLDS) return Number.isFinite(development) && development >= HOLDS ? 'held' : 'held-recent';
   if (Number.isFinite(development) && development >= HOLDS) return 'faded';
@@ -83,7 +86,7 @@ export function buildScorecard(entries) {
     return { ...base, ...scoreTrackRecord(entry.pick(entry.result.value)) };
   });
   const counts = Object.fromEntries(Object.keys(SCORECARD_VERDICTS).map((key) => [key, rows.filter((row) => row.verdict === key).length]));
-  const judged = rows.filter((row) => !['untested', 'unavailable'].includes(row.verdict));
+  const judged = rows.filter((row) => !['untested', 'thin', 'unavailable'].includes(row.verdict));
   const describe = () => {
     if (!judged.length) return 'No track record has a held-out block large enough to judge yet.';
     const parts = [`Of ${rows.length} track records, ${judged.length} have a held-out block large enough to judge`];

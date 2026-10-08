@@ -1189,7 +1189,7 @@ function weightSentence(model) {
 }
 
 /** What each model reads and how it is known to fail, with the build that served it. */
-const SCORECARD_TONE = { held: 'positive', 'held-recent': 'positive', faded: 'neutral', reversed: 'negative', 'no-order': 'neutral', untested: '', unavailable: '' };
+const SCORECARD_TONE = { held: 'positive', 'held-recent': 'positive', faded: 'neutral', reversed: 'negative', 'no-order': 'neutral', untested: '', thin: '', unavailable: '' };
 
 function ScorecardPanel() {
   const { status: loadStatus, data: card, error } = useLazyResource('/api/analytics/scorecard');
@@ -2598,6 +2598,7 @@ function LiquidityPayoffPanel({ payoff }) {
       </div>)}
     </> : <div className="equity-empty">{payoff?.reason ?? 'A liquidity history and a long asset history are both required.'}</div>}
     <p className="model-footnote">{published ? payoff.read : ''} {payoff?.methodology ?? ''}</p>
+    {payoff?.record ? <TrackRecordTable record={payoff.record} title="POINT IN TIME: WHAT FOLLOWED EACH IMPULSE THIRD, RANKED ONLY AGAINST EARLIER WEEKS" stateLabel="Impulse" assumption="liquidity leading assumes" unit="weeks" /> : null}
   </article>;
 }
 

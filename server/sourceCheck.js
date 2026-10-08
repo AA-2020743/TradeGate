@@ -181,7 +181,7 @@ export function servedLoader(baseUrl, endpoint, { fetchImpl = globalThis.fetch, 
   };
 }
 
-const SCORECARD_MARKS = { held: 'HELD', 'held-recent': 'RCNT', faded: 'FADE', reversed: 'REV ', 'no-order': 'NONE', untested: 'THIN', unavailable: 'N/A ' };
+const SCORECARD_MARKS = { held: 'HELD', 'held-recent': 'RCNT', faded: 'FADE', reversed: 'REV ', 'no-order': 'NONE', untested: 'THIN', thin: 'THIN', unavailable: 'N/A ' };
 
 /**
  * The track-record scorecard as report lines: the summary sentence, then one
