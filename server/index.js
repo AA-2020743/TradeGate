@@ -19,7 +19,7 @@ import { getEquityDashboard, getSectorDashboard } from './equities.js';
 import { logger } from './log.js';
 import { startIngestionScheduler } from './ingestion.js';
 import { createRateLimiter } from './rateLimit.js';
-import { calculateDollarTransmission, getBitcoinCycleWorkspace, getBlockedSources, getCryptoGlobal, getDxyBitcoinRelationship, getEquityRiskAppetite, getEquityScreener, getEthereumRotation, getAccumulationSchedules, getAlertOutcomes, getCryptoOptionsWorkspace, getIndexValuation, getScreenerTrackRecord, getFactorReturns, getFxWorkspace, getHardMoneyValuation, getIntradayRotation, getLiquiditySnapshot, getMarketHeatmap, getMarketHistory, getMarketPositioning, getMarketSnapshot, getMetalsWorkspace, getNewsWire, getPriceCrossCheck, getProviderHealth, getRegimeCorrelations, getSentimentSnapshot, getSignalTrackRecords, getStablecoinLeadLag, getBitcoinCrossAsset, getDiversificationRegime, getFxCarry, getGoldRealYield, getRecessionProbability, getTechnicalSnapshot, getTreasuryFunding, getVixTermRecord, getWatchlistRisk, parseWatchlistSymbols } from './providers.js';
+import { calculateDollarTransmission, getBitcoinCycleWorkspace, getBlockedSources, getCryptoGlobal, getDxyBitcoinRelationship, getEquityRiskAppetite, getEquityScreener, getEthereumRotation, getAccumulationSchedules, getAlertOutcomes, getCryptoOptionsWorkspace, getIndexValuation, getScreenerTrackRecord, getFactorReturns, getFxWorkspace, getHardMoneyValuation, getIntradayRotation, getLiquiditySnapshot, getMarketHeatmap, getMarketHistory, getMarketPositioning, getMarketSnapshot, getMetalsWorkspace, getNewsWire, getPriceCrossCheck, getProviderHealth, getRegimeCorrelations, getSentimentSnapshot, getSignalTrackRecords, getStablecoinLeadLag, getBitcoinCrossAsset, getDiversificationRegime, getFxCarry, getGoldRealYield, getGoldSilverRecord, getRecessionProbability, getTechnicalSnapshot, getTreasuryFunding, getVixTermRecord, getWatchlistRisk, parseWatchlistSymbols } from './providers.js';
 import { buildAtomFeed } from './analytics.js';
 import { authorizeWrite, contentSecurityPolicy, describeWriteProtection, securityHeaders } from './security.js';
 import { buildInfo } from './buildInfo.js';
@@ -166,6 +166,7 @@ const SNAPSHOT_SOURCES = {
   diversification: () => getDiversificationRegime(),
   carry: () => getFxCarry(),
   vixTerm: () => getVixTermRecord(),
+  goldSilver: () => getGoldSilverRecord(),
 };
 const SNAPSHOT_LOADER_TIMEOUT_MS = 30_000;
 
@@ -340,6 +341,7 @@ const SCORECARD_SOURCES = [
   { key: 'screener', name: 'Screener score fifths', page: 'Screener', assumption: 'The top fifth beats SPY by the most, the bottom fifth by the least', measure: 'Return against SPY', load: () => getScreenerTrackRecord(), pick: (payload) => payload },
   { key: 'diversification', name: 'Stock-bond regime', page: 'Markets', assumption: 'Bonds hedging followed by the shallowest 60/40 falls, falling together by the deepest', measure: 'Worst fall', load: () => getDiversificationRegime(), pick: (payload) => payload.record },
   { key: 'carry', name: 'Currency carry groups', page: 'Forex', assumption: 'High-carry currencies return the most against the dollar, low-carry the least', measure: 'Return incl. carry', load: () => getFxCarry(), pick: (payload) => payload.record },
+  { key: 'goldSilver', name: 'Gold/silver ratio extremes', page: 'Metals', assumption: 'A high ratio followed by silver catching up the most, a low one by the least (mean reversion)', measure: 'Silver minus gold', load: () => getGoldSilverRecord(), pick: (payload) => payload.record },
   { key: 'vixReturns', name: 'VIX term structure, returns', page: 'Equities', assumption: 'Contango followed by the best SPY returns, backwardation by the worst', measure: 'Forward return', load: () => getVixTermRecord(), pick: (payload) => payload.returns },
   { key: 'vixDrawdowns', name: 'VIX term structure, worst falls', page: 'Equities', assumption: 'Contango followed by the shallowest SPY falls, backwardation by the deepest', measure: 'Worst fall', load: () => getVixTermRecord(), pick: (payload) => payload.drawdowns },
 ];
@@ -349,6 +351,14 @@ app.get('/api/analytics/scorecard', async (_request, response, next) => {
   try {
     const settled = await Promise.allSettled(SCORECARD_SOURCES.map((source) => withTimeout(Promise.resolve().then(source.load), SCORECARD_LOADER_TIMEOUT_MS, source.name)));
     response.json(buildScorecard(SCORECARD_SOURCES.map((source, index) => ({ ...source, result: settled[index] }))));
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.get('/api/analytics/gold-silver-record', async (_request, response, next) => {
+  try {
+    response.json(await getGoldSilverRecord());
   } catch (error) {
     next(error);
   }

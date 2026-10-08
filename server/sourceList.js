@@ -12,6 +12,7 @@ import {
   getFactorReturns,
   getFxCarry,
   getGoldRealYield,
+  getGoldSilverRecord,
   getIndexValuation,
   getLiquiditySnapshot,
   getMarketSnapshot,
@@ -21,6 +22,7 @@ import {
   getTreasuryFunding,
   getVixTermRecord,
 } from './providers.js';
+import { ordinal } from './statistics.js';
 
 const seriesValue = (payload, key) => {
   const series = (payload.series ?? []).find((entry) => entry.key === key);
@@ -132,6 +134,16 @@ export const SOURCES = [
     endpoint: '/api/analytics/price-crosscheck',
     load: getPriceCrossCheck,
     figure: (payload) => `${payload.passed?.length ?? 0} verified, ${payload.review?.length ?? 0} under review, ${payload.notIndependent?.length ?? 0} not independent, ${payload.unavailable?.length ?? 0} unavailable`,
+  },
+  {
+    name: 'Yahoo gold and silver futures since 2000 (ratio record)',
+    endpoint: '/api/analytics/gold-silver-record',
+    load: getGoldSilverRecord,
+    figure: (payload) => (Number.isFinite(payload.ratio) ? `ratio ${payload.ratio} (${ordinal(payload.yearPercentile)} pct of the year, ${payload.state}); ${payload.sessions} sessions from ${payload.from}` : null),
+    plausible: (payload) => [
+      { label: 'gold/silver ratio', value: payload.ratio, min: 30, max: 130 },
+      { label: 'sessions since 2000', value: payload.sessions, min: 5500, max: 6800 },
+    ],
   },
   {
     name: 'Yahoo VIX, VIX3M, SPY since 2007 (VIX term record)',

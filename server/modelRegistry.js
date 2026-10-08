@@ -218,6 +218,19 @@ export const MODEL_REGISTRY = [
     trackRecord: 'screener-track-record-v1',
   },
   {
+    id: 'gold-silver-record-v1',
+    name: 'Gold/silver ratio track record',
+    page: 'Metals',
+    measures: 'Every session since 2000 labeled by the metals panel\u2019s rule - the gold/silver ratio\u2019s percentile within its trailing year - and followed 30 and 90 days by silver\u2019s return minus gold\u2019s, testing whether extremes revert or persist.',
+    inputs: ['Daily COMEX gold (GC) and silver (SI) front-month closes (Yahoo), since 2000'],
+    failureModes: [
+      'Year-long percentiles reach their extremes in runs; the extreme labels come in a few dozen episodes.',
+      'Front-month futures roll each contract month.',
+      'Mean reversion that held for two decades can stop when silver\u2019s industrial demand or gold\u2019s official buying shifts.',
+    ],
+    trackRecord: 'gold-silver-record-v1',
+  },
+  {
     id: 'vix-term-record-v1',
     name: 'VIX term structure track record',
     page: 'Equities',

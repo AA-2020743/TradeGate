@@ -1740,6 +1740,30 @@ function DrawdownRecordTable({ record, current = null, title, stateLabel, subjec
   </div>;
 }
 
+function GoldSilverRecordPanel() {
+  const { status: loadStatus, data: model, error } = useLazyResource('/api/analytics/gold-silver-record');
+  const published = model?.status === 'calculated';
+  return <article className={`panel gold-silver-panel ${published ? '' : 'preview-section'}`}>
+    <div className="panel-title">
+      <div>
+        <StatusKicker label="GOLD/SILVER RATIO · TRACK RECORD" published={published} />
+        <h3>{published ? `Ratio ${model.ratio}: do its extremes revert or persist?` : loadStatus === 'loading' ? 'Replaying gold and silver futures since 2000\u2026' : 'Awaiting gold and silver futures histories'}</h3>
+      </div>
+      {published ? <span className="data-pill">{model.sessions} sessions from {model.from}</span> : null}
+    </div>
+    {published ? <>
+      <div className="portfolio-stats">
+        <div><span>Gold / silver</span><b>{model.ratio}</b><small>{ordinal(model.yearPercentile)} pct of the year</small></div>
+        <div><span>Since {model.from.slice(0, 4)}</span><b>{ordinal(model.fullPercentile)}</b><small>percentile of the full history</small></div>
+        <div><span>Label</span><b>{model.state === 'high' ? 'Gold favored' : model.state === 'low' ? 'Silver favored' : 'Balanced'}</b><small>since {model.since}</small></div>
+      </div>
+      <p className="dca-read">{model.read}</p>
+      <TrackRecordTable record={model.record} current={model.state} title="SILVER MINUS GOLD THAT FOLLOWED, BY RATIO LABEL" stateLabel="Label" assumption="mean reversion assumes" unit="sessions" />
+      <p className="model-footnote">{model.methodology}</p>
+    </> : <div className="equity-empty">{model?.reason ?? (loadStatus === 'loading' ? 'Two histories since 2000; cached for twelve hours.' : `The ratio record could not be loaded: ${error}`)}</div>}
+  </article>;
+}
+
 function VixTermRecordPanel() {
   const { status: loadStatus, data: model, error } = useLazyResource('/api/analytics/vix-term-record');
   const published = model?.status === 'calculated';
@@ -2330,6 +2354,7 @@ function MetalsDashboard({ data }) {
       <AccumulationPanel accumulation={data.accumulation} />
       <div className="metals-research-wide"><HardMoneyPanel hardMoney={data.hardMoney} /></div>
       <div className="metals-research-wide"><GoldRealYieldPanel /></div>
+      <div className="metals-research-wide"><GoldSilverRecordPanel /></div>
     </section>
 
     <section className="metals-section-heading"><div><p className="section-kicker">POSITIONING AND FLOWS</p><h2>Who owns the trade, and where is demand coming from?</h2></div><span className="data-pill">{cot ? 'COT calculated' : 'Flows preview'}</span></section>

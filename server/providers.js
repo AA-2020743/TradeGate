@@ -18,6 +18,7 @@ import { calculateCryptoOptionsSurface } from './cryptoOptions.js';
 import { calculateTreasuryFunding } from './treasuryFunding.js';
 import { FACTORS as FRENCH_FACTORS, calculateFactorReturns, joinFactorTables, parseFrenchDaily } from './factorReturns.js';
 import { calculateFactorMomentum } from './factorMomentum.js';
+import { GOLD_SILVER_RECORD_VERSION, calculateGoldSilverRecord } from './goldSilverRecord.js';
 import { readLargestTextEntry } from './zip.js';
 import { combineFundingVenues, okxPositioningRows } from './derivativesVenues.js';
 import { TECHNICAL_REGIMES, describeTechnicalRecord, technicalTrackRecord } from './technicalTrackRecord.js';
@@ -2190,6 +2191,16 @@ export async function getVixTermRecord() {
     if (failed.length) return { version: VIX_TERM_RECORD_VERSION, status: 'unavailable', reason: `Yahoo did not return every history (${failed.join('; ')}).` };
     const [vix, vix3m, spy] = settled.map((result) => result.value);
     return { calculatedAt: new Date().toISOString(), source: 'Yahoo Finance daily closes', ...calculateVixTermRecord({ vix, vix3m, spy }) };
+  });
+}
+
+/** The gold/silver ratio's labels replayed on COMEX futures since 2000. */
+export async function getGoldSilverRecord() {
+  return withCache('analytics:gold-silver-record', 12 * 60 * 60_000, async () => {
+    const [goldResult, silverResult] = await Promise.allSettled([getYahooDailyHistory('GC=F', '2000-09-01'), getYahooDailyHistory('SI=F', '2000-09-01')]);
+    const failed = [['GC=F', goldResult], ['SI=F', silverResult]].flatMap(([symbol, result]) => (result.status === 'rejected' || !result.value.length ? [`${symbol}: ${result.reason?.message ?? 'no closes'}`] : []));
+    if (failed.length) return { version: GOLD_SILVER_RECORD_VERSION, status: 'unavailable', reason: `Yahoo did not return every history (${failed.join('; ')}).` };
+    return { calculatedAt: new Date().toISOString(), source: 'Yahoo Finance daily closes', ...calculateGoldSilverRecord({ gold: goldResult.value, silver: silverResult.value }) };
   });
 }
 
