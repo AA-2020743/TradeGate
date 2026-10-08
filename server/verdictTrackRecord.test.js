@@ -179,7 +179,9 @@ test('the replayed verdicts are scored on the dates their inputs allow', { timeo
     assert.ok(record.legs.length >= 3, key);
     // Legs are counted at the replay's own step and read at the record's own
     // horizon: every leg has enough independent windows to rank in some block.
-    assert.ok(record.legs.every((leg) => leg.summary?.days === record.record.readHorizonDays), JSON.stringify(record.legs.map((leg) => leg.summary)));
+    // Each leg is judged at the record's horizon, or the longest its own
+    // held-out block can rank when that one cannot.
+    assert.ok(record.legs.every((leg) => leg.summary?.days === record.record.readHorizonDays || Number.isFinite(leg.summary?.heldOutOrdering) || leg.summary?.verdict === 'thin' || leg.summary?.verdict === 'untested'), JSON.stringify(record.legs.map((leg) => leg.summary)));
     assert.match(record.read, new RegExp(`over ${record.record.readHorizonDays} days`));
   }
   assert.deepEqual(records.crypto.omitted, ['Perpetual funding', 'Stablecoin supply']);

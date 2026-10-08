@@ -119,7 +119,7 @@ test('pooled component records summarize each component in the score\'s order', 
   assert.deepEqual(components.map((component) => component.key), TECHNICAL_COMPONENTS.map((component) => component.key));
   for (const component of components) {
     assert.equal(component.record.status, 'calculated', component.key);
-    assert.equal(component.summary.days, 90);
+    assert.ok([30, 90, 180].includes(component.summary.days), String(component.summary.days));
     assert.ok(['held', 'held-recent', 'faded', 'reversed', 'no-order', 'untested', 'thin'].includes(component.summary.verdict), component.summary.verdict);
   }
   // On a cyclical series the trend legs lead; trend alignment ranks as the

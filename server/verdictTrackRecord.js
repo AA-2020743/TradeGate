@@ -342,7 +342,10 @@ function readHorizonFor(record, order) {
   const ends = [order[0].key, order.at(-1).key];
   const usable = [...record.horizons].sort((left, right) => right.days - left.days)
     .find((horizon) => ends.every((stateKey) => Number.isFinite(horizon.states.find((state) => state.key === stateKey)?.heldOut.stats.median)));
-  return usable?.days ?? READ_DAYS;
+  // Failing that, the longest horizon the held-out block can rank at all,
+  // which is the one the scorecard reads.
+  const ranked = [...record.horizons].sort((left, right) => right.days - left.days).find((horizon) => Number.isFinite(horizon.heldOut.ordering));
+  return usable?.days ?? ranked?.days ?? READ_DAYS;
 }
 
 function describeVerdictRecord(result, replay) {

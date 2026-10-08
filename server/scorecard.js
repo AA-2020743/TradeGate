@@ -72,7 +72,10 @@ export function componentRecords({ components, observationsByComponent, order, h
   return components.map((component) => {
     const observations = observationsByComponent?.[component.key] ?? [];
     const record = evaluateTrackRecord({ observations, order, horizons: horizonDays.map((horizon) => ({ days: horizon })), stepDays });
-    const horizon = record.status === 'calculated' ? record.horizons.find((entry) => entry.days === days) : null;
+    // The preferred horizon, or the longest one whose held-out block can be
+    // scored - the same fallback the scorecard row uses - so an input is not
+    // called thin at 90 days when 30 days has the evidence to judge it.
+    const horizon = record.status === 'calculated' ? horizonFor(record, days) : null;
     const favored = horizon?.states.find((state) => state.key === order[0].key)?.heldOut.stats.median;
     const disfavored = horizon?.states.find((state) => state.key === order.at(-1).key)?.heldOut.stats.median;
     return {
@@ -80,13 +83,13 @@ export function componentRecords({ components, observationsByComponent, order, h
       label: component.label,
       weight: component.weight ?? null,
       summary: horizon ? {
-        days,
+        days: horizon.days,
         developmentOrdering: horizon.development.ordering,
         heldOutOrdering: horizon.heldOut.ordering,
         heldOutSpread: Number.isFinite(favored) && Number.isFinite(disfavored) ? Math.round((favored - disfavored) * 100) / 100 : null,
         verdict: verdictFor(horizon.development.ordering, horizon.heldOut.ordering),
       } : null,
-      record: record.status === 'calculated' ? { ...record, readHorizonDays: days } : record,
+      record: record.status === 'calculated' ? { ...record, readHorizonDays: horizon?.days ?? days } : record,
     };
   });
 }
@@ -101,11 +104,15 @@ export function componentRecords({ components, observationsByComponent, order, h
  */
 export function describeComponents(components, days, { unit = 'observations' } = {}) {
   const phrases = components.map((component) => {
-    const horizon = component.record?.horizons?.find((entry) => entry.days === days);
-    const verdict = component.record?.status === 'calculated' && horizon ? verdictFor(horizon.development.ordering, horizon.heldOut.ordering) : 'unavailable';
+    // An input with a summary is described by it, at the horizon it was
+    // judged on; the sentence then cannot disagree with the table beside it.
+    const horizon = component.summary ? null : component.record?.horizons?.find((entry) => entry.days === days);
+    const verdict = component.summary?.verdict
+      ?? (component.record?.status === 'calculated' && horizon ? verdictFor(horizon.development.ordering, horizon.heldOut.ordering) : 'unavailable');
+    const elsewhere = component.summary && component.summary.days !== days ? ` (over ${component.summary.days} days)` : '';
     // Mid-sentence, "Momentum" reads "momentum"; an acronym such as RSI stays as it is.
     const label = /^[A-Z][a-z]/.test(component.label) ? `${component.label.charAt(0).toLowerCase()}${component.label.slice(1)}` : component.label;
-    return `${label} ${COMPONENT_PHRASES[verdict](unit)}`;
+    return `${label} ${COMPONENT_PHRASES[verdict](unit)}${elsewhere}`;
   });
   if (!phrases.length) return '';
   return phrases.length > 1 ? ` Ranked on its own over ${days} days, ${phrases.slice(0, -1).join('; ')}; and ${phrases.at(-1)}.` : ` Ranked on its own over ${days} days, ${phrases[0]}.`;

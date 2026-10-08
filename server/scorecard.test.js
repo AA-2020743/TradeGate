@@ -57,3 +57,17 @@ test('a record built from several inputs carries how each ranked on its own', ()
   const plain = buildScorecard([{ key: 'b', name: 'B', page: 'P', assumption: 'x', measure: 'return', result: { status: 'fulfilled', value: record([[90, 1, 1]]) }, pick: (payload) => payload }]);
   assert.equal(plain.rows[0].components, undefined);
 });
+
+test('an input too thin to rank at the preferred horizon is judged at the longest one that can be', async () => {
+  const { componentRecords } = await import('./scorecard.js');
+  const order = [{ key: 'high', label: 'High' }, { key: 'low', label: 'Low' }];
+  // Weekly readings, four years: enough independent 30-day windows per band
+  // after the cutoff, too few 180-day ones.
+  const observations = Array.from({ length: 208 }, (_, index) => {
+    const label = Math.floor(index / 4) % 2 ? 'high' : 'low';
+    return { date: new Date(Date.UTC(2020, 0, 1) + (index * 7 * 86_400_000)).toISOString().slice(0, 10), label, returns: { 30: label === 'high' ? 2 : -1, 180: label === 'high' ? 3 : -2 } };
+  });
+  const [component] = componentRecords({ components: [{ key: 'a', label: 'A' }], observationsByComponent: { a: observations }, order, horizonDays: [30, 180], days: 180 });
+  assert.equal(component.summary.days, 30);
+  assert.equal(component.summary.verdict, 'held');
+});

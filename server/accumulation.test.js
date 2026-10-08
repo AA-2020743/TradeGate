@@ -349,7 +349,7 @@ test('the pooled record ranks each component on its own, cheap third first', () 
   for (const component of pooled.components) {
     assert.equal(component.record.status, 'calculated', component.key);
     assert.deepEqual(component.record.horizons[0].states.map((state) => state.key), ['low', 'middle', 'high']);
-    assert.equal(component.summary.days, 90);
+    assert.ok([30, 90, 180].includes(component.summary.days), String(component.summary.days));
   }
   assert.match(pooled.read, /Ranked on its own over 90 days, stretch above the 1Y mean /);
   assert.match(pooled.read, /; and 1Y momentum [^;]+\.$/);
