@@ -27,6 +27,7 @@ import { parseBisMonthlySeries } from './bisData.js';
 import { SCREENER_TRACK_RECORD_VERSION, calculateScreenerTrackRecord } from './screenerTrackRecord.js';
 import { PORTFOLIO_RISK_VERSION, calculatePortfolioRisk, yahooTickerFor } from './portfolioRisk.js';
 import { RECESSION_PROBABILITY_VERSION, calculateRecessionProbability } from './recessionProbability.js';
+import { GOLD_REAL_YIELD_VERSION, calculateGoldRealYield } from './goldRealYield.js';
 import { INDEX_VALUATION_VERSION, SHILLER_FALLBACK_URLS, SHILLER_PAGE, calculateIndexValuation, findShillerDataLink, parseShillerRows } from './indexValuation.js';
 import { readWorkbook, sheetRows } from './xls.js';
 import { ALERT_HORIZONS, ALERT_OUTCOMES_VERSION, BENCHMARK, claimFor, scoreAlertOutcomes } from './alertOutcomes.js';
@@ -2033,6 +2034,31 @@ export async function getRecessionProbability() {
       return { asOf: new Date().toISOString(), inputs, ...result, status: 'provisional', reason: `${staleInputs.map((input) => `${input.id} last printed ${input.date}`).join(' and ')}, later than its monthly schedule.` };
     }
     return { asOf: new Date().toISOString(), inputs, ...result };
+  });
+}
+
+/**
+ * Gold against the 10-year TIPS yield since 2003. FRED's keyless CSV carries
+ * the full daily DFII10 history (the keyed API call elsewhere is capped at the
+ * newest 2,500 days), and Yahoo's chart endpoint the full gold history; both
+ * are read once and cached for twelve hours.
+ */
+export async function getGoldRealYield() {
+  return withCache('analytics:gold-real-yield', 12 * 60 * 60_000, async () => {
+    const [goldResult, yieldResult] = await Promise.allSettled([
+      getYahooHistory('GC=F', 'max'),
+      getFredCsvSeries({ id: 'DFII10', key: 'realYield10y', name: '10-year real yield' }),
+    ]);
+    const failures = [
+      goldResult.status === 'rejected' ? `Yahoo GC=F: ${goldResult.reason?.message ?? 'failed'}` : null,
+      yieldResult.status === 'rejected' ? `FRED DFII10: ${yieldResult.reason?.message ?? 'failed'}` : null,
+    ].filter(Boolean);
+    if (failures.length) return { version: GOLD_REAL_YIELD_VERSION, status: 'unavailable', reason: `An input did not load (${failures.join('; ')}).` };
+    const result = calculateGoldRealYield({ gold: goldResult.value, realYield: yieldResult.value.history });
+    if (result.status === 'calculated' && yieldResult.value.stale) {
+      return { asOf: new Date().toISOString(), ...result, status: 'provisional', reason: `FRED DFII10 last printed ${yieldResult.value.date}, later than its daily schedule.` };
+    }
+    return { asOf: new Date().toISOString(), ...result };
   });
 }
 

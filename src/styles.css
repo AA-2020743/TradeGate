@@ -659,3 +659,13 @@ html[data-theme='dark'] .recession-key { background: #2f3b33; }
   .valuation-bucket.recession-band-row > span:last-child { display: block; }
   .recession-episodes .valuation-bucket > span:last-child { display: block; }
 }
+
+/* Gold against real yields (Metals) */
+.gold-yield-panel { margin: 0; }
+.heldout-band { fill: #eef1ea; }
+html[data-theme='dark'] .heldout-band { fill: #222c25; }
+.valuation-bucket.gold-yield-row { grid-template-columns: minmax(0, 1.5fr) minmax(0, 0.8fr) minmax(0, 1fr) minmax(0, 0.8fr); }
+@media (max-width: 700px) {
+  .valuation-bucket.gold-yield-row { grid-template-columns: minmax(0, 1.3fr) minmax(0, 0.8fr) minmax(0, 0.9fr) minmax(0, 0.8fr); gap: 0.4rem; }
+  .valuation-bucket.gold-yield-row > span:last-child { display: block; }
+}

@@ -8,6 +8,7 @@ import {
   getBitcoinCycleWorkspace,
   getCryptoOptionsWorkspace,
   getFactorReturns,
+  getGoldRealYield,
   getIndexValuation,
   getLiquiditySnapshot,
   getMarketSnapshot,
@@ -127,6 +128,20 @@ export const SOURCES = [
     endpoint: '/api/analytics/price-crosscheck',
     load: getPriceCrossCheck,
     figure: (payload) => `${payload.passed?.length ?? 0} verified, ${payload.review?.length ?? 0} under review, ${payload.notIndependent?.length ?? 0} not independent, ${payload.unavailable?.length ?? 0} unavailable`,
+  },
+  {
+    name: 'Yahoo gold history + FRED TIPS yield (gold model)',
+    endpoint: '/api/analytics/gold-real-yield',
+    load: getGoldRealYield,
+    figure: (payload) => (Number.isFinite(payload.gapPercent) ? `gold ${payload.gapPercent > 0 ? '+' : ''}${payload.gapPercent}% vs its ${payload.fitFrom}-${payload.fitThrough} real-yield fit; ${payload.months} months to ${payload.month}` : null),
+    plausible: (payload) => [
+      { label: 'gold', value: payload.gold, min: 500, max: 20000, unit: '$' },
+      { label: '10y real yield', value: payload.realYield, min: -2, max: 5, unit: '%' },
+      { label: 'months since 2003', value: payload.months, min: 250, max: 400 },
+      // Gold has always fallen with higher real yields in the fit window; a
+      // positive slope means the inputs are misaligned.
+      { label: 'fit slope', value: payload.fit?.percentPerPoint, min: -60, max: -1, unit: '%/pt' },
+    ],
   },
   {
     name: 'FRED monthly curve + NBER dates (recession model)',

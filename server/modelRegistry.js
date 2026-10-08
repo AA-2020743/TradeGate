@@ -218,6 +218,19 @@ export const MODEL_REGISTRY = [
     trackRecord: 'screener-track-record-v1',
   },
   {
+    id: 'gold-real-yield-v1',
+    name: 'Gold against real yields',
+    page: 'Metals',
+    measures: 'Log gold regressed on the 10-year TIPS yield over the oldest 70% of months since 2003 and applied to the newest 30% it never saw: the gap between gold and the level real yields imply, whether that gap has left the fit\u2019s error band, and the 36-month correlation of monthly gold returns with real-yield changes.',
+    inputs: ['Yahoo GC=F daily closes (COMEX front-month gold)', 'FRED DFII10 daily 10-year TIPS yield'],
+    failureModes: [
+      'A regression on the levels of two trending series flatters the fit; the held-out gap and the change correlation are the tests.',
+      'One driver: the dollar and official-sector buying move gold too and are not in the model.',
+      'Front-month futures roll each contract month, adding small steps that spot gold does not have.',
+    ],
+    trackRecord: null,
+  },
+  {
     id: 'recession-probability-v1',
     name: 'Recession probability from the yield curve',
     page: 'Macro',

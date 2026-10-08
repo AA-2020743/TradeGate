@@ -1397,6 +1397,87 @@ function RecessionHistoryChart({ history, periods, signal }) {
   </div>;
 }
 
+function GoldRealYieldChart({ history, heldOutFrom }) {
+  const [hoveredIndex, setHoveredIndex] = React.useState(null);
+  const [plotRef, measured] = useElementWidth(640);
+  const points = (history ?? []).filter((point) => point.gold > 0 && point.implied > 0);
+  if (points.length < 2) return null;
+  const width = Math.max(280, measured);
+  const height = width < 520 ? 180 : 230;
+  const padding = { top: 12, right: 10, bottom: 24, left: 46 };
+  // Log scale: a 20% gap reads the same at $400 as at $4,000.
+  const logs = points.flatMap((point) => [Math.log(point.gold), Math.log(point.implied)]);
+  const low = Math.min(...logs);
+  const high = Math.max(...logs);
+  const span = high - low || 1;
+  const xOf = (index) => padding.left + index * ((width - padding.left - padding.right) / (points.length - 1));
+  const yOf = (value) => padding.top + ((high - Math.log(value)) / span) * (height - padding.top - padding.bottom);
+  const line = (key) => points.map((point, index) => `${xOf(index).toFixed(1)},${yOf(point[key]).toFixed(1)}`).join(' ');
+  const splitIndex = points.findIndex((point) => point.month >= heldOutFrom);
+  const activeIndex = hoveredIndex ?? points.length - 1;
+  const active = points[activeIndex];
+  const ticks = [];
+  for (const base of [100, 200, 500, 1000, 2000, 5000, 10000, 20000]) if (Math.log(base) >= low && Math.log(base) <= high) ticks.push(base);
+  const yearStep = width < 520 ? 10 : 5;
+  const years = [];
+  points.forEach((point, index) => { if (point.month.endsWith('-01') && Number(point.month.slice(0, 4)) % yearStep === 0) years.push(index); });
+  const select = (event) => {
+    const bounds = event.currentTarget.getBoundingClientRect();
+    const ratio = Math.min(1, Math.max(0, ((event.clientX - bounds.left) / bounds.width - padding.left / width) / ((width - padding.left - padding.right) / width)));
+    setHoveredIndex(Math.round(ratio * (points.length - 1)));
+  };
+  return <div className="cape-chart-wrap">
+    <div className="cape-readout" aria-live="polite">
+      <b>{active.month}</b><span>gold ${Math.round(active.gold).toLocaleString('en-US')}</span><span>implied ${Math.round(active.implied).toLocaleString('en-US')}</span><span>{active.gapPercent > 0 ? '+' : ''}{active.gapPercent}% gap</span><span>real yield {active.realYield}%</span>
+      <span className="cape-median-key"><i aria-hidden="true"></i>implied by real yields</span>
+    </div>
+    <div ref={plotRef} className="liquidity-history-plot cape-chart recession-chart" style={{ height: `${height}px` }} onPointerMove={select} onPointerLeave={() => setHoveredIndex(null)}>
+    <svg viewBox={`0 0 ${width} ${height}`} width={width} height={height} role="img" aria-label={`Gold against the level real yields imply, ${points[0].month} to ${points.at(-1).month}; latest gap ${points.at(-1).gapPercent}%`}>
+      {splitIndex > 0 ? <rect className="heldout-band" x={xOf(splitIndex)} width={width - padding.right - xOf(splitIndex)} y={padding.top} height={height - padding.top - padding.bottom} /> : null}
+      {ticks.map((value) => <g key={value}><line x1={padding.left} x2={width - padding.right} y1={yOf(value)} y2={yOf(value)} className="liquidity-grid-line" /><text x={padding.left - 6} y={yOf(value) + 4} textAnchor="end" className="liquidity-axis-label">${value >= 1000 ? `${value / 1000}k` : value}</text></g>)}
+      {splitIndex > 0 ? <text x={xOf(splitIndex) + 5} y={padding.top + 12} className="liquidity-axis-label">held out</text> : null}
+      <polyline points={line('implied')} fill="none" className="cape-median-line" vectorEffect="non-scaling-stroke" />
+      <polyline points={line('gold')} fill="none" stroke="#d1a84a" strokeWidth="1.8" vectorEffect="non-scaling-stroke" />
+      <line x1={xOf(activeIndex)} x2={xOf(activeIndex)} y1={padding.top} y2={height - padding.bottom} className="liquidity-crosshair" />
+      <circle cx={xOf(activeIndex)} cy={yOf(active.gold)} r="4" className="liquidity-active-point" vectorEffect="non-scaling-stroke" />
+      {years.map((index) => <text key={index} x={xOf(index)} y={height - 8} textAnchor="middle" className="liquidity-axis-label">{points[index].month.slice(0, 4)}</text>)}
+    </svg>
+    </div>
+  </div>;
+}
+
+function GoldRealYieldPanel() {
+  const { status: loadStatus, data: model, error } = useLazyResource('/api/analytics/gold-real-yield');
+  const published = model?.status === 'calculated' || model?.status === 'provisional';
+  const changes = model?.changes;
+  return <article className={`panel gold-yield-panel ${published ? '' : 'preview-section'}`}>
+    <div className="panel-title">
+      <div>
+        <StatusKicker label="GOLD VS REAL YIELDS" published={published} />
+        <h3>{published ? `Gold ${Math.abs(model.gapPercent)}% ${model.gapPercent >= 0 ? 'above' : 'below'} what real yields imply` : loadStatus === 'loading' ? 'Reading gold and TIPS yields since 2003\u2026' : 'Awaiting gold and TIPS yield histories'}</h3>
+      </div>
+      {published ? <span className="data-pill">{model.months} months · to {model.month}</span> : null}
+    </div>
+    {published ? <>
+      {model.status === 'provisional' ? <p className="portfolio-missing" role="status">Provisional: {model.reason}</p> : null}
+      <div className="portfolio-stats">
+        <div><span>Gap to implied</span><b>{model.gapPercent > 0 ? '+' : ''}{model.gapPercent}%</b><small>gold ${Math.round(model.gold).toLocaleString('en-US')} vs ${Math.round(model.implied).toLocaleString('en-US')}</small></div>
+        <div><span>10y real yield</span><b>{model.realYield}%</b><small>TIPS, {model.yieldDate}</small></div>
+        <div><span>Fit {model.fitFrom.slice(0, 4)}–{model.fitThrough.slice(0, 4)}</span><b>{model.fit.percentPerPoint}%</b><small>per point of real yield · R² {model.fit.r2}</small></div>
+        <div><span>{changes?.windowMonths ?? 36}-month correlation</span><b>{changes?.latest ? changes.latest.correlation : '\u2014'}</b><small>{changes?.fitWindow ? `${changes.fitWindow.correlation} in the fit window` : 'monthly changes'}</small></div>
+      </div>
+      <GoldRealYieldChart history={model.history} heldOutFrom={model.heldOutFrom} />
+      <p className="dca-read">{model.read}</p>
+      <div className="valuation-buckets" role="table" aria-label="Fit window against held-out months">
+        <div className="valuation-bucket gold-yield-row valuation-head" role="row"><span role="columnheader">Months</span><span role="columnheader">Typical gap</span><span role="columnheader">Change corr.</span><span role="columnheader">Per point</span></div>
+        <div className="valuation-bucket gold-yield-row" role="row"><span role="cell">Fit, {model.fitFrom} to {model.fitThrough}</span><span role="cell">±{model.fit.meanAbsoluteGapPercent}%</span><span role="cell">{changes?.fitWindow?.correlation ?? '\u2014'}</span><span role="cell">{Number.isFinite(changes?.fitWindow?.betaPercentPerPoint) ? `${changes.fitWindow.betaPercentPerPoint}%` : '\u2014'}</span></div>
+        <div className="valuation-bucket gold-yield-row current" role="row"><span role="cell">Held out, {model.heldOutFrom} on</span><span role="cell">±{model.heldOut.meanAbsoluteGapPercent}%</span><span role="cell">{changes?.heldOut?.correlation ?? '\u2014'}</span><span role="cell">{Number.isFinite(changes?.heldOut?.betaPercentPerPoint) ? `${changes.heldOut.betaPercentPerPoint}%` : '\u2014'}</span></div>
+      </div>
+      <p className="model-footnote">{model.methodology} {model.limits}</p>
+    </> : <div className="equity-empty">{model?.reason ?? (loadStatus === 'loading' ? 'Two long daily histories; cached for twelve hours.' : `The gold model could not be loaded: ${error}`)}</div>}
+  </article>;
+}
+
 const RECESSION_OUTCOME_LABELS = { followed: 'Recession followed', 'not followed': 'No recession within 2 years', pending: 'Too soon to judge', late: 'Recession already underway' };
 
 function RecessionProbabilityPanel() {
@@ -1957,6 +2038,7 @@ function MetalsDashboard({ data }) {
       <AccumulationPanel accumulation={data.accumulation} only="gold" title="GOLD ACCUMULATION" />
       <AccumulationPanel accumulation={data.accumulation} />
       <div className="metals-research-wide"><HardMoneyPanel hardMoney={data.hardMoney} /></div>
+      <div className="metals-research-wide"><GoldRealYieldPanel /></div>
     </section>
 
     <section className="metals-section-heading"><div><p className="section-kicker">POSITIONING AND FLOWS</p><h2>Who owns the trade, and where is demand coming from?</h2></div><span className="data-pill">{cot ? 'COT calculated' : 'Flows preview'}</span></section>
