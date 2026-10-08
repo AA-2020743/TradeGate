@@ -1185,6 +1185,36 @@ function weightSentence(model) {
 }
 
 /** What each model reads and how it is known to fail, with the build that served it. */
+const SCORECARD_TONE = { held: 'positive', 'held-recent': 'positive', faded: 'neutral', reversed: 'negative', 'no-order': 'neutral', untested: '', unavailable: '' };
+
+function ScorecardPanel() {
+  const { status: loadStatus, data: card, error } = useLazyResource('/api/analytics/scorecard');
+  const published = card?.status === 'calculated';
+  const score = (value) => (Number.isFinite(value) ? `${value > 0 ? '+' : ''}${value}` : '\u2014');
+  return <article className={`panel scorecard-panel ${published ? '' : 'preview-section'}`}>
+    <div className="panel-title">
+      <div>
+        <StatusKicker label="TRACK-RECORD SCORECARD" published={published} />
+        <h3>{published ? `${card.counts.held} of ${card.rows.length} track records held up out of sample` : loadStatus === 'loading' ? 'Gathering every track record\u2026' : 'Which models have held up out of sample'}</h3>
+      </div>
+    </div>
+    {published ? <>
+      <p className="dca-read">{card.read}</p>
+      <div className="scorecard-table" role="table" aria-label="Track records and their held-out verdicts">
+        <div className="scorecard-row scorecard-head" role="row"><span role="columnheader">Model</span><span role="columnheader">What it assumes</span><span role="columnheader">Before</span><span role="columnheader">Held out</span><span role="columnheader">Verdict</span></div>
+        {card.rows.map((row) => <div className="scorecard-row" role="row" key={row.key}>
+          <span role="cell"><b>{row.name}</b><small>{row.page} · {row.measure}{Number.isFinite(row.horizonDays) ? `, ${row.horizonDays} days` : ''}</small></span>
+          <span role="cell" className="scorecard-assumption">{row.assumption}</span>
+          <span role="cell" data-label="Before">{score(row.developmentOrdering)}</span>
+          <span role="cell" data-label="Held out">{score(row.heldOutOrdering)}{row.holdoutFrom ? <small>since {row.holdoutFrom}</small> : null}</span>
+          <span role="cell" className={SCORECARD_TONE[row.verdict]}>{row.verdictLabel}{row.status !== 'calculated' && row.reason ? <small>{row.reason}</small> : null}</span>
+        </div>)}
+      </div>
+      <p className="model-footnote">{card.methodology} {card.limits}</p>
+    </> : <div className="equity-empty">{card?.reason ?? (loadStatus === 'loading' ? 'The first load after a restart replays several histories and can take most of a minute; each is cached afterwards.' : `The scorecard could not be loaded: ${error}`)}</div>}
+  </article>;
+}
+
 function ModelRegistryPanel({ registry }) {
   const models = registry?.models ?? [];
   if (!models.length) return null;
@@ -2236,6 +2266,7 @@ function MarketsDashboard({ data }) {
     <SignalRecordsPanel records={data.signalRecords} />
     <DiversificationPanel />
     <CrossCheckPanel check={data.crossCheck} />
+    <ScorecardPanel />
     <ModelRegistryPanel registry={data.models} />
     <SnapshotPanel />
     <section className="heatmap-bottom-grid">

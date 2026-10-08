@@ -697,3 +697,18 @@ html[data-theme='dark'] .heldout-band { fill: #222c25; }
 /* Overview: what changed since yesterday */
 .daily-changes { margin-top: 18px; }
 .daily-changes > .panel { margin: 0; }
+
+/* Track-record scorecard (Markets) */
+.scorecard-panel { margin-top: 16px; }
+.scorecard-table { display: grid; margin-top: 0.6rem; font-size: 0.82rem; }
+.scorecard-row { display: grid; grid-template-columns: minmax(0, 1.3fr) minmax(0, 1.7fr) minmax(0, 0.45fr) minmax(0, 0.7fr) minmax(0, 1fr); gap: 0.7rem; align-items: baseline; padding: 0.5rem 0.2rem; border-bottom: 1px solid #e9ebe4; }
+.scorecard-row > span { min-width: 0; }
+.scorecard-row small { display: block; color: #5f6861; font-size: 0.72rem; margin-top: 2px; }
+.scorecard-head { color: #5f6861; font: 500 0.68rem 'DM Mono', monospace; text-transform: uppercase; letter-spacing: 0.04em; }
+.scorecard-assumption { color: #4b544d; }
+@media (max-width: 760px) {
+  .scorecard-row { grid-template-columns: minmax(0, 1fr) minmax(0, 0.5fr) minmax(0, 0.6fr); }
+  .scorecard-row > .scorecard-assumption, .scorecard-head > span:nth-child(2) { display: none; }
+  .scorecard-row > span:last-child { grid-column: 1 / -1; }
+  .scorecard-head > span:last-child { display: none; }
+}

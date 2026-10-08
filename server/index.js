@@ -26,6 +26,7 @@ import { buildInfo } from './buildInfo.js';
 import { MODEL_REGISTRY } from './modelRegistry.js';
 import { buildWorkspaceSnapshot, snapshotToCsv } from './workspaceSnapshot.js';
 import { DAILY_SNAPSHOT_MODEL_ID, getDailyChanges } from './dailySnapshot.js';
+import { buildScorecard } from './scorecard.js';
 import { withCache } from './cache.js';
 
 const app = express();
@@ -323,6 +324,30 @@ app.get('/api/analytics/index-valuation', async (_request, response, next) => {
 app.get('/api/analytics/screener-track-record', async (_request, response, next) => {
   try {
     response.json(await getScreenerTrackRecord());
+  } catch (error) {
+    next(error);
+  }
+});
+
+// Every evaluator-based track record, and what its held-out block says. The
+// loaders are the cached ones the panels use, so this adds no provider calls
+// once the panels have loaded; a cold one that is slow is reported, not awaited.
+const SCORECARD_SOURCES = [
+  { key: 'technical', name: 'Technical regime, pooled across assets', page: 'Markets, asset cards', assumption: 'Constructive weeks followed by the best returns, Guarded by the worst', measure: 'Forward return', load: () => getSignalTrackRecords(), pick: (payload) => payload.pooled },
+  { key: 'accumulation', name: 'Accumulation ladder tiers, pooled', page: 'Metals, Crypto, Equities', assumption: 'Deep-value weeks followed by the best returns, Stretched by the worst', measure: 'Forward return', load: () => getAccumulationSchedules(), pick: (payload) => payload.trackRecord },
+  { key: 'macroRegime', name: 'Macro regime', page: 'Macro', assumption: 'Expansion followed by the best S&P 500 returns, Contraction by the worst', measure: 'Forward return', load: () => getLiquiditySnapshot(), pick: (payload) => payload.regimeHistory?.trackRecord },
+  { key: 'screener', name: 'Screener score fifths', page: 'Screener', assumption: 'The top fifth beats SPY by the most, the bottom fifth by the least', measure: 'Return against SPY', load: () => getScreenerTrackRecord(), pick: (payload) => payload },
+  { key: 'diversification', name: 'Stock-bond regime', page: 'Markets', assumption: 'Bonds hedging followed by the shallowest 60/40 falls, falling together by the deepest', measure: 'Worst fall', load: () => getDiversificationRegime(), pick: (payload) => payload.record },
+  { key: 'carry', name: 'Currency carry groups', page: 'Forex', assumption: 'High-carry currencies return the most against the dollar, low-carry the least', measure: 'Return incl. carry', load: () => getFxCarry(), pick: (payload) => payload.record },
+  { key: 'vixReturns', name: 'VIX term structure, returns', page: 'Equities', assumption: 'Contango followed by the best SPY returns, backwardation by the worst', measure: 'Forward return', load: () => getVixTermRecord(), pick: (payload) => payload.returns },
+  { key: 'vixDrawdowns', name: 'VIX term structure, worst falls', page: 'Equities', assumption: 'Contango followed by the shallowest SPY falls, backwardation by the deepest', measure: 'Worst fall', load: () => getVixTermRecord(), pick: (payload) => payload.drawdowns },
+];
+const SCORECARD_LOADER_TIMEOUT_MS = 45_000;
+
+app.get('/api/analytics/scorecard', async (_request, response, next) => {
+  try {
+    const settled = await Promise.allSettled(SCORECARD_SOURCES.map((source) => withTimeout(Promise.resolve().then(source.load), SCORECARD_LOADER_TIMEOUT_MS, source.name)));
+    response.json(buildScorecard(SCORECARD_SOURCES.map((source, index) => ({ ...source, result: settled[index] }))));
   } catch (error) {
     next(error);
   }
