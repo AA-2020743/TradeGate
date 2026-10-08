@@ -13,7 +13,7 @@
 import { config } from './config.js';
 import { closeDatabase, getIngestionStatus, isDatabaseConfigured } from './database.js';
 import { SOURCES } from './sourceList.js';
-import { findRunningApp, formatReport, servedLoader, summarizeIngestion, summarizeSource } from './sourceCheck.js';
+import { findRunningApp, formatReport, formatScorecard, servedLoader, summarizeIngestion, summarizeSource } from './sourceCheck.js';
 
 const TIMEOUT_MS = 90_000;
 
@@ -45,13 +45,20 @@ try {
   }
   const jobs = isDatabaseConfigured() ? await getIngestionStatus().catch(() => []) : [];
   const ingestion = summarizeIngestion({ enabled: config.ingestionEnabled, databaseConfigured: isDatabaseConfigured(), jobs });
+  // Read last, from the app, so every record behind it is already cached by
+  // the source checks above; in-process there is no app to ask.
+  const scorecard = app
+    ? await servedLoader(app.baseUrl, '/api/analytics/scorecard', { timeoutMs: TIMEOUT_MS })().catch((error) => ({ status: 'unavailable', reason: error.message }))
+    : { status: 'unavailable', reason: 'the scorecard is read from the running app; run without --in-process to see it.' };
   if (json) {
-    console.log(JSON.stringify({ mode: app ? 'served' : 'in-process', sources: summaries, ingestion }, null, 2));
+    console.log(JSON.stringify({ mode: app ? 'served' : 'in-process', sources: summaries, ingestion, scorecard }, null, 2));
   } else {
     console.log(`${mode}\n`);
     console.log(formatReport(summaries));
     console.log(`\n${{ ok: 'OK  ', partial: 'PART', failed: 'FAIL' }[ingestion.verdict]}  Ingestion (stored history)`);
     for (const line of ingestion.lines) console.log(`      ${line}`);
+    console.log('');
+    for (const line of formatScorecard(scorecard)) console.log(line);
   }
 } finally {
   await closeDatabase();

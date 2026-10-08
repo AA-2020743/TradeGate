@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { formatReport, partStates, reasonsFrom, summarizeSource } from './sourceCheck.js';
+import { formatReport, formatScorecard, partStates, reasonsFrom, summarizeSource } from './sourceCheck.js';
 
 const fulfilled = (value) => ({ status: 'fulfilled', value });
 
@@ -156,4 +156,21 @@ test('a source short of its own test that still published parts reads incomplete
   const nothing = summarizeSource(source, { status: 'fulfilled', value: { failed: 32 } }, 100);
   assert.equal(nothing.status, 'empty');
   assert.equal(nothing.verdict, 'failed');
+});
+
+test('the scorecard prints one line per track record with its verdict and orderings', () => {
+  const lines = formatScorecard({
+    status: 'calculated',
+    read: 'Of 2 track records, 2 have a held-out block large enough to judge; 1 ranked as assumed both before and after their cutoff; 1 ran against the order assumed.',
+    rows: [
+      { name: 'Currency carry groups', status: 'calculated', verdict: 'held', verdictLabel: 'Held up out of sample', developmentOrdering: 1, heldOutOrdering: 0.67, holdoutFrom: '2023-07-31', horizonDays: 90 },
+      { name: 'Macro regime', status: 'calculated', verdict: 'reversed', verdictLabel: 'Ran against its assumed order since', developmentOrdering: 0.33, heldOutOrdering: -1, holdoutFrom: '2024-01-08', horizonDays: 90 },
+      { name: 'Screener score fifths', status: 'unavailable', verdict: 'unavailable', verdictLabel: 'Did not load', reason: 'timed out' },
+    ],
+  });
+  assert.match(lines[0], /^Track records \(held-out verdicts\): Of 2 track records/);
+  assert.equal(lines[1], 'HELD  Currency carry groups: held up out of sample (before +1, held out +0.67 since 2023-07-31, 90 days)');
+  assert.equal(lines[2], 'REV   Macro regime: ran against its assumed order since (before +0.33, held out -1 since 2024-01-08, 90 days)');
+  assert.equal(lines[3], 'N/A   Screener score fifths: did not load (timed out)');
+  assert.match(formatScorecard({ status: 'unavailable', reason: 'x' })[0], /^Track records: x/);
 });

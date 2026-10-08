@@ -181,6 +181,26 @@ export function servedLoader(baseUrl, endpoint, { fetchImpl = globalThis.fetch, 
   };
 }
 
+const SCORECARD_MARKS = { held: 'HELD', 'held-recent': 'RCNT', faded: 'FADE', reversed: 'REV ', 'no-order': 'NONE', untested: 'THIN', unavailable: 'N/A ' };
+
+/**
+ * The track-record scorecard as report lines: the summary sentence, then one
+ * line per record with its verdict and its ordering before and after the
+ * held-out cutoff, so the out-of-sample evidence arrives with every check.
+ */
+export function formatScorecard(card) {
+  if (!card || card.status !== 'calculated') return [`Track records: ${card?.reason ?? 'the scorecard did not load.'}`];
+  const score = (value) => (Number.isFinite(value) ? `${value > 0 ? '+' : ''}${value}` : 'n/a');
+  const lines = [`Track records (held-out verdicts): ${card.read}`];
+  for (const row of card.rows) {
+    const detail = row.status === 'calculated'
+      ? `before ${score(row.developmentOrdering)}, held out ${score(row.heldOutOrdering)}${row.holdoutFrom ? ` since ${row.holdoutFrom}` : ''}, ${row.horizonDays} days`
+      : (row.reason ?? 'no record');
+    lines.push(`${SCORECARD_MARKS[row.verdict] ?? '    '}  ${row.name}: ${row.verdictLabel.toLowerCase()} (${detail})`);
+  }
+  return lines;
+}
+
 /** The running app's base URL if it answers its health check, else null. */
 export async function findRunningApp(baseUrl, { fetchImpl = globalThis.fetch, timeoutMs = 3_000 } = {}) {
   try {
