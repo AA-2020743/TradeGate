@@ -218,6 +218,18 @@ export const MODEL_REGISTRY = [
     trackRecord: 'screener-track-record-v1',
   },
   {
+    id: 'fx-momentum-record-v1',
+    name: 'Forex outlook track record',
+    page: 'Forex',
+    measures: 'The Forex outlook\u2019s rule - a currency\u2019s 20-session move against the dollar beyond \u00b10.5% labels it USD weak or USD strong - replayed on ten years of spot and followed 30 and 90 days, testing whether the move carries forward.',
+    inputs: ['Ten years of daily Yahoo spot rates for seven currencies against the dollar'],
+    failureModes: [
+      'The currencies share the dollar leg; a dollar trend moves every label together.',
+      'Spot only, before carry, so a high-yielder\u2019s steady drift lower can be paid for by its interest.',
+    ],
+    trackRecord: 'fx-momentum-record-v1',
+  },
+  {
     id: 'gold-silver-record-v1',
     name: 'Gold/silver ratio track record',
     page: 'Metals',

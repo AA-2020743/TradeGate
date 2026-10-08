@@ -106,6 +106,10 @@ export function calculateGoldSilverRecord({ gold, silver }) {
   };
 }
 
+function signedPoints(value) {
+  return `${value > 0 ? '+' : ''}${value} pts`;
+}
+
 function describeGoldSilverRecord(result) {
   const parts = [`The ratio is ${result.ratio}, the ${ordinal(result.yearPercentile)} percentile of its past year and the ${ordinal(result.fullPercentile)} since ${result.from.slice(0, 4)}; it has read ${result.state === 'high' ? 'high (gold favored)' : result.state === 'low' ? 'low (silver favored)' : 'balanced'} since ${result.since}`];
   if (result.record.status !== 'calculated') return `${parts[0]}.`;
@@ -122,6 +126,13 @@ function describeGoldSilverRecord(result) {
     else if (high < 0 && low > 0) record += ': both extremes persisted, the leading metal staying ahead.';
     else if (high > low) record += ': silver fared better after a high ratio than after a low one - the direction mean reversion expects, without a catch-up at both ends.';
     else record += ': silver fared worse after a high ratio than after a low one - against mean reversion, without persistence at both ends.';
+    // One block alone can be noise: say so when the other points the other way.
+    const other = block === 'heldOut' ? 'development' : 'heldOut';
+    const otherHigh = cell('high')?.[other].stats.median;
+    const otherLow = cell('low')?.[other].stats.median;
+    if (Number.isFinite(otherHigh) && Number.isFinite(otherLow) && (otherHigh > otherLow) !== (high > low)) {
+      record += ` ${other === 'development' ? `Before ${result.record.holdoutFrom}` : 'In the held-out block'} the order ran the other way (${signedPoints(otherHigh)} after a high ratio, ${signedPoints(otherLow)} after a low one), so neither reading has held throughout.`;
+    }
   }
   return `${parts[0]}.${record} This describes what followed, not what will.`;
 }

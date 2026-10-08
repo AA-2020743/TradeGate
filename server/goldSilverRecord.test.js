@@ -65,3 +65,15 @@ test('too short a shared history refuses with a reason', () => {
   assert.equal(result.status, 'unavailable');
   assert.match(result.reason, /share 900 sessions; 1500 are needed/);
 });
+
+test('when the held-out block runs the other way, the read says neither reading held throughout', () => {
+  // Mean-reverting for the first 2,800 sessions, then trending in long legs.
+  let day = 0;
+  const result = calculateGoldSilverRecord(metals({ seed: 21, step: (value, random) => {
+    day += 1;
+    return day < 2800
+      ? value + 0.03 * (Math.log(70) - value) + 0.02 * random()
+      : value + (Math.floor(day / 200) % 2 ? -0.002 : 0.002) + 0.004 * random();
+  } }));
+  assert.match(result.read, /the order ran the other way \([+-][\d.]+ pts after a high ratio, [+-][\d.]+ pts after a low one\), so neither reading has held throughout/);
+});

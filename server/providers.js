@@ -19,6 +19,7 @@ import { calculateTreasuryFunding } from './treasuryFunding.js';
 import { FACTORS as FRENCH_FACTORS, calculateFactorReturns, joinFactorTables, parseFrenchDaily } from './factorReturns.js';
 import { calculateFactorMomentum } from './factorMomentum.js';
 import { GOLD_SILVER_RECORD_VERSION, calculateGoldSilverRecord } from './goldSilverRecord.js';
+import { calculateFxMomentumRecord } from './fxMomentumRecord.js';
 import { readLargestTextEntry } from './zip.js';
 import { combineFundingVenues, okxPositioningRows } from './derivativesVenues.js';
 import { TECHNICAL_REGIMES, describeTechnicalRecord, technicalTrackRecord } from './technicalTrackRecord.js';
@@ -2178,7 +2179,7 @@ export async function getFxCarry() {
       if (spliced.splicedFrom) rateSources.push(`${currency.code}: ${spliced.source}`);
     }
     const spots = new Map(CARRY_CURRENCIES.map((currency) => [currency.code, dollarsPerUnit(spotResult.value.get(currency.ticker), currency.usdPerUnit)]));
-    return { calculatedAt: new Date().toISOString(), rateErrors, usRateSource, rateSources, fetchedByDateRange: spotResult.value.fetchedByDateRange, ...calculateFxCarry({ spots, rates, usRate }) };
+    return { calculatedAt: new Date().toISOString(), rateErrors, usRateSource, rateSources, fetchedByDateRange: spotResult.value.fetchedByDateRange, ...calculateFxCarry({ spots, rates, usRate }), momentumRecord: calculateFxMomentumRecord(spots) };
   });
 }
 
