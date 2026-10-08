@@ -15,6 +15,8 @@
  * never as a pass.
  */
 
+import { evaluateTrackRecord } from './trackRecord.js';
+
 const HOLDS = 0.6;
 const REVERSED = -0.2;
 
@@ -57,6 +59,37 @@ const COMPONENT_PHRASES = {
   thin: (unit) => `has too few independent ${unit} to rank`,
   unavailable: () => 'could not be replayed',
 };
+
+/**
+ * Each input of a composite score run through the evaluator on its own, in
+ * the score's assumed order, with a one-line summary at `days`: its ordering
+ * before and after the cutoff, the held-out gap between the band the score
+ * favors and the band it disfavors, and the scorecard's verdict.
+ *
+ * @param {{ components: Array<{ key: string, label: string, weight?: number }>, observationsByComponent: Record<string, object[]>, order: Array<{ key: string, label: string }>, horizonDays: number[], days: number, stepDays?: number }} input
+ */
+export function componentRecords({ components, observationsByComponent, order, horizonDays, days, stepDays = 7 }) {
+  return components.map((component) => {
+    const observations = observationsByComponent?.[component.key] ?? [];
+    const record = evaluateTrackRecord({ observations, order, horizons: horizonDays.map((horizon) => ({ days: horizon })), stepDays });
+    const horizon = record.status === 'calculated' ? record.horizons.find((entry) => entry.days === days) : null;
+    const favored = horizon?.states.find((state) => state.key === order[0].key)?.heldOut.stats.median;
+    const disfavored = horizon?.states.find((state) => state.key === order.at(-1).key)?.heldOut.stats.median;
+    return {
+      key: component.key,
+      label: component.label,
+      weight: component.weight ?? null,
+      summary: horizon ? {
+        days,
+        developmentOrdering: horizon.development.ordering,
+        heldOutOrdering: horizon.heldOut.ordering,
+        heldOutSpread: Number.isFinite(favored) && Number.isFinite(disfavored) ? Math.round((favored - disfavored) * 100) / 100 : null,
+        verdict: verdictFor(horizon.development.ordering, horizon.heldOut.ordering),
+      } : null,
+      record: record.status === 'calculated' ? { ...record, readHorizonDays: days } : record,
+    };
+  });
+}
 
 /**
  * Which of a score's inputs carries it: each input's own verdict at the read

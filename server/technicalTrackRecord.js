@@ -1,6 +1,6 @@
 import { calculateTechnicalSnapshot } from './analytics.js';
 import { describeCurrentState, evaluateTrackRecord, forwardObservations } from './trackRecord.js';
-import { describeComponents, verdictFor } from './scorecard.js';
+import { componentRecords, describeComponents } from './scorecard.js';
 
 /**
  * Whether technical-v1's regimes have meant anything.
@@ -117,31 +117,12 @@ export function describeTechnicalRecord(record, name, regime) {
 }
 
 /**
- * Each component's record with every asset's weeks pooled, and a one-line
- * summary at `days`: its ordering before and after the cutoff, the held-out
- * spread between its high and low bands, and the scorecard's verdict.
+ * Each component's record with every asset's weeks pooled; see
+ * componentRecords. High is the band the score favors, so the spread is high
+ * minus low.
  */
 export function pooledComponentRecords(observationsByComponent, { days = 90 } = {}) {
-  return TECHNICAL_COMPONENTS.map((component) => {
-    const observations = observationsByComponent[component.key] ?? [];
-    const record = evaluateTrackRecord({ observations, order: COMPONENT_BANDS, horizons: HORIZON_DAYS.map((horizonDays) => ({ days: horizonDays })), stepDays: 7 });
-    const horizon = record.status === 'calculated' ? record.horizons.find((entry) => entry.days === days) : null;
-    const high = horizon?.states.find((state) => state.key === 'high')?.heldOut.stats.median;
-    const low = horizon?.states.find((state) => state.key === 'low')?.heldOut.stats.median;
-    return {
-      key: component.key,
-      label: component.label,
-      weight: component.weight,
-      summary: horizon ? {
-        days,
-        developmentOrdering: horizon.development.ordering,
-        heldOutOrdering: horizon.heldOut.ordering,
-        heldOutSpread: Number.isFinite(high) && Number.isFinite(low) ? Math.round((high - low) * 100) / 100 : null,
-        verdict: verdictFor(horizon.development.ordering, horizon.heldOut.ordering),
-      } : null,
-      record: record.status === 'calculated' ? { ...record, readHorizonDays: days } : record,
-    };
-  });
+  return componentRecords({ components: TECHNICAL_COMPONENTS, observationsByComponent, order: COMPONENT_BANDS, horizonDays: HORIZON_DAYS, days });
 }
 
 /** The pooled components' verdicts as one sentence; see describeComponents. */

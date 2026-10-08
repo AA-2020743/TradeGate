@@ -1,5 +1,6 @@
 import { ordinal, percentileRank } from './statistics.js';
 import { evaluateTrackRecord, forwardObservations } from './trackRecord.js';
+import { componentRecords, describeComponents } from './scorecard.js';
 
 /**
  * How much to buy, as a function of how expensive the thing already is.
@@ -379,7 +380,7 @@ export function weeklyTierReads(prepared, step = weeklyStep(prepared)) {
   const reads = [];
   for (let index = 0; index < prepared.values.length; index += step) {
     const read = riskAt(prepared, index);
-    if (read?.status === 'calculated') reads.push({ index, tier: read.tier });
+    if (read?.status === 'calculated') reads.push({ index, tier: read.tier, percentiles: Object.fromEntries(read.components.map((component) => [component.key, component.percentile])) });
   }
   return reads;
 }
@@ -439,6 +440,21 @@ export function backtestAccumulation(prepared, { cadenceSessions, reads } = {}) 
 const TRACK_HORIZON_DAYS = [30, 90, 180];
 
 /**
+ * Each risk component on its own, in thirds of its percentile. The ladder
+ * assumes the cheap third precedes the best returns, so it comes first.
+ */
+export const COMPONENT_THIRDS = [
+  { key: 'low', label: 'Bottom third (cheap)' },
+  { key: 'middle', label: 'Middle third' },
+  { key: 'high', label: 'Top third (stretched)' },
+];
+
+export function componentThird(percentile) {
+  if (!Number.isFinite(percentile)) return null;
+  return percentile <= 33 ? 'low' : percentile >= 67 ? 'high' : 'middle';
+}
+
+/**
  * What followed each tier. The ladder assumes cheaper tiers precede better
  * returns; this measures whether they did, on a held-out block as well as
  * the development history, against what an ordinary week was followed by.
@@ -451,7 +467,15 @@ export function accumulationTrackRecord(prepared, reads = weeklyTierReads(prepar
     samples: reads.map((read) => ({ index: read.index, label: read.tier.key })),
     horizons,
   });
-  return { observations, record: evaluateTrackRecord({ observations, order: TIERS.map((tier) => ({ key: tier.key, label: tier.label })), horizons, stepDays: 7 }) };
+  // The same weeks labeled by each component's third, so the pooled record
+  // can say which component, if any, the tiers' order comes from.
+  const componentObservations = Object.fromEntries(COMPONENTS.map((component) => [component.key, forwardObservations({
+    dates: prepared.dates,
+    values: prepared.values,
+    samples: reads.map((read) => ({ index: read.index, label: componentThird(read.percentiles?.[component.key]) })),
+    horizons,
+  })]));
+  return { observations, componentObservations, record: evaluateTrackRecord({ observations, order: TIERS.map((tier) => ({ key: tier.key, label: tier.label })), horizons, stepDays: 7 }) };
 }
 
 function signed(value) {
@@ -550,7 +574,10 @@ export function calculateAccumulationSchedule({ key, name, points, baselineContr
     // Raw observations are only kept for pooling across assets; the provider
     // strips them before anything is sent to a browser.
     // Named apart from `observations`, which is already the price-point count.
-    ...(keepObservations ? { weeklyObservations: track.observations.map((observation) => ({ ...observation, asset: key })) } : {}),
+    ...(keepObservations ? {
+      weeklyObservations: track.observations.map((observation) => ({ ...observation, asset: key })),
+      weeklyComponentObservations: Object.fromEntries(Object.entries(track.componentObservations).map(([component, list]) => [component, list.map((observation) => ({ ...observation, asset: key }))])),
+    } : {}),
     // Published because it is the reading's main weakness. An asset that has
     // spent its whole history extended has a risk distribution centred on
     // extended, so a middling percentile there is not the same claim as a
@@ -675,11 +702,25 @@ export function pooledTrackRecord(schedules) {
   const read = legs.length
     ? `Pooled across ${assets.size} assets, the median 90-day return in the held-out block since ${record.holdoutFrom} was ${legs.length > 1 ? `${legs.slice(0, -1).join(', ')} and ${legs.at(-1)}` : legs[0]}.${Number.isFinite(ordered) ? ` Tier ordering in that block scored ${ordered > 0 ? '+' : ''}${ordered}, where +1 is exactly the order the ladder assumes and -1 exactly the reverse.` : ''} This describes what followed, not what will.`
     : `Pooled across ${assets.size} assets, the held-out block since ${record.holdoutFrom} still holds too few independent 90-day windows per tier to report.`;
+  // Which of the three components, if any, the tiers' order comes from.
+  const observationsByComponent = {};
+  for (const schedule of schedules ?? []) {
+    for (const [key, list] of Object.entries(schedule?.weeklyComponentObservations ?? {})) observationsByComponent[key] = [...(observationsByComponent[key] ?? []), ...list];
+  }
+  const components = componentRecords({
+    components: COMPONENTS.map((component) => ({ key: component.key, label: component.label, weight: Math.round(component.weight * 100) })),
+    observationsByComponent,
+    order: COMPONENT_THIRDS,
+    horizonDays: TRACK_HORIZON_DAYS,
+    days: 90,
+  });
   return {
     ...record,
     assets: [...assets],
     readHorizonDays: 90,
-    read,
+    read: `${read}${describeComponents(components, 90, { unit: 'weeks' })}`,
+    components,
+    componentNote: 'Each component is split into thirds of its own percentile - the bottom third cheap, the top third stretched - and tested in the order the ladder assumes, cheap first, with every asset’s weeks pooled. The three components rise together in a sustained advance, so their verdicts are not independent of one another.',
     limits: `${record.limits} The pooled assets move together - the S&P and the Nasdaq most of all - so the effective sample overstates the independent evidence.`,
   };
 }

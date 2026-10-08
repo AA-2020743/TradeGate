@@ -1743,7 +1743,10 @@ export async function getAccumulationSchedules() {
     // Pool the weekly observations first, then drop them: they are thousands
     // of rows per asset and exist only to build the pooled record.
     const pooled = pooledTrackRecord(schedules);
-    for (const schedule of schedules) delete schedule.weeklyObservations;
+    for (const schedule of schedules) {
+      delete schedule.weeklyObservations;
+      delete schedule.weeklyComponentObservations;
+    }
     const published = schedules.filter((schedule) => schedule.status !== 'unavailable');
     return {
       ...resolveVintage(published.map((schedule) => ({ name: schedule.name, asOf: schedule.asOf }))),

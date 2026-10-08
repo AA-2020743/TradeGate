@@ -936,6 +936,8 @@ function AccumulationPanel({ accumulation, only = null, title = 'ACCUMULATION RU
       </> : <>
         {accumulation.trackRecord?.read ? <p className="dca-read">{accumulation.trackRecord.read}</p> : null}
         <TrackRecordTable record={accumulation.trackRecord} title="POOLED TRACK RECORD" />
+        <ComponentRecordsTable components={accumulation.trackRecord?.components} spreadLabel="Cheap minus stretched, held out" />
+        {accumulation.trackRecord?.components ? <p className="model-footnote">{accumulation.trackRecord.componentNote}</p> : null}
       </>}
 
       {!single ? (accumulation.byClass ?? []).filter((entry) => entry.allocation?.status === 'calculated').map((entry) => <p className="dca-read" key={entry.klass}>

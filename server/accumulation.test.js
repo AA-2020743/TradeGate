@@ -11,6 +11,8 @@ import {
   weeklyTierReads,
   accumulationTrackRecord,
   pooledTrackRecord,
+  componentThird,
+  ACCUMULATION_COMPONENTS,
 } from './accumulation.js';
 
 /** Deterministic noise: the tests must not be able to pass or fail by luck. */
@@ -305,4 +307,52 @@ test('the table opens on the horizon the read is written about', () => {
   const schedule = calculateAccumulationSchedule({ key: 'x', name: 'X', points: cyclical() });
   assert.ok([30, 90, 180].includes(schedule.trackRecord.readHorizonDays));
   assert.match(schedule.trackRecord.read, new RegExp(`over ${schedule.trackRecord.readHorizonDays} days`));
+});
+
+test('component thirds split the percentile at 33 and 67', () => {
+  assert.equal(componentThird(33), 'low');
+  assert.equal(componentThird(34), 'middle');
+  assert.equal(componentThird(66), 'middle');
+  assert.equal(componentThird(67), 'high');
+  assert.equal(componentThird(null), null);
+});
+
+test('each weekly read carries the component percentiles its tier was built from', () => {
+  const prepared = prepareAccumulationSeries(cyclical());
+  const reads = weeklyTierReads(prepared);
+  for (const read of [reads[0], reads[40], reads.at(-1)]) {
+    const direct = riskAt(prepared, read.index);
+    assert.deepEqual(read.percentiles, Object.fromEntries(direct.components.map((component) => [component.key, component.percentile])));
+  }
+  const { observations, componentObservations } = accumulationTrackRecord(prepared, reads);
+  for (const component of ACCUMULATION_COMPONENTS) {
+    const list = componentObservations[component.key];
+    assert.ok(list.length > 100, component.key);
+    // Same weeks and forward returns as the tiers; only the label differs.
+    const tierReturns = new Map(observations.map((observation) => [observation.date, observation.returns]));
+    assert.ok(list.every((observation) => tierReturns.has(observation.date) && ['low', 'middle', 'high'].includes(observation.label)));
+    assert.deepEqual(list.map((observation) => observation.returns), list.map((observation) => tierReturns.get(observation.date)));
+  }
+});
+
+test('component observations are kept only when asked for', () => {
+  assert.equal(calculateAccumulationSchedule({ key: 'x', name: 'X', points: cyclical() }).weeklyComponentObservations, undefined);
+  const kept = calculateAccumulationSchedule({ key: 'x', name: 'X', points: cyclical(), keepObservations: true });
+  assert.deepEqual(Object.keys(kept.weeklyComponentObservations), ACCUMULATION_COMPONENTS.map((component) => component.key));
+  assert.ok(Object.values(kept.weeklyComponentObservations).every((list) => list.every((observation) => observation.asset === 'x')));
+});
+
+test('the pooled record ranks each component on its own, cheap third first', () => {
+  const schedules = [0, 260, 520].map((phase, index) => calculateAccumulationSchedule({ key: `a${index}`, name: `A${index}`, points: cyclical(phase, index + 3), keepObservations: true }));
+  const pooled = pooledTrackRecord(schedules);
+  assert.deepEqual(pooled.components.map((component) => [component.key, component.weight]), [['stretch', 35], ['drawdown', 35], ['momentum', 30]]);
+  for (const component of pooled.components) {
+    assert.equal(component.record.status, 'calculated', component.key);
+    assert.deepEqual(component.record.horizons[0].states.map((state) => state.key), ['low', 'middle', 'high']);
+    assert.equal(component.summary.days, 90);
+  }
+  assert.match(pooled.read, /Ranked on its own over 90 days, stretch above the 1Y mean /);
+  assert.match(pooled.read, /; and 1Y momentum [^;]+\.$/);
+  assert.doesNotMatch(pooled.read, /undefined|NaN|null/);
+  assert.match(pooled.componentNote, /not independent/);
 });
