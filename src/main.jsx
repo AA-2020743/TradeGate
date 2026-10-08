@@ -1100,6 +1100,10 @@ function FactorReturnsPanel({ factors }) {
         <div><span>Momentum crash setup</span><b className={factors.momentumCrash?.elevated ? 'negative' : ''}>{factors.momentumCrash?.status === 'calculated' ? (factors.momentumCrash.elevated ? 'Present' : 'Absent') : '\u2014'}</b><small>{factors.momentumCrash?.status === 'calculated' ? `market ${signedPct(factors.momentumCrash.marketTwoYearPercent)} over 2y, ${signedPct(factors.momentumCrash.marketOneMonthPercent)} over 1m` : ''}</small></div>
       </div>
       {factors.read ? <p className="dca-read">{factors.read}</p> : null}
+      {factors.factorMomentum?.status === 'calculated' ? <>
+        <p className="dca-read">{factors.factorMomentum.read}</p>
+        <TrackRecordTable record={factors.factorMomentum.record} title="FACTOR MOMENTUM: WHAT FOLLOWED A FACTOR'S PAST YEAR" stateLabel="Past year" assumption="factor momentum assumes" unit="months" />
+      </> : factors.factorMomentum?.reason ? <p className="treasury-note">Factor momentum: {factors.factorMomentum.reason}</p> : null}
       <p className="treasury-note">{factors.freshness}{factors.momentumCrash?.rule ? ` Crash setup rule: ${factors.momentumCrash.rule}` : ''}</p>
     </> : <div className="equity-empty">{factors?.reason ?? 'The Kenneth French data library is required.'}</div>}
     <p className="model-footnote">{factors?.methodology ?? ''} {factors?.limits ?? ''}</p>

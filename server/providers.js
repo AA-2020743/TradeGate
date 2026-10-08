@@ -16,7 +16,8 @@ import { calculateRatioValuation, compareIncomeContribution, rankHardMoneyStreng
 import { allocateAcrossAssets, calculateAccumulationSchedule, describeLadder, pooledTrackRecord } from './accumulation.js';
 import { calculateCryptoOptionsSurface } from './cryptoOptions.js';
 import { calculateTreasuryFunding } from './treasuryFunding.js';
-import { calculateFactorReturns, joinFactorTables, parseFrenchDaily } from './factorReturns.js';
+import { FACTORS as FRENCH_FACTORS, calculateFactorReturns, joinFactorTables, parseFrenchDaily } from './factorReturns.js';
+import { calculateFactorMomentum } from './factorMomentum.js';
 import { readLargestTextEntry } from './zip.js';
 import { combineFundingVenues, okxPositioningRows } from './derivativesVenues.js';
 import { TECHNICAL_REGIMES, describeTechnicalRecord, technicalTrackRecord } from './technicalTrackRecord.js';
@@ -1877,7 +1878,7 @@ export async function getFactorReturns() {
       ? joinFactorTables(fiveResult.value, momentumResult.value)
       : fiveResult.value;
     const missing = momentumResult.status === 'rejected' ? { Mom: `The momentum file could not be read: ${momentumResult.reason?.message ?? 'failed'}` } : {};
-    return { ...calculateFactorReturns(rows, { missing }), source: 'Kenneth R. French Data Library', errors };
+    return { ...calculateFactorReturns(rows, { missing }), factorMomentum: calculateFactorMomentum(rows, FRENCH_FACTORS), source: 'Kenneth R. French Data Library', errors };
   });
 }
 

@@ -128,13 +128,13 @@ export const MODEL_REGISTRY = [
     id: 'factor-returns-v1',
     name: 'Factor returns',
     page: 'Equities',
-    measures: 'Fama-French five factors and momentum, ranked against their history since 1963.',
+    measures: 'Fama-French five factors and momentum, ranked against their history since 1963, with a track record of factor momentum: whether a factor coming off a positive year outperformed one coming off a negative year over the next one and three months.',
     inputs: ['Kenneth R. French Data Library'],
     failureModes: [
       'Published monthly with a lag of weeks; describes the regime that was, not this week.',
       'Academic long-short portfolios before costs; no fund earns them exactly.',
     ],
-    trackRecord: null,
+    trackRecord: 'factor-momentum-v1',
   },
   {
     id: 'price-crosscheck-v1',
