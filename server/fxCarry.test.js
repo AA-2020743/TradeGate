@@ -1,0 +1,76 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { CARRY_CURRENCIES, calculateFxCarry, dollarsPerUnit } from './fxCarry.js';
+
+function tradingDays(count) {
+  const out = [];
+  for (let time = Date.UTC(2016, 0, 4); out.length < count; time += 86_400_000) {
+    const day = new Date(time).getUTCDay();
+    if (day !== 0 && day !== 6) out.push(new Date(time).toISOString().slice(0, 10));
+  }
+  return out;
+}
+
+function noise(seed) {
+  let state = seed;
+  return () => { state = (state * 1103515245 + 12345) % 2147483648; return state / 2147483648 - 0.5; };
+}
+
+// Fixed rate gaps per currency. With `paid`, spot drifts by less than the
+// carry (high-yielders earn); without it, spot falls by exactly the carry
+// (uncovered interest parity holds and carry earns nothing).
+function market({ sessions = 2500, paid = true, seed = 5, stale = null } = {}) {
+  const random = noise(seed);
+  const axis = tradingDays(sessions);
+  const gaps = { EUR: -1, GBP: 0.5, JPY: -3, CHF: -2.5, AUD: 2, NZD: 2.5, CAD: 0 };
+  const spots = new Map();
+  const rates = new Map();
+  for (const currency of CARRY_CURRENCIES) {
+    let level = 1;
+    const drift = paid ? 0 : -gaps[currency.code] / 100 / 252;
+    spots.set(currency.code, axis.map((date) => { level *= 1 + drift + 0.006 * random(); return { date, value: level }; }));
+    const months = [...new Set(axis.map((date) => date.slice(0, 7)))].filter((month) => currency.code !== stale || month < '2020-01');
+    rates.set(currency.code, months.map((month) => ({ date: `${month}-01`, value: 2 + gaps[currency.code] })));
+  }
+  const usRate = [...new Set(axis.map((date) => date.slice(0, 7)))].map((month) => ({ date: `${month}-01`, value: 2 }));
+  return { spots, rates, usRate };
+}
+
+test('a quote per dollar is inverted to dollars per unit', () => {
+  assert.deepEqual(dollarsPerUnit([{ date: '2026-01-02', value: 4 }], false), [{ date: '2026-01-02', value: 0.25 }]);
+  assert.deepEqual(dollarsPerUnit([{ date: '2026-01-02', value: 1.1 }], true), [{ date: '2026-01-02', value: 1.1 }]);
+});
+
+test('when spot does not offset it, high carry is followed by higher returns and the trade earns its carry', () => {
+  const result = calculateFxCarry(market({ paid: true }));
+  assert.equal(result.status, 'calculated', result.reason);
+  assert.deepEqual(result.trade.long, ['NZD', 'AUD']);
+  assert.deepEqual(result.trade.short, ['CHF', 'JPY']);
+  assert.equal(result.trade.carry, 5.0);
+  assert.equal(result.currencies[0].carry, 2.5);
+  assert.ok(result.currencies[0].volatility > 1.5 && result.currencies[0].volatility < 5, `${result.currencies[0].volatility}`);
+  assert.ok(Math.abs(result.spreadHistory.annualReturn - 5) < 3, `${result.spreadHistory.annualReturn}`);
+  const horizon = result.record.horizons.find((entry) => entry.days === 90);
+  assert.ok(horizon.development.ordering >= 0.6, `${horizon.development.ordering}`);
+  assert.match(result.read, /^Against a U\.S\. 3-month rate of 2%, the NZD pays the most carry \(\+2\.5 pts, [\d.]+ per unit of volatility\) and the JPY the least \(-3 pts\)/);
+  assert.match(result.read, /long NZD and AUD against CHF and JPY earns 5 points a year of carry/);
+});
+
+test('when spot falls by exactly the carry, the trade earns about nothing', () => {
+  const result = calculateFxCarry(market({ paid: false }));
+  assert.ok(Math.abs(result.spreadHistory.annualReturn) < 3, `${result.spreadHistory.annualReturn}`);
+});
+
+test('a currency whose rate stopped publishing is left out and named', () => {
+  const result = calculateFxCarry(market({ stale: 'JPY' }));
+  assert.equal(result.status, 'calculated');
+  assert.ok(result.excluded.some((entry) => entry.startsWith('JPY: rate last published 2019-12')));
+  assert.ok(!result.currencies.some((row) => row.code === 'JPY'));
+});
+
+test('too few currencies or too short a history refuses with a reason', () => {
+  const input = market({ sessions: 2500 });
+  for (const code of ['EUR', 'GBP', 'JPY']) input.spots.delete(code);
+  assert.match(calculateFxCarry(input).reason, /at least 5 currencies/);
+  assert.match(calculateFxCarry(market({ sessions: 900 })).reason, /months of spot and rates; 60 are needed/);
+});

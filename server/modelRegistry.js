@@ -218,6 +218,19 @@ export const MODEL_REGISTRY = [
     trackRecord: 'screener-track-record-v1',
   },
   {
+    id: 'fx-carry-v1',
+    name: 'Currency carry',
+    page: 'Forex',
+    measures: 'Each major currency\u2019s 3-month rate gap to the dollar, its carry per unit of realized volatility, and a monthly track record of the high-, middle- and low-carry groups\u2019 returns against the dollar including carry, with the high-minus-low trade\u2019s worst months.',
+    inputs: ['FRED OECD 3-month interbank rates (IR3TIB01 series) for the U.S. and seven currencies', 'Ten years of daily Yahoo spot rates against the dollar'],
+    failureModes: [
+      'Interbank rates are a proxy for the forward points a trade earns, and OECD publishes them weeks late.',
+      'Seven currencies make two-currency groups; one central bank moves a whole group.',
+      'Carry loses in sudden risk-off unwinds, which a decade holds only a few of.',
+    ],
+    trackRecord: 'fx-carry-v1',
+  },
+  {
     id: 'diversification-regime-v1',
     name: 'Diversification regime',
     page: 'Markets',

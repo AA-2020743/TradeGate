@@ -1636,6 +1636,45 @@ function DiversificationPanel() {
   </article>;
 }
 
+function FxCarryPanel() {
+  const { status: loadStatus, data: model, error } = useLazyResource('/api/analytics/fx-carry');
+  const published = model?.status === 'calculated';
+  const signedPts = (value) => (Number.isFinite(value) ? `${value > 0 ? '+' : ''}${value}` : '\u2014');
+  const history = model?.spreadHistory;
+  return <article className={`panel fx-carry-panel ${published ? '' : 'preview-section'}`}>
+    <div className="panel-title">
+      <div>
+        <StatusKicker label="CURRENCY CARRY" published={published} />
+        <h3>{published ? `Long ${model.trade.long.join(' and ')} against ${model.trade.short.join(' and ')} carries ${model.trade.carry} points a year` : loadStatus === 'loading' ? 'Reading interbank rates and ten years of spot\u2026' : 'Awaiting interbank rates and spot histories'}</h3>
+      </div>
+      {published ? <span className="data-pill">U.S. 3m {model.usRate}% · {model.usRateMonth}</span> : null}
+    </div>
+    {published ? <>
+      {model.excluded?.length ? <p className="portfolio-missing" role="status">Left out: {model.excluded.join('; ')}.</p> : null}
+      <div className="valuation-buckets" role="table" aria-label="Carry by currency against the dollar">
+        <div className="valuation-bucket fx-carry-row valuation-head" role="row"><span role="columnheader">Currency</span><span role="columnheader">3m rate</span><span role="columnheader">Carry vs USD</span><span role="columnheader">Volatility</span><span role="columnheader">Carry / vol</span><span role="columnheader">Spot 3m</span></div>
+        {model.currencies.map((row) => <div className={`valuation-bucket fx-carry-row ${row.group === 'high' ? 'current' : ''}`} role="row" key={row.code}>
+          <span role="cell"><b>{row.code}</b> <small className="recession-span">{row.name} · {row.group === 'high' ? 'high carry' : row.group === 'low' ? 'low carry' : 'middle'}</small></span>
+          <span role="cell">{row.rate}%<small className="recession-span">{row.rateMonth}</small></span>
+          <span role="cell" className={row.carry > 0 ? 'positive' : row.carry < 0 ? 'negative' : undefined}>{signedPts(row.carry)} pts</span>
+          <span role="cell">{row.volatility ?? '\u2014'}%</span>
+          <span role="cell">{row.carryToVol ?? '\u2014'}</span>
+          <span role="cell" className={row.spotChange3m >= 0 ? 'positive' : 'negative'}>{signedPts(row.spotChange3m)}%</span>
+        </div>)}
+      </div>
+      <p className="dca-read">{model.read}</p>
+      <div className="portfolio-stats">
+        <div><span>High minus low</span><b>{signedPts(history.annualReturn)}%</b><small>a year since {history.from.slice(0, 4)}, incl. carry</small></div>
+        <div><span>Its volatility</span><b>{history.annualVolatility}%</b><small>Sharpe {history.sharpe ?? '\u2014'}</small></div>
+        <div><span>Median month</span><b>{signedPts(history.medianMonth)}%</b><small>{history.months} months</small></div>
+        <div><span>Worst month</span><b className="negative">{history.worstMonths[0].value}%</b><small>{history.worstMonths[0].month} · long {history.worstMonths[0].long.join('/')}</small></div>
+      </div>
+      <TrackRecordTable record={model.record} title="WHAT FOLLOWED EACH CARRY GROUP, AGAINST THE DOLLAR" stateLabel="Group" assumption="carry assumes" unit="months" />
+      <p className="model-footnote">{model.methodology} {model.limits}</p>
+    </> : <div className="equity-empty">{model?.reason ?? (loadStatus === 'loading' ? 'Eight monthly FRED series and seven spot histories; cached for twelve hours.' : `The carry model could not be loaded: ${error}`)}</div>}
+  </article>;
+}
+
 const RECESSION_OUTCOME_LABELS = { followed: 'Recession followed', 'not followed': 'No recession within 2 years', pending: 'Too soon to judge', late: 'Recession already underway' };
 
 function RecessionProbabilityPanel() {
@@ -3257,6 +3296,7 @@ function ForexDashboard({ data }) {
       <div className="model-tabs"><button className="active">Live workspace</button></div>
     </section>
     <DataDisclosure data={data} message="Currency momentum, CFTC positioning, commodity links, and rotation signals are versioned calculations from Yahoo crosses, CFTC COT futures data, and stored FRED H.10 rates." />
+    <FxCarryPanel />
     <section className="macro-section-heading"><div><p className="section-kicker">POSITIONING AND MOMENTUM</p><h2>Where currencies stand against the dollar</h2></div><span className="data-pill">{fxWorkspace?.usdBreadth ? `${fxWorkspace.usdBreadth.read} · USD stronger vs ${fxWorkspace.usdBreadth.strong20d}/${fxWorkspace.usdBreadth.total} crosses (20D)` : '20-session momentum'}</span></section>
     <section className="forex-grid">
       <article className={`fx-outlook-panel panel ${calculatedCurrencies.length ? '' : 'preview-section'}`}><div className="panel-title"><div><StatusKicker label="20-SESSION RELATIVE-VALUE OUTLOOK" published={Boolean(calculatedCurrencies.length)} /><h3>Currency momentum versus the dollar</h3></div><span className="data-pill">{calculatedCurrencies.length ? `${calculatedCurrencies.length} of ${currencyMomentum.length} calculated` : 'Awaiting rates'}</span></div><div className="fx-outlook-head"><span>Currency</span><span>Bias</span><span>Score</span><span>Dominant driver</span></div>{currencyMomentum.map((row) => <div className="fx-outlook-row" key={row.currency}><b>{row.currency}</b><span className={row.bias === 'USD weak' ? 'positive' : row.bias === 'USD strong' ? 'negative' : 'neutral'}>{row.bias}</span><strong>{row.score ?? '—'}</strong><small>{Number.isFinite(row.change) ? `${row.change > 0 ? '+' : ''}${row.change.toFixed(2)}% 20-session` : row.driver}</small></div>)}{fxWorkspace?.usdBreadth && <div className="fx-outlook-row" key="usd-breadth"><b>USD</b><span className={fxWorkspace.usdBreadth.pct20d >= 70 ? 'negative' : fxWorkspace.usdBreadth.pct20d <= 30 ? 'positive' : 'neutral'}>{fxWorkspace.usdBreadth.read}</span><strong>{fxWorkspace.usdBreadth.pct20d ?? '—'}</strong><small>{`stronger vs ${fxWorkspace.usdBreadth.strong20d}/${fxWorkspace.usdBreadth.total} crosses 20D · ${fxWorkspace.usdBreadth.strong60d}/60D window`}</small></div>}<p className="model-footnote">Six currencies come from the calculated FX workspace (Yahoo crosses oriented for currency strength, technical-v1 scores, CFTC COT percentiles); CNH derives from stored FRED H.10 rates. Per-USD quotes are inverted so positive change means currency strength. The USD breadth row counts crosses where the dollar gained over the trailing 20 and 60 sessions.</p></article>

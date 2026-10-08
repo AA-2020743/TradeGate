@@ -10,6 +10,7 @@ import {
   getCryptoOptionsWorkspace,
   getDiversificationRegime,
   getFactorReturns,
+  getFxCarry,
   getGoldRealYield,
   getIndexValuation,
   getLiquiditySnapshot,
@@ -130,6 +131,18 @@ export const SOURCES = [
     endpoint: '/api/analytics/price-crosscheck',
     load: getPriceCrossCheck,
     figure: (payload) => `${payload.passed?.length ?? 0} verified, ${payload.review?.length ?? 0} under review, ${payload.notIndependent?.length ?? 0} not independent, ${payload.unavailable?.length ?? 0} unavailable`,
+  },
+  {
+    name: 'FRED OECD 3-month rates + Yahoo FX (carry)',
+    endpoint: '/api/analytics/fx-carry',
+    load: getFxCarry,
+    answered: (payload) => payload.status === 'calculated' && !(payload.excluded ?? []).length,
+    figure: (payload) => (payload.trade ? `${payload.currencies.length} currencies, US rate ${payload.usRate}% (${payload.usRateMonth}); long ${payload.trade.long.join('/')} vs ${payload.trade.short.join('/')} carries ${payload.trade.carry} pts${payload.excluded?.length ? `; left out: ${payload.excluded.join(', ')}` : ''}` : null),
+    plausible: (payload) => [
+      { label: 'US 3m rate', value: payload.usRate, min: -1, max: 10, unit: '%' },
+      { label: 'widest carry', value: payload.currencies?.[0]?.carry, min: -8, max: 12, unit: ' pts' },
+      { label: 'high-minus-low months', value: payload.spreadHistory?.months, min: 60, max: 130 },
+    ],
   },
   {
     name: 'Yahoo 10-year asset-class ETFs (diversification)',

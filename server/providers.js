@@ -30,6 +30,7 @@ import { RECESSION_PROBABILITY_VERSION, calculateRecessionProbability } from './
 import { GOLD_REAL_YIELD_VERSION, calculateGoldRealYield } from './goldRealYield.js';
 import { BITCOIN_CROSS_ASSET_VERSION, calculateBitcoinCrossAsset } from './bitcoinCrossAsset.js';
 import { DIVERSIFICATION_ASSETS, DIVERSIFICATION_VERSION, calculateDiversificationRegime } from './diversificationRegime.js';
+import { CARRY_CURRENCIES, FX_CARRY_VERSION, US_RATE_SERIES, calculateFxCarry, dollarsPerUnit } from './fxCarry.js';
 import { INDEX_VALUATION_VERSION, SHILLER_FALLBACK_URLS, SHILLER_PAGE, calculateIndexValuation, findShillerDataLink, parseShillerRows } from './indexValuation.js';
 import { readWorkbook, sheetRows } from './xls.js';
 import { ALERT_HORIZONS, ALERT_OUTCOMES_VERSION, BENCHMARK, claimFor, scoreAlertOutcomes } from './alertOutcomes.js';
@@ -2082,6 +2083,36 @@ export async function getDiversificationRegime() {
     const missing = symbols.filter((symbol) => !histories.get(symbol)?.length);
     if (missing.length) return { version: DIVERSIFICATION_VERSION, status: 'unavailable', reason: `Yahoo returned no ten-year history for ${missing.join(', ')}.` };
     return { asOf: new Date().toISOString(), source: 'Yahoo Finance daily closes', ...calculateDiversificationRegime({ histories }) };
+  });
+}
+
+/**
+ * Currency carry from OECD 3-month interbank rates (FRED, monthly) and ten
+ * years of keyless Yahoo spot rates. Rates change monthly, so the reading is
+ * cached for twelve hours.
+ */
+export async function getFxCarry() {
+  return withCache('analytics:fx-carry', 12 * 60 * 60_000, async () => {
+    const rateSeries = [{ code: 'USD', id: US_RATE_SERIES }, ...CARRY_CURRENCIES.map((currency) => ({ code: currency.code, id: currency.rateSeries }))];
+    const [spotResult, ...rateResults] = await Promise.allSettled([
+      getSparkDatedHistories(CARRY_CURRENCIES.map((currency) => currency.ticker), '10y'),
+      ...rateSeries.map((series) => {
+        const request = { id: series.id, key: `rate3m${series.code}`, name: `${series.code} 3-month interbank rate` };
+        return config.fredApiKey ? getFredSeries(request) : getFredCsvSeries(request);
+      }),
+    ]);
+    if (spotResult.status === 'rejected') return { version: FX_CARRY_VERSION, status: 'unavailable', reason: `Yahoo spot rates did not load (${spotResult.reason?.message ?? 'failed'}).` };
+    const rates = new Map();
+    let usRate = [];
+    const rateErrors = [];
+    rateSeries.forEach((series, index) => {
+      const result = rateResults[index];
+      if (result.status === 'rejected') { rateErrors.push(`${series.id}: ${result.reason?.message ?? 'failed'}`); return; }
+      if (series.code === 'USD') usRate = result.value.history;
+      else rates.set(series.code, result.value.history);
+    });
+    const spots = new Map(CARRY_CURRENCIES.map((currency) => [currency.code, dollarsPerUnit(spotResult.value.get(currency.ticker), currency.usdPerUnit)]));
+    return { asOf: new Date().toISOString(), rateErrors, ...calculateFxCarry({ spots, rates, usRate }) };
   });
 }
 

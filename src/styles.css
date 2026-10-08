@@ -682,3 +682,12 @@ html[data-theme='dark'] .heldout-band { fill: #222c25; }
 
 /* Diversification regime (Markets) */
 .diversification-panel { margin-top: 16px; }
+
+/* Currency carry (Forex) */
+.fx-carry-panel { margin-top: 18px; }
+.valuation-bucket.fx-carry-row { grid-template-columns: minmax(0, 1.6fr) repeat(5, minmax(0, 0.8fr)); align-items: center; }
+@media (max-width: 700px) {
+  .valuation-bucket.fx-carry-row { grid-template-columns: minmax(0, 1.2fr) minmax(0, 0.9fr) minmax(0, 0.8fr) minmax(0, 0.7fr); gap: 0.4rem; }
+  .valuation-bucket.fx-carry-row > span:nth-child(2), .valuation-bucket.fx-carry-row > span:nth-child(4) { display: none; }
+  .valuation-bucket.fx-carry-row > span:last-child { display: block; }
+}

@@ -77,6 +77,14 @@ const FRED_RELEASE = {
   IRLTLT01DEM156N: { cadenceDays: 30.44, lagDays: 45, datedAt: 'start' },
   IRLTLT01JPM156N: { cadenceDays: 30.44, lagDays: 45, datedAt: 'start' },
   IRLTLT01GBM156N: { cadenceDays: 30.44, lagDays: 45, datedAt: 'start' },
+  IR3TIB01USM156N: { cadenceDays: 30.44, lagDays: 45, datedAt: 'start' },
+  IR3TIB01EZM156N: { cadenceDays: 30.44, lagDays: 45, datedAt: 'start' },
+  IR3TIB01GBM156N: { cadenceDays: 30.44, lagDays: 45, datedAt: 'start' },
+  IR3TIB01JPM156N: { cadenceDays: 30.44, lagDays: 45, datedAt: 'start' },
+  IR3TIB01CHM156N: { cadenceDays: 30.44, lagDays: 45, datedAt: 'start' },
+  IR3TIB01AUM156N: { cadenceDays: 30.44, lagDays: 45, datedAt: 'start' },
+  IR3TIB01NZM156N: { cadenceDays: 30.44, lagDays: 45, datedAt: 'start' },
+  IR3TIB01CAM156N: { cadenceDays: 30.44, lagDays: 45, datedAt: 'start' },
 };
 
 const DEFAULT_RELEASE = { cadenceDays: 4, lagDays: 1, datedAt: 'end' };
