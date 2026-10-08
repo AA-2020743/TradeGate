@@ -2128,26 +2128,37 @@ export async function getGoldRealYield() {
 
 /**
  * The section verdicts replayed on every second week of their inputs' history,
- * each call followed forward by the asset it is about. The macro series are
- * the liquidity snapshot's own, so the replay reads what the page reads.
+ * each call followed forward by what it is about. The macro series are the
+ * liquidity snapshot's own, so the replay reads what the page reads.
  */
 export async function getVerdictTrackRecords() {
   return withCache('analytics:verdict-records', 24 * 60 * 60_000, async () => {
-    const [snapshotResult, goldResult, bitcoinResult] = await Promise.allSettled([
+    const [snapshotResult, goldResult, bitcoinResult, pairsResult] = await Promise.allSettled([
       getLiquiditySnapshot(),
       getYahooDailyHistory('GC=F', '2002-12-01'),
       getYahooDailyHistory('BTC-USD', '2014-09-17'),
+      getLongDailyHistories(FX_PAIRS.map((pair) => pair.yahooSymbol), 10),
     ]);
     const errors = [
       snapshotResult.status === 'rejected' ? `Macro series: ${snapshotResult.reason?.message ?? 'failed'}` : null,
       goldResult.status === 'rejected' ? `Yahoo GC=F: ${goldResult.reason?.message ?? 'failed'}` : null,
       bitcoinResult.status === 'rejected' ? `Yahoo BTC-USD: ${bitcoinResult.reason?.message ?? 'failed'}` : null,
+      pairsResult.status === 'rejected' ? `Yahoo FX pairs: ${pairsResult.reason?.message ?? 'failed'}` : null,
     ].filter(Boolean);
     const seriesList = snapshotResult.status === 'fulfilled' ? (snapshotResult.value.series ?? []).filter((item) => !item.abandoned) : [];
     if (!seriesList.length) return { version: VERDICT_RECORD_VERSION, status: 'unavailable', reason: `The macro series every verdict reads did not load${errors.length ? ` (${errors.join('; ')})` : ''}.`, records: {}, errors };
+    // The pairs in dollars per unit of currency, inverted as the FX page
+    // inverts them, so a fall is the dollar gaining.
+    const pairs = Object.fromEntries(FX_PAIRS.flatMap((pair) => {
+      const points = pairsResult.status === 'fulfilled' ? pairsResult.value.get(pair.yahooSymbol) ?? [] : [];
+      return points.length ? [[`fx:${pair.key}`, points.map((point) => ({ date: point.date, value: pair.inverted ? 1 / point.value : point.value }))]] : [];
+    }));
     const closes = {
       gold: goldResult.status === 'fulfilled' ? goldResult.value : [],
       bitcoin: bitcoinResult.status === 'fulfilled' ? bitcoinResult.value : [],
+      // The dollar verdict is judged by the broad dollar index its model reads.
+      dollar: (seriesList.find((item) => item.key === 'dxy')?.history ?? []).map((point) => ({ date: point.date, value: point.value })),
+      ...pairs,
     };
     const records = await replayVerdicts({ seriesList, closes });
     const published = Object.values(records).filter((record) => record.status === 'calculated');

@@ -11,6 +11,7 @@ import {
   replayVerdicts,
   seriesListAsOf,
   replayDates,
+  usdBreadthAsOf,
 } from './verdictTrackRecord.js';
 import { calculateGlobalLiquidityModel } from './analytics.js';
 
@@ -53,6 +54,9 @@ const macroSeries = () => [
   series('japan10y', monthly((day) => 0.2 + wave(day, 900, 0.1))),
   series('uk10y', monthly((day) => 2 + wave(day, 900, 0.6))),
 ];
+// FX pairs in dollars per unit of currency, as the FX page quotes them after
+// inverting the USD-based ones: the dollar cycle runs through all of them.
+const fxPairs = Object.fromEntries(['eur', 'jpy', 'gbp', 'cad', 'aud', 'chf'].map((code, index) => [`fx:${code}`, dated(1, (day) => (1 + (index * 0.1)) * (1 + wave(day + (index * 20), 900, 0.07)) * (1 + (noise() * 0.004)), { weekdays: true })]));
 const gold = dated(1, (day) => 1300 * Math.exp(day / 3000) * (1 + wave(day + 90, 900, 0.12)) * (1 + (noise() * 0.01)), { weekdays: true });
 const bitcoin = dated(1, (day) => 600 * Math.exp(day / 900) * (1 + wave(day + 90, 900, 0.35)) * (1 + (noise() * 0.03)));
 
@@ -102,6 +106,15 @@ test('trimming each series to six years leaves every score the verdicts read unc
   }
 });
 
+test('cross-rate breadth counts the pairs the dollar gained on over the last 20 sessions', () => {
+  const rising = Array.from({ length: 30 }, (_, index) => ({ date: addDays('2020-01-01', index), value: 1 + (index * 0.01) }));
+  const falling = rising.map((point, index) => ({ ...point, value: 2 - (index * 0.01) }));
+  const breadth = usdBreadthAsOf({ 'fx:a': falling, 'fx:b': falling, 'fx:c': rising, gold: falling }, '2020-01-30');
+  // Two of the three pairs fell against the dollar; the gold series is not a pair.
+  assert.deepEqual(breadth, { total: 3, strong20d: 2, pct20d: 67 });
+  assert.equal(usdBreadthAsOf({ 'fx:a': falling }, '2020-01-10'), null);
+});
+
 test('forward returns read the last close on or before each end, and stop where the history does', () => {
   const points = [
     { date: '2020-01-01', value: 100 },
@@ -121,9 +134,11 @@ test('the replayed verdicts are scored on the dates their inputs allow', { timeo
   // The replay yields while it works: a timer set now fires before it finishes.
   let ticked = false;
   setTimeout(() => { ticked = true; }, 0);
-  const records = await replayVerdicts({ seriesList: macroSeries(), closes: { gold, bitcoin } });
+  const seriesList = macroSeries();
+  const dollar = seriesList.find((item) => item.key === 'dxy').history;
+  const records = await replayVerdicts({ seriesList, closes: { gold, bitcoin, dollar, ...fxPairs } });
   assert.equal(ticked, true);
-  for (const key of ['metals', 'crypto']) {
+  for (const key of ['metals', 'crypto', 'fx']) {
     const record = records[key];
     assert.equal(record.status, 'calculated', `${key}: ${record.reason}`);
     // The bitcoin technicals count only once fully backed - about four years
@@ -146,6 +161,10 @@ test('the replayed verdicts are scored on the dates their inputs allow', { timeo
   // rank; the bitcoin replay starts four years in, once its technicals are
   // fully backed, and is too short here for that.
   assert.ok(records.metals.legs.every((leg) => leg.summary.verdict !== 'thin'), JSON.stringify(records.metals.legs.map((leg) => leg.summary)));
+  // The dollar verdict's three legs, at the FX builder's weights.
+  assert.deepEqual(records.fx.legs.map((leg) => [leg.key, leg.weight]).sort(), [['breadth', 30], ['rateDivergence', 25], ['strength', 45]]);
+  assert.deepEqual(records.fx.record.horizons[0].states.map((state) => state.key), ['Firm dollar', 'Rangebound dollar', 'Soft dollar']);
+  assert.match(records.fx.read, /dollar verdict called Firm dollar|dollar verdict has spent/);
   // The gold verdict's legs are the three the live builder reads, at their live weights.
   assert.deepEqual(records.metals.legs.map((leg) => [leg.key, leg.weight]), [['technicals', 50], ['dollar', 30], ['globalLiquidity', 20]]);
 });

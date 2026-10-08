@@ -172,6 +172,18 @@ export const MODEL_REGISTRY = [
     trackRecord: 'verdict-record-v1',
   },
   {
+    id: 'fx-verdict-v1',
+    name: 'Dollar verdict',
+    page: 'Forex',
+    measures: 'The broad-dollar model (45%), cross-rate breadth - the share of six majors the dollar gained on over 20 sessions (30%) - and the US yield advantage (25%) synthesized into a firm, rangebound or soft dollar call. Speculative positioning is left out because a crowded long is support today and fragility tomorrow.',
+    inputs: ['Dollar strength model', 'Yahoo FX crosses', 'Rate divergence (FRED and OECD long rates)'],
+    failureModes: [
+      'Breadth counts six crosses, so one currency moving alone changes it by 17 points.',
+      'The yield-advantage leg rests on monthly OECD foreign rates, so it updates once a month.',
+    ],
+    trackRecord: 'verdict-record-v1',
+  },
+  {
     id: 'metals-verdict-v1',
     name: 'Metals verdict',
     page: 'Metals',

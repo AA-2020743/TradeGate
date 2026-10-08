@@ -1,20 +1,21 @@
 /**
  * Have the section verdicts meant anything?
  *
- * Each section closes on a verdict - "Constructive for gold", "a headwind for
- * bitcoin" - built from the models beneath it. The verdict says it is a
- * reading of conditions, but a call like that invites a direction, so this
- * measures what each call was followed by.
+ * Each section closes on a verdict - "Constructive for gold", "a headwind
+ * for bitcoin", "Firm dollar" - built from the models beneath it. The
+ * verdict says it is a reading of conditions, but a call like that invites a
+ * direction, so this measures what each call was followed by.
  *
- * The replay is the live code, not a re-implementation of it. Every week, each
- * macro series is cut off at what had been published by that date - the
- * observation's own date plus the series' usual publication lag, so January's
- * M2 is not read in January - and the same model functions the page runs are
- * called on what is left: US and global liquidity, the dollar model with its
- * rate-divergence leg, the gold technical score on a year of closes, the
- * bitcoin technicals on ten years. Their outputs go through the same verdict
- * builder, and the call is followed forward 30, 90 and 180 days by the asset
- * the verdict is about. The shared evaluator holds out the newest 30%.
+ * The replay is the live code, not a re-implementation of it. Every second
+ * week, each macro series is cut off at what had been published by that date
+ * - the observation's own date plus the series' usual publication lag, so
+ * January's M2 is not read in January - and the same model functions the
+ * page runs are called on what is left: US and global liquidity, the dollar
+ * model with its rate-divergence leg, the gold technical score on a year of
+ * closes, the bitcoin technicals on ten years, the FX page's 20-session
+ * cross-rate breadth. Their outputs go through the same verdict builder, and
+ * the call is followed forward 30, 90 and 180 days by what the verdict is
+ * about. The shared evaluator holds out the newest 30%.
  *
  * The series themselves are today's vintage: a figure revised since it was
  * first printed is read as revised. Inputs with no long history - perpetual
@@ -28,7 +29,7 @@ import { calculateBitcoinTechnicals } from './bitcoinTechnicals.js';
 import { calculateRateDivergence } from './macroRates.js';
 import { componentRecords, describeComponents } from './scorecard.js';
 import { evaluateTrackRecord, ownHistoryBands } from './trackRecord.js';
-import { buildCryptoVerdict, buildMetalsVerdict } from './verdict.js';
+import { buildCryptoVerdict, buildFxVerdict, buildMetalsVerdict } from './verdict.js';
 
 export const VERDICT_RECORD_VERSION = 'verdict-record-v1';
 const DAY_MS = 86_400_000;
@@ -144,28 +145,46 @@ export function macroLegsAsOf(prepared, date, { trailingDays = MACRO_TRAILING_DA
   const list = seriesListAsOf(prepared, date, { trailingDays });
   const usLiquidity = calculateUsLiquidityModel(list);
   const globalLiquidity = calculateGlobalLiquidityModel(list);
-  const usdStrength = calculateUsdStrengthModel(list, isPublished(usLiquidity) ? usLiquidity : null, { rateDivergence: calculateRateDivergence(list) });
+  const divergence = calculateRateDivergence(list);
+  const usdStrength = calculateUsdStrengthModel(list, isPublished(usLiquidity) ? usLiquidity : null, { rateDivergence: divergence });
   return {
     globalLiquidity: isPublished(globalLiquidity) ? globalLiquidity : null,
     usdStrength: isPublished(usdStrength) ? usdStrength : null,
+    rateDivergence: divergence.status === 'unavailable' ? null : divergence,
   };
 }
 
 const asTimestamps = (points) => points.map((point) => ({ timestamp: `${point.date}T00:00:00.000Z`, value: point.value }));
 
+/** The FX page's cross-rate breadth: how many pairs the dollar gained on over 20 sessions. */
+export function usdBreadthAsOf(closesByAsset, date) {
+  const momenta = Object.entries(closesByAsset)
+    .filter(([key]) => key.startsWith('fx:'))
+    .map(([, points]) => {
+      const known = closesAsOf(points, date, 60);
+      return known.length > 20 ? ((known.at(-1).value / known.at(-21).value) - 1) * 100 : null;
+    })
+    .filter(Number.isFinite);
+  if (!momenta.length) return null;
+  const strong = momenta.filter((value) => value < 0).length;
+  return { total: momenta.length, strong20d: strong, pct20d: Math.round((strong / momenta.length) * 100) };
+}
+
 /**
- * The verdicts that can be replayed, each as a function of one week's macro
- * legs and the asset's closes to that week.
+ * The verdicts that can be replayed, each as a function of one date's macro
+ * legs and the price histories to that date. Pairs for the FX breadth leg are
+ * keyed `fx:<code>`, quoted in dollars per unit of the currency.
  */
 export const VERDICT_REPLAYS = {
   metals: {
     name: 'Gold verdict',
     asset: 'gold',
     assetLabel: 'gold',
+    verdictLabel: 'gold verdict',
     order: [{ key: 'Constructive', label: 'Constructive' }, { key: 'Neutral', label: 'Neutral' }, { key: 'Guarded', label: 'Guarded' }],
-    verdictAt: (legs, closes, date) => buildMetalsVerdict({
+    verdictAt: (legs, closesByAsset, date) => buildMetalsVerdict({
       // The metals panel scores a year of front-month closes.
-      goldTechnical: calculateTechnicalSnapshot(asTimestamps(closesAsOf(closes, date, 365)), { annualizationDays: 252 }),
+      goldTechnical: calculateTechnicalSnapshot(asTimestamps(closesAsOf(closesByAsset.gold, date, 365)), { annualizationDays: 252 }),
       usdStrength: legs.usdStrength,
       globalLiquidity: legs.globalLiquidity,
     }),
@@ -175,15 +194,30 @@ export const VERDICT_REPLAYS = {
     name: 'Bitcoin verdict',
     asset: 'bitcoin',
     assetLabel: 'bitcoin',
+    verdictLabel: 'bitcoin verdict',
     order: [{ key: 'Constructive', label: 'Constructive' }, { key: 'Neutral', label: 'Neutral' }, { key: 'Guarded', label: 'Guarded' }],
-    verdictAt: (legs, closes, date) => buildCryptoVerdict({
+    verdictAt: (legs, closesByAsset, date) => buildCryptoVerdict({
       // The bitcoin page reads ten years of daily closes; funding and
       // stablecoin supply have no history to replay, so they are absent.
-      bitcoin: { technicals: calculateBitcoinTechnicals(closesAsOf(closes, date, 3650).map((point) => ({ date: point.date, value: point.value }))) },
+      bitcoin: { technicals: calculateBitcoinTechnicals(closesAsOf(closesByAsset.bitcoin, date, 3650).map((point) => ({ date: point.date, value: point.value }))) },
       globalLiquidity: legs.globalLiquidity,
       usdStrength: legs.usdStrength,
     }),
     omitted: ['Perpetual funding (inverted)', 'Stablecoin supply'],
+  },
+  fx: {
+    name: 'Dollar verdict',
+    // Judged by the broad trade-weighted dollar the dollar model reads.
+    asset: 'dollar',
+    assetLabel: 'the broad dollar',
+    verdictLabel: 'dollar verdict',
+    order: [{ key: 'Firm dollar', label: 'Firm dollar' }, { key: 'Rangebound dollar', label: 'Rangebound dollar' }, { key: 'Soft dollar', label: 'Soft dollar' }],
+    verdictAt: (legs, closesByAsset, date) => buildFxVerdict({
+      usdStrength: legs.usdStrength,
+      usdBreadth: usdBreadthAsOf(closesByAsset, date),
+      rateDivergence: legs.rateDivergence,
+    }),
+    omitted: [],
   },
 };
 
@@ -280,11 +314,11 @@ function describeVerdictRecord(result, replay) {
   const low = cell(worst, block);
   const all = horizon[block].all.median;
   if (!Number.isFinite(high) || !Number.isFinite(low)) {
-    return `Replayed every two weeks from ${result.from}, the verdict has spent too few independent readings in both ${best} and ${worst} to compare what followed them.`;
+    return `Replayed every two weeks from ${result.from}, the ${replay.verdictLabel} has spent too few independent readings in both ${best} and ${worst} to compare what followed them.`;
   }
   const ordering = horizon[block].ordering;
   const order = !Number.isFinite(ordering) ? '' : ordering >= 0.6 ? `; the calls ranked in the order the verdict assumes (${ordering > 0 ? '+' : ''}${ordering})` : ordering <= -0.2 ? `; the calls ranked against the order the verdict assumes (${ordering})` : `; the calls were only loosely in order (${ordering > 0 ? '+' : ''}${ordering})`;
-  return `${when}, dates the ${replay.assetLabel} verdict called ${best} were followed by a median ${signed(high)} for ${replay.assetLabel} over ${days} days and dates it called ${worst} by ${signed(low)}, against ${signed(all)} for every date${order}. This describes what followed, not what will.`;
+  return `${when}, dates the ${replay.verdictLabel} called ${best} were followed by a median ${signed(high)} for ${replay.assetLabel} over ${days} days and dates it called ${worst} by ${signed(low)}, against ${signed(all)} for every date${order}. This describes what followed, not what will.`;
 }
 
 const yieldToEventLoop = () => new Promise((resolve) => { setImmediate(resolve); });
@@ -315,7 +349,7 @@ export async function replayVerdicts({ seriesList, closes, from = null, to = nul
     for (const key of keys) {
       const assetCloses = sortedCloses[VERDICT_REPLAYS[key].asset];
       if (assetCloses[0].date > addDays(date, -365)) continue;
-      const verdict = VERDICT_REPLAYS[key].verdictAt(legs, assetCloses, date);
+      const verdict = VERDICT_REPLAYS[key].verdictAt(legs, sortedCloses, date);
       if (verdict?.status === 'unavailable' || !verdict?.call) continue;
       const signals = verdict.readings ?? [];
       samplesByKey[key].push({

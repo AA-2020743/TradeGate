@@ -169,11 +169,11 @@ export const SOURCES = [
     ],
   },
   {
-    name: 'Section verdicts replayed (macro series + Yahoo gold and bitcoin)',
+    name: 'Section verdicts replayed (macro series + Yahoo gold, bitcoin and FX pairs)',
     endpoint: '/api/analytics/verdict-records',
     load: getVerdictTrackRecords,
     figure: (payload) => {
-      const parts = ['metals', 'crypto'].map((key) => payload.records?.[key]).filter((record) => record?.status === 'calculated')
+      const parts = ['metals', 'crypto', 'fx'].map((key) => payload.records?.[key]).filter((record) => record?.status === 'calculated')
         .map((record) => `${record.name}: ${record.readings} replays from ${record.from}, now ${record.current.call}`);
       return parts.length ? parts.join('; ') : null;
     },
@@ -183,6 +183,7 @@ export const SOURCES = [
     plausible: (payload) => [
       { label: 'gold verdict replays', value: payload.records?.metals?.readings, min: 150, max: 560 },
       { label: 'bitcoin verdict replays', value: payload.records?.crypto?.readings, min: 100, max: 260 },
+      { label: 'dollar verdict replays', value: payload.records?.fx?.readings, min: 150, max: 280 },
     ],
   },
   {

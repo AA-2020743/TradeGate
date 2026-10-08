@@ -1850,7 +1850,7 @@ function VerdictRecordPanel({ section, liveCall = null }) {
   const { status: loadStatus, data: payload, error } = useLazyResource('/api/analytics/verdict-records');
   const model = payload?.records?.[section] ?? null;
   const published = model?.status === 'calculated';
-  const asset = section === 'crypto' ? 'bitcoin' : 'gold';
+  const asset = { metals: 'gold', crypto: 'bitcoin', fx: 'dollar' }[section] ?? section;
   return <article className={`panel verdict-record-panel ${published ? '' : 'preview-section'}`}>
     <div className="panel-title">
       <div>
@@ -1865,7 +1865,7 @@ function VerdictRecordPanel({ section, liveCall = null }) {
       </div>
       <p className="dca-read">{model.read}</p>
       {model.omitted?.length ? <p className="treasury-note">Replayed without {model.omitted.join(' and ').toLowerCase()}, which have no long history; the live verdict reads them.</p> : null}
-      <TrackRecordTable record={model.record} current={liveCall ?? model.current.call} title={`${asset.toUpperCase()} RETURN THAT FOLLOWED, BY REPLAYED CALL`} stateLabel="Call" assumption="the verdict assumes" unit="dates" />
+      <TrackRecordTable record={model.record} current={liveCall ?? model.current.call} title={section === 'fx' ? 'BROAD DOLLAR MOVE THAT FOLLOWED, BY REPLAYED CALL' : `${asset.toUpperCase()} RETURN THAT FOLLOWED, BY REPLAYED CALL`} stateLabel="Call" assumption="the verdict assumes" unit="dates" />
       <ComponentRecordsTable components={model.legs} spreadLabel="Top minus bottom third, held out" />
       <p className="model-footnote">{model.legNote} {model.methodology} {model.limits}</p>
     </> : <div className="equity-empty">{model?.reason ?? payload?.reason ?? (loadStatus === 'loading' ? 'The first replay after a restart takes several seconds; it is cached for a day.' : `The verdict record could not be loaded: ${error ?? 'no record for this section'}`)}</div>}
@@ -3535,6 +3535,7 @@ function ForexDashboard({ data }) {
       <article className={`fx-commodity-panel panel ${(fxWorkspace?.links ?? []).length ? '' : 'preview-section'}`}><div className="panel-title"><div><StatusKicker label="FX COMMODITY LINKS" published={Boolean((fxWorkspace?.links ?? []).length)} /><h3>60-day change correlations</h3></div><span className="data-pill">{fxWorkspace?.riskRegime ?? '—'}</span></div><div className="fx-commodity-head"><span>FX</span><span>Linked market</span><span>r</span><span>State</span><span>Moves first</span><span>Momentum</span></div>{(fxWorkspace?.links ?? []).map((link) => <div className="fx-commodity-row" key={`${link.currency}-${link.market}`}><b>{link.currency}</b><span>{link.market}</span><strong>{Number.isFinite(link.correlation60d) ? `${link.correlation60d > 0 ? '+' : ''}${link.correlation60d}` : '—'}</strong><i className={link.state === 'Aligned' ? 'positive' : link.state === 'Inverse' ? 'caution' : 'neutral'}>{link.state}</i><em className={link.leadLag?.leader ? 'lead-flag' : 'lead-flag lead-flat'} title={link.leadLag ? `Peak correlation ${link.leadLag.corrAtBest.toFixed(2)} at a lag of ${link.leadLag.bestLagBars} sessions versus ${Number.isFinite(link.leadLag.synchronousCorr) ? link.leadLag.synchronousCorr.toFixed(2) : '—'} synchronous` : 'Needs at least 40 aligned sessions'}>{link.leadLag ? link.leadLag.read : 'Pending'}</em><small>{Number.isFinite(link.currencyMomentum20d) && Number.isFinite(link.marketMomentum20d) ? `${link.currencyMomentum20d > 0 ? '+' : ''}${link.currencyMomentum20d}% / ${link.marketMomentum20d > 0 ? '+' : ''}${link.marketMomentum20d}%` : '—'}</small></div>)}{!(fxWorkspace?.links ?? []).length && <div className="calculation-empty">Currency and commodity histories are required before links can publish.</div>}</article>
       <article className={`fx-rotation-panel panel ${(fxWorkspace?.rotationSignals ?? []).some((signal) => signal.status !== 'Unavailable') ? '' : 'preview-section'}`}><StatusKicker label="FX ROTATION SIGNALS" published={Boolean((fxWorkspace?.rotationSignals ?? []).length)} /><h3>20-session momentum handoffs {fxWorkspace?.riskRegime ? `· ${fxWorkspace.riskRegime}` : ''}</h3>{(fxWorkspace?.rotationSignals ?? []).map((signal) => <div className="fx-rotation-row" key={signal.signal}><div><b>{signal.signal}</b><small>{signal.detail}{Number.isFinite(signal.left) && Number.isFinite(signal.right) ? ` · ${signal.left > 0 ? '+' : ''}${signal.left}% vs ${signal.right > 0 ? '+' : ''}${signal.right}%` : ''}</small></div><span className={signal.status === 'Confirmed' ? fxWorkspace?.riskRegime === 'Risk-off' ? 'riskoff' : 'riskon' : signal.status === 'Diverged' ? 'neutral' : 'neutral'}>{signal.status}</span></div>)}<p>Confirmation compares 20-session momenta by sign; divergences flag potential rotations in risk appetite. Lead/lag timing for each commodity link is published in the panel above, scanned over daily closes; intraday handoffs still require intraday histories.</p></article>
     </section>
+    <VerdictRecordPanel section="fx" liveCall={fxWorkspace?.verdict?.call ?? null} />
     <p className="independence-note">TradeGate is an independent market research platform and is not affiliated with Tradegate AG.</p>
   </div>;
 }
