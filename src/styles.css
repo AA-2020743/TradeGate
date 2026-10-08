@@ -574,7 +574,9 @@ html[data-theme='dark'] .asset-badge { color: #17201b; }
 @media (max-width: 640px) {
   .dca-head, .dca-row { grid-template-columns: minmax(0, 1.15fr) minmax(0, 0.45fr) minmax(0, 1fr) minmax(0, 0.5fr) minmax(0, 0.75fr); gap: 0.35rem; }
   .dca-ladder-head, .dca-ladder-row { grid-template-columns: minmax(0, 0.5fr) minmax(0, 1.05fr) minmax(0, 0.55fr) minmax(0, 0.85fr) minmax(0, 0.75fr); gap: 0.35rem; }
-  .track-head, .track-row { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) minmax(0, 1fr) minmax(0, 0.55fr); gap: 0.4rem; }
+  .track-head, .track-row { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) minmax(0, 1fr) minmax(0, 0.75fr); gap: 0.4rem; }
+  /* "Vs all sessions" is wider than the narrow last column at the desktop letter-spacing. */
+  .track-head { font-size: 0.62rem; letter-spacing: 0; }
   .dca-row b, .dca-row strong, .dca-ladder-row b, .dca-ladder-row strong { font-size: 0.85em; }
   .track-row > span:first-child { font-size: 0.9em; }
 }
