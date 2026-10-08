@@ -22,6 +22,7 @@ export const MODEL_REGISTRY = [
     failureModes: [
       'Shrinks toward neutral when history is too short for the 200-day average, so a young series reads milder than its trend.',
       'Trend-following by construction: it lags turns and reads a sharp reversal as continuation for weeks.',
+      'A description of the trend, not a forecast; its track record measures whether its states have ordered what followed, and the scorecard reports the verdict.',
       'Scores whatever prices it is given; a provider error flows straight into the score unless the cross-check flags it.',
     ],
     trackRecord: 'technical-track-record-v1',
