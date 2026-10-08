@@ -68,7 +68,10 @@ export function summarizeSource(source, result, elapsedMs) {
   // Some payloads carry no status of their own (the FRED snapshot, the quote
   // board); the source then says what answering means for it.
   const answered = typeof source.answered === 'function' ? Boolean(source.answered(payload)) : null;
-  const status = statusOf(payload) ?? (answered === null ? 'unknown' : answered ? 'answered' : 'empty');
+  // A source that fell short of its own test but still published parts (31 of
+  // 32 FRED series, the missing one stood in by a stored observation) is
+  // incomplete, not empty.
+  const status = statusOf(payload) ?? (answered === null ? 'unknown' : answered ? 'answered' : anyPartPublished ? 'incomplete' : 'empty');
   const verdict = status === 'calculated' || status === 'answered' ? 'ok' : PUBLISHED.has(status) || anyPartPublished ? 'partial' : 'failed';
   let figure = null;
   try {

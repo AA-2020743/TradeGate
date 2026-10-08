@@ -146,3 +146,14 @@ test('a job started minutes ago is running, not stuck; one left open for hours i
   assert.equal(stuck.verdict, 'partial');
   assert.match(stuck.lines[0], /never finished/);
 });
+
+test('a source short of its own test that still published parts reads incomplete, not empty', async () => {
+  const { summarizeSource } = await import('./sourceCheck.js');
+  const source = { name: 'FRED', answered: (payload) => payload.failed === 0 };
+  const partly = summarizeSource(source, { status: 'fulfilled', value: { failed: 1, model: { status: 'calculated' } } }, 100);
+  assert.equal(partly.status, 'incomplete');
+  assert.equal(partly.verdict, 'partial');
+  const nothing = summarizeSource(source, { status: 'fulfilled', value: { failed: 32 } }, 100);
+  assert.equal(nothing.status, 'empty');
+  assert.equal(nothing.verdict, 'failed');
+});
