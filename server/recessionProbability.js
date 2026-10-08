@@ -208,6 +208,10 @@ export function calculateRecessionProbability({ tenYear, billDiscount, recession
   const result = {
     version,
     status: 'calculated',
+    // The month's average is dated at its first day, as FRED dates it.
+    asOf: `${latest.month}-01`,
+    asOfSource: 'FRED GS10 and TB3MS monthly averages',
+    headline: { label: 'Recession probability', value: round(latest.probability, 1), unit: '%' },
     month: latest.month,
     targetMonth: latest.target,
     probability: round(latest.probability, 1),

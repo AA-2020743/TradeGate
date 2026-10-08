@@ -116,6 +116,10 @@ export function calculateGoldRealYield({ gold, realYield }) {
   const result = {
     version,
     status: 'calculated',
+    asOf: latestRow.goldDate,
+    asOfSource: 'Month-end gold and 10-year TIPS yield',
+    state: outsideSince ? 'Outside the fit band' : 'Within the fit band',
+    headline: { label: 'Gap to the real-yield fit', value: latest.gapPercent, unit: '%' },
     month: latestRow.month,
     goldDate: latestRow.goldDate,
     yieldDate: latestRow.yieldDate,

@@ -133,6 +133,9 @@ export function calculateDiversificationRegime({ histories }) {
   const result = {
     version,
     status: 'calculated',
+    asOf: latest.date,
+    asOfSource: 'Latest close all six ETFs share',
+    state: STOCK_BOND_STATES.find((state) => state.key === latest.state).label,
     date: latest.date,
     from: usable[0].date,
     sessions: dates.length,

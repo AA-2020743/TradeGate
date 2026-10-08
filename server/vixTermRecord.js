@@ -96,6 +96,8 @@ export function calculateVixTermRecord({ vix, vix3m, spy }) {
   const result = {
     version,
     status: 'calculated',
+    asOf: dates[last],
+    asOfSource: 'Latest close VIX, VIX3M and SPY share',
     date: dates[last],
     from: dates[0],
     sessions: dates.length,

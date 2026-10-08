@@ -41,8 +41,10 @@ function stateOf(node) {
   return text(node.regime) ?? text(node.state) ?? text(node.band) ?? text(node.tier) ?? text(node.rating) ?? null;
 }
 
+// A model whose number is not a 0-100 score (a probability, a gap, a carry)
+// names it as its headline, so a move in it still registers as a change.
 function scoreOf(node) {
-  return finite(node.score) ?? finite(node.risk) ?? null;
+  return finite(node.score) ?? finite(node.risk) ?? finite(node.headline?.value) ?? null;
 }
 
 function isReading(node) {

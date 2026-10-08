@@ -174,6 +174,10 @@ export function calculateFxCarry({ spots, rates, usRate }) {
   const result = {
     version,
     status: 'calculated',
+    asOf: rows.map((row) => row.spotDate).sort().at(-1),
+    asOfSource: 'Latest spot close; rates are monthly',
+    state: `Long ${high.map((row) => row.code).join('/')}, short ${low.map((row) => row.code).join('/')}`,
+    headline: { label: 'High-minus-low carry', value: round(high.reduce((total, row) => total + row.carry, 0) / high.length - low.reduce((total, row) => total + row.carry, 0) / low.length), unit: ' pts' },
     usRate: round(usNow),
     usRateMonth: latestUs,
     currencies: rows,

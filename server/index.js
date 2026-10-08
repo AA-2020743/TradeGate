@@ -159,6 +159,12 @@ const SNAPSHOT_SOURCES = {
   treasury: () => getTreasuryFunding(),
   factors: () => getFactorReturns(),
   indexValuation: () => getIndexValuation(),
+  recession: () => getRecessionProbability(),
+  goldRealYield: () => getGoldRealYield(),
+  bitcoinRegime: () => getBitcoinCrossAsset(),
+  diversification: () => getDiversificationRegime(),
+  carry: () => getFxCarry(),
+  vixTerm: () => getVixTermRecord(),
 };
 const SNAPSHOT_LOADER_TIMEOUT_MS = 30_000;
 

@@ -2053,9 +2053,9 @@ export async function getRecessionProbability() {
     const result = calculateRecessionProbability({ tenYear: tenYear.history, billDiscount: billDiscount.history, recessions: recessions.history });
     const staleInputs = inputs.filter((input) => input.stale && input.id !== 'USREC');
     if (result.status === 'calculated' && staleInputs.length) {
-      return { asOf: new Date().toISOString(), inputs, ...result, status: 'provisional', reason: `${staleInputs.map((input) => `${input.id} last printed ${input.date}`).join(' and ')}, later than its monthly schedule.` };
+      return { calculatedAt: new Date().toISOString(), inputs, ...result, status: 'provisional', reason: `${staleInputs.map((input) => `${input.id} last printed ${input.date}`).join(' and ')}, later than its monthly schedule.` };
     }
-    return { asOf: new Date().toISOString(), inputs, ...result };
+    return { calculatedAt: new Date().toISOString(), inputs, ...result };
   });
 }
 
@@ -2078,9 +2078,9 @@ export async function getGoldRealYield() {
     if (failures.length) return { version: GOLD_REAL_YIELD_VERSION, status: 'unavailable', reason: `An input did not load (${failures.join('; ')}).` };
     const result = calculateGoldRealYield({ gold: goldResult.value, realYield: yieldResult.value.history });
     if (result.status === 'calculated' && yieldResult.value.stale) {
-      return { asOf: new Date().toISOString(), ...result, status: 'provisional', reason: `FRED DFII10 last printed ${yieldResult.value.date}, later than its daily schedule.` };
+      return { calculatedAt: new Date().toISOString(), ...result, status: 'provisional', reason: `FRED DFII10 last printed ${yieldResult.value.date}, later than its daily schedule.` };
     }
-    return { asOf: new Date().toISOString(), ...result };
+    return { calculatedAt: new Date().toISOString(), ...result };
   });
 }
 
@@ -2090,7 +2090,7 @@ export async function getBitcoinCrossAsset() {
     const histories = await getSparkDatedHistories(['BTC-USD', 'QQQ', 'GLD'], '10y');
     const missing = ['BTC-USD', 'QQQ', 'GLD'].filter((symbol) => !histories.get(symbol)?.length);
     if (missing.length) return { version: BITCOIN_CROSS_ASSET_VERSION, status: 'unavailable', reason: `Yahoo returned no ten-year history for ${missing.join(', ')}.` };
-    return { asOf: new Date().toISOString(), source: 'Yahoo Finance daily closes', ...calculateBitcoinCrossAsset({ bitcoin: histories.get('BTC-USD'), nasdaq: histories.get('QQQ'), gold: histories.get('GLD') }) };
+    return { calculatedAt: new Date().toISOString(), source: 'Yahoo Finance daily closes', ...calculateBitcoinCrossAsset({ bitcoin: histories.get('BTC-USD'), nasdaq: histories.get('QQQ'), gold: histories.get('GLD') }) };
   });
 }
 
@@ -2101,7 +2101,7 @@ export async function getDiversificationRegime() {
     const histories = await getSparkDatedHistories(symbols, '10y');
     const missing = symbols.filter((symbol) => !histories.get(symbol)?.length);
     if (missing.length) return { version: DIVERSIFICATION_VERSION, status: 'unavailable', reason: `Yahoo returned no ten-year history for ${missing.join(', ')}.` };
-    return { asOf: new Date().toISOString(), source: 'Yahoo Finance daily closes', ...calculateDiversificationRegime({ histories }) };
+    return { calculatedAt: new Date().toISOString(), source: 'Yahoo Finance daily closes', ...calculateDiversificationRegime({ histories }) };
   });
 }
 
@@ -2131,7 +2131,7 @@ export async function getFxCarry() {
       else rates.set(series.code, result.value.history);
     });
     const spots = new Map(CARRY_CURRENCIES.map((currency) => [currency.code, dollarsPerUnit(spotResult.value.get(currency.ticker), currency.usdPerUnit)]));
-    return { asOf: new Date().toISOString(), rateErrors, ...calculateFxCarry({ spots, rates, usRate }) };
+    return { calculatedAt: new Date().toISOString(), rateErrors, ...calculateFxCarry({ spots, rates, usRate }) };
   });
 }
 
@@ -2143,7 +2143,7 @@ export async function getVixTermRecord() {
     const failed = symbols.flatMap((symbol, index) => (settled[index].status === 'rejected' || !settled[index].value.length ? [`${symbol}: ${settled[index].reason?.message ?? 'no closes'}`] : []));
     if (failed.length) return { version: VIX_TERM_RECORD_VERSION, status: 'unavailable', reason: `Yahoo did not return every history (${failed.join('; ')}).` };
     const [vix, vix3m, spy] = settled.map((result) => result.value);
-    return { asOf: new Date().toISOString(), source: 'Yahoo Finance daily closes', ...calculateVixTermRecord({ vix, vix3m, spy }) };
+    return { calculatedAt: new Date().toISOString(), source: 'Yahoo Finance daily closes', ...calculateVixTermRecord({ vix, vix3m, spy }) };
   });
 }
 

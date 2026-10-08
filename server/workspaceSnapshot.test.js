@@ -175,3 +175,18 @@ test('readings without a name are named from the registry, then from their posit
   assert.deepEqual(nested.map((reading) => reading.name), ['US liquidity', 'Inflation · Leg']);
   assert.equal(collectReadings('treasury', { version: 't', status: 'calculated', read: 'x' })[0].name, 'Treasury');
 });
+
+test('a model with a headline instead of a score is read, dated by its data, and its moves are compared', () => {
+  const registry = [{ id: 'recession-probability-v1', name: 'Recession probability from the yield curve' }];
+  const payload = (probability, month) => ({ calculatedAt: '2026-10-08T09:00:00.000Z', version: 'recession-probability-v1', status: 'calculated', asOf: `${month}-01`, asOfSource: 'FRED GS10 and TB3MS monthly averages', headline: { label: 'Recession probability', value: probability, unit: '%' }, read: 'text', episodes: [{ start: '2022-11', outcome: 'not followed' }] });
+  const [reading] = collectReadings('recession', payload(18.2, '2026-08'), { registry });
+  assert.equal(reading.key, 'recession');
+  assert.equal(reading.name, 'Recession probability from the yield curve');
+  assert.equal(reading.score, 18.2);
+  assert.equal(reading.asOf, '2026-08-01');
+  const snap = (probability, month, takenAt) => buildWorkspaceSnapshot({ build: { commit: 'a' }, registry, takenAt, sources: { recession: { status: 'fulfilled', value: payload(probability, month) } } });
+  const diff = compareSnapshots(snap(18.2, '2026-08', '2026-10-01T00:00:00Z'), snap(21.4, '2026-09', '2026-10-08T00:00:00Z'));
+  assert.equal(diff.changes.length, 1);
+  assert.equal(diff.changes[0].delta, 3.2);
+  assert.equal(diff.changes[0].cause, 'data');
+});

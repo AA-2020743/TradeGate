@@ -139,6 +139,8 @@ export function calculateBitcoinCrossAsset({ bitcoin, nasdaq, gold }) {
   const result = {
     version,
     status: 'calculated',
+    asOf: dates[last],
+    asOfSource: 'Latest close BTC, QQQ and GLD share',
     date: dates[last],
     from: dates[SHORT_WINDOW - 1],
     sessions: dates.length,
