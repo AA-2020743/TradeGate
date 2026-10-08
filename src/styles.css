@@ -712,3 +712,6 @@ html[data-theme='dark'] .heldout-band { fill: #222c25; }
   .scorecard-row > span:last-child { grid-column: 1 / -1; }
   .scorecard-head > span:last-child { display: none; }
 }
+
+/* Bitcoin cycle phase track record (Crypto) */
+.cycle-record-panel { margin-top: 14px; }

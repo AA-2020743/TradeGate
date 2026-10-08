@@ -230,6 +230,19 @@ export const MODEL_REGISTRY = [
     trackRecord: 'fx-momentum-record-v1',
   },
   {
+    id: 'bitcoin-cycle-record-v1',
+    name: 'Bitcoin cycle phase track record',
+    page: 'Crypto',
+    measures: 'The live cycle-phase model replayed weekly since bitcoin has 200 weeks of closes, each leg rebuilt from data up to that week, and followed 90, 180 and 365 days, testing whether capitulation has been followed by the best returns and euphoria by the worst.',
+    inputs: ['Yahoo BTC-USD daily closes since 2014', 'bitcoin-data.com MVRV-Z and short-term-holder realized price histories'],
+    failureModes: [
+      'Replayed without the funding and stablecoin legs, which have no long history, so expansion and euphoria lean more on valuation and price than the live read.',
+      'Two or three cycles in the replayable history: each phase rests on a handful of episodes.',
+      'On-chain series are today\u2019s vintage.',
+    ],
+    trackRecord: 'bitcoin-cycle-record-v1',
+  },
+  {
     id: 'gold-silver-record-v1',
     name: 'Gold/silver ratio track record',
     page: 'Metals',

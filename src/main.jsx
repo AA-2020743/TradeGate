@@ -1759,6 +1759,28 @@ function FxMomentumRecordPanel() {
   </article>;
 }
 
+function BitcoinCycleRecordPanel({ livePhase }) {
+  const { status: loadStatus, data: model, error } = useLazyResource('/api/analytics/bitcoin-cycle-record');
+  const published = model?.status === 'calculated';
+  return <article className={`panel cycle-record-panel ${published ? '' : 'preview-section'}`}>
+    <div className="panel-title">
+      <div>
+        <StatusKicker label="CYCLE PHASE · TRACK RECORD" published={published} />
+        <h3>{published ? 'What each phase has been followed by' : loadStatus === 'loading' ? 'Replaying the phase model weekly since 2018\u2026' : 'Awaiting bitcoin and on-chain histories'}</h3>
+      </div>
+      {published ? <span className="data-pill">{model.weeks} weekly replays from {model.from}</span> : null}
+    </div>
+    {published ? <>
+      <div className="portfolio-stats">
+        {['capitulation', 'recovery', 'expansion', 'euphoria'].map((key) => <div key={key}><span>{{ capitulation: 'Capitulation', recovery: 'Early recovery', expansion: 'Expansion', euphoria: 'Euphoria' }[key]}</span><b>{model.timeInPhase[key]}%</b><small>of weeks{key === livePhase ? ' · live phase' : ''}</small></div>)}
+      </div>
+      <p className="dca-read">{model.read}</p>
+      <TrackRecordTable record={model.record} current={livePhase} title="BITCOIN RETURN THAT FOLLOWED, BY REPLAYED PHASE" stateLabel="Phase" assumption="the phase names imply" unit="weeks" />
+      <p className="model-footnote">Ambiguous in {model.ambiguousShare}% of weeks, which are left out. {model.record.limits}</p>
+    </> : <div className="equity-empty">{model?.reason ?? (loadStatus === 'loading' ? 'Twelve years of closes and the on-chain series; cached for twelve hours.' : `The cycle record could not be loaded: ${error}`)}</div>}
+  </article>;
+}
+
 function GoldSilverRecordPanel() {
   const { status: loadStatus, data: model, error } = useLazyResource('/api/analytics/gold-silver-record');
   const published = model?.status === 'calculated';
@@ -3568,6 +3590,7 @@ function CryptoDashboard({ data }) {
       {(cyclePhase?.phases ?? []).map((phase) => <div className={`scenario-row ${cyclePhase?.leading?.key === phase.key ? 'scenario-leading' : ''}`} key={phase.key} title={phase.legs.map((leg) => `${leg.name}: ${leg.score ?? 'unavailable'}`).join('\n')}><span>{phase.name}<small>{phase.outcome}{phase.missing.length ? ` · missing ${phase.missing.length} of ${phase.legs.length} legs` : ''}</small></span><i><b style={{ width: `${phase.score ?? 0}%` }}></b></i><strong>{Number.isFinite(phase.score) ? phase.score : '—'}</strong></div>)}
       <p className="model-footnote">{cyclePhase?.methodology ?? 'Trend, valuation, drawdown and derivatives legs are required before a cycle phase can be placed.'}</p>
     </section>
+    <BitcoinCycleRecordPanel livePhase={cyclePhase?.leading?.key ?? null} />
     <BitcoinTechnicalsSection technicals={btc?.technicals} rangeAvailable={btc?.rangeModels?.modules?.tdCountdown?.status === 'calculated'} />
     <BitcoinRangeSection rangeModels={btc?.rangeModels} />
     <section className="macro-section-heading"><div><p className="section-kicker">DOLLAR TRANSMISSION · {transmission?.status?.toUpperCase() ?? 'UNAVAILABLE'}</p><h2>{transmission?.linkSign === 0 ? 'The dollar link is too weak to move bitcoin' : `${tailwindLabel} for bitcoin`}</h2></div><span className="data-pill">Favorability read</span></section>

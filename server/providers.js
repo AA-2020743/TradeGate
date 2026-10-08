@@ -20,6 +20,7 @@ import { FACTORS as FRENCH_FACTORS, calculateFactorReturns, joinFactorTables, pa
 import { calculateFactorMomentum } from './factorMomentum.js';
 import { GOLD_SILVER_RECORD_VERSION, calculateGoldSilverRecord } from './goldSilverRecord.js';
 import { calculateFxMomentumRecord } from './fxMomentumRecord.js';
+import { BITCOIN_CYCLE_RECORD_VERSION, calculateBitcoinCycleRecord } from './bitcoinCycleRecord.js';
 import { readLargestTextEntry } from './zip.js';
 import { combineFundingVenues, okxPositioningRows } from './derivativesVenues.js';
 import { TECHNICAL_REGIMES, describeTechnicalRecord, technicalTrackRecord } from './technicalTrackRecord.js';
@@ -2205,6 +2206,24 @@ export async function getGoldSilverRecord() {
     const failed = [['GC=F', goldResult], ['SI=F', silverResult]].flatMap(([symbol, result]) => (result.status === 'rejected' || !result.value.length ? [`${symbol}: ${result.reason?.message ?? 'no closes'}`] : []));
     if (failed.length) return { version: GOLD_SILVER_RECORD_VERSION, status: 'unavailable', reason: `Yahoo did not return every history (${failed.join('; ')}).` };
     return { calculatedAt: new Date().toISOString(), source: 'Yahoo Finance daily closes', ...calculateGoldSilverRecord({ gold: goldResult.value, silver: silverResult.value }) };
+  });
+}
+
+/**
+ * The cycle phase replayed weekly since bitcoin has 200 weeks of closes. The
+ * on-chain series are the ones the bitcoin workspace already fetched -
+ * bitcoin-data.com is rate-limited, so they are reused rather than fetched
+ * again - and bitcoin's closes are requested by date range from 2014.
+ */
+export async function getBitcoinCycleRecord() {
+  return withCache('analytics:bitcoin-cycle-record', 12 * 60 * 60_000, async () => {
+    if (!bitcoinOnchainMemo) await getBitcoinCycleWorkspace().catch(() => null);
+    const onchain = bitcoinOnchainMemo;
+    if (!Array.isArray(onchain?.mvrvZ) || !onchain.mvrvZ.length) {
+      return { version: BITCOIN_CYCLE_RECORD_VERSION, status: 'unavailable', reason: 'The MVRV-Z history from bitcoin-data.com has not loaded yet; it arrives with the bitcoin workspace.' };
+    }
+    const prices = await getYahooDailyHistory('BTC-USD', '2014-09-17');
+    return { calculatedAt: new Date().toISOString(), source: 'Yahoo BTC-USD closes; bitcoin-data.com MVRV-Z and short-term-holder realized price', ...calculateBitcoinCycleRecord({ prices, mvrv: onchain.mvrvZ, sth: Array.isArray(onchain.sth) ? onchain.sth : [] }) };
   });
 }
 

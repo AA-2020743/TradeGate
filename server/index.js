@@ -19,7 +19,7 @@ import { getEquityDashboard, getSectorDashboard } from './equities.js';
 import { logger } from './log.js';
 import { startIngestionScheduler } from './ingestion.js';
 import { createRateLimiter } from './rateLimit.js';
-import { calculateDollarTransmission, getBitcoinCycleWorkspace, getBlockedSources, getCryptoGlobal, getDxyBitcoinRelationship, getEquityRiskAppetite, getEquityScreener, getEthereumRotation, getAccumulationSchedules, getAlertOutcomes, getCryptoOptionsWorkspace, getIndexValuation, getScreenerTrackRecord, getFactorReturns, getFxWorkspace, getHardMoneyValuation, getIntradayRotation, getLiquiditySnapshot, getMarketHeatmap, getMarketHistory, getMarketPositioning, getMarketSnapshot, getMetalsWorkspace, getNewsWire, getPriceCrossCheck, getProviderHealth, getRegimeCorrelations, getSentimentSnapshot, getSignalTrackRecords, getStablecoinLeadLag, getBitcoinCrossAsset, getDiversificationRegime, getFxCarry, getGoldRealYield, getGoldSilverRecord, getRecessionProbability, getTechnicalSnapshot, getTreasuryFunding, getVixTermRecord, getWatchlistRisk, parseWatchlistSymbols } from './providers.js';
+import { calculateDollarTransmission, getBitcoinCycleWorkspace, getBlockedSources, getCryptoGlobal, getDxyBitcoinRelationship, getEquityRiskAppetite, getEquityScreener, getEthereumRotation, getAccumulationSchedules, getAlertOutcomes, getCryptoOptionsWorkspace, getIndexValuation, getScreenerTrackRecord, getFactorReturns, getFxWorkspace, getHardMoneyValuation, getIntradayRotation, getLiquiditySnapshot, getMarketHeatmap, getMarketHistory, getMarketPositioning, getMarketSnapshot, getMetalsWorkspace, getNewsWire, getPriceCrossCheck, getProviderHealth, getRegimeCorrelations, getSentimentSnapshot, getSignalTrackRecords, getStablecoinLeadLag, getBitcoinCrossAsset, getBitcoinCycleRecord, getDiversificationRegime, getFxCarry, getGoldRealYield, getGoldSilverRecord, getRecessionProbability, getTechnicalSnapshot, getTreasuryFunding, getVixTermRecord, getWatchlistRisk, parseWatchlistSymbols } from './providers.js';
 import { buildAtomFeed } from './analytics.js';
 import { authorizeWrite, contentSecurityPolicy, describeWriteProtection, securityHeaders } from './security.js';
 import { buildInfo } from './buildInfo.js';
@@ -342,6 +342,7 @@ const SCORECARD_SOURCES = [
   { key: 'diversification', name: 'Stock-bond regime', page: 'Markets', assumption: 'Bonds hedging followed by the shallowest 60/40 falls, falling together by the deepest', measure: 'Worst fall', load: () => getDiversificationRegime(), pick: (payload) => payload.record },
   { key: 'carry', name: 'Currency carry groups', page: 'Forex', assumption: 'High-carry currencies return the most against the dollar, low-carry the least', measure: 'Return incl. carry', load: () => getFxCarry(), pick: (payload) => payload.record },
   { key: 'fxMomentum', name: 'Forex 20-session outlook', page: 'Forex', assumption: 'A currency up 0.5%+ over 20 sessions keeps rising against the dollar, one down 0.5%+ keeps falling', measure: 'Spot move vs USD', load: () => getFxCarry(), pick: (payload) => payload.momentumRecord?.record },
+  { key: 'bitcoinCycle', name: 'Bitcoin cycle phase', page: 'Crypto', assumption: 'Capitulation followed by the best bitcoin returns, euphoria by the worst', measure: 'Forward return', load: () => getBitcoinCycleRecord(), pick: (payload) => payload.record },
   { key: 'goldSilver', name: 'Gold/silver ratio extremes', page: 'Metals', assumption: 'A high ratio followed by silver catching up the most, a low one by the least (mean reversion)', measure: 'Silver minus gold', load: () => getGoldSilverRecord(), pick: (payload) => payload.record },
   { key: 'vixReturns', name: 'VIX term structure, returns', page: 'Equities', assumption: 'Contango followed by the best SPY returns, backwardation by the worst', measure: 'Forward return', load: () => getVixTermRecord(), pick: (payload) => payload.returns },
   { key: 'vixDrawdowns', name: 'VIX term structure, worst falls', page: 'Equities', assumption: 'Contango followed by the shallowest SPY falls, backwardation by the deepest', measure: 'Worst fall', load: () => getVixTermRecord(), pick: (payload) => payload.drawdowns },
@@ -352,6 +353,14 @@ app.get('/api/analytics/scorecard', async (_request, response, next) => {
   try {
     const settled = await Promise.allSettled(SCORECARD_SOURCES.map((source) => withTimeout(Promise.resolve().then(source.load), SCORECARD_LOADER_TIMEOUT_MS, source.name)));
     response.json(buildScorecard(SCORECARD_SOURCES.map((source, index) => ({ ...source, result: settled[index] }))));
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.get('/api/analytics/bitcoin-cycle-record', async (_request, response, next) => {
+  try {
+    response.json(await getBitcoinCycleRecord());
   } catch (error) {
     next(error);
   }

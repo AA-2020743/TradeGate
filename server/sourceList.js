@@ -6,6 +6,7 @@ import {
   getAccumulationSchedules,
   getAlertOutcomes,
   getBitcoinCrossAsset,
+  getBitcoinCycleRecord,
   getBitcoinCycleWorkspace,
   getCryptoOptionsWorkspace,
   getDiversificationRegime,
@@ -134,6 +135,15 @@ export const SOURCES = [
     endpoint: '/api/analytics/price-crosscheck',
     load: getPriceCrossCheck,
     figure: (payload) => `${payload.passed?.length ?? 0} verified, ${payload.review?.length ?? 0} under review, ${payload.notIndependent?.length ?? 0} not independent, ${payload.unavailable?.length ?? 0} unavailable`,
+  },
+  {
+    name: 'BTC since 2014 + bitcoin-data.com on-chain (cycle record)',
+    endpoint: '/api/analytics/bitcoin-cycle-record',
+    load: getBitcoinCycleRecord,
+    figure: (payload) => (Number.isFinite(payload.weeks) ? `${payload.weeks} weekly replays from ${payload.from}, decisive in ${100 - payload.ambiguousShare}%; latest replay: ${payload.replayedPhase ?? 'ambiguous'}` : null),
+    plausible: (payload) => [
+      { label: 'weekly replays', value: payload.weeks, min: 300, max: 700 },
+    ],
   },
   {
     name: 'Yahoo gold and silver futures since 2000 (ratio record)',
