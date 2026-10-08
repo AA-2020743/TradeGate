@@ -162,7 +162,7 @@ export const SOURCES = [
     endpoint: '/api/analytics/fx-carry',
     load: getFxCarry,
     answered: (payload) => payload.status === 'calculated' && !(payload.excluded ?? []).length,
-    figure: (payload) => (payload.trade ? `${payload.currencies.length} currencies, US rate ${payload.usRate}% (${payload.usRateMonth}${payload.usRateSource?.includes('then') ? ', T-bill after interbank ended' : ''})${payload.rateSources?.length ? `; spliced to overnight: ${payload.rateSources.map((entry) => entry.split(':')[0]).join(', ')}` : ''}; long ${payload.trade.long.join('/')} vs ${payload.trade.short.join('/')} carries ${payload.trade.carry} pts${payload.excluded?.length ? `; left out: ${payload.excluded.join(', ')}` : ''}` : null),
+    figure: (payload) => (payload.trade ? `${payload.currencies.length} currencies, US rate ${payload.usRate}% (${payload.usRateMonth}${payload.usRateSource?.includes('then') ? ', T-bill after interbank ended' : ''})${payload.rateSources?.length ? `; spliced: ${payload.rateSources.join('; ')}` : ''}; long ${payload.trade.long.join('/')} vs ${payload.trade.short.join('/')} carries ${payload.trade.carry} pts${payload.excluded?.length ? `; left out: ${payload.excluded.join(', ')}` : ''}${payload.rateErrors?.length ? `; FRED errors: ${payload.rateErrors.join('; ')}` : ''}` : null),
     plausible: (payload) => [
       { label: 'US 3m rate', value: payload.usRate, min: -1, max: 10, unit: '%' },
       { label: 'widest carry', value: payload.currencies?.[0]?.carry, min: -8, max: 12, unit: ' pts' },

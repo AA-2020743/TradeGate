@@ -27,13 +27,13 @@ export const FX_CARRY_VERSION = 'fx-carry-v1';
 // `usdPerUnit` is true when the Yahoo quote is dollars per unit of the
 // currency (EURUSD); false when it is units per dollar (USDJPY) and is inverted.
 export const CARRY_CURRENCIES = [
-  { code: 'EUR', name: 'Euro', ticker: 'EURUSD=X', usdPerUnit: true, rateSeries: 'IR3TIB01EZM156N', overnightSeries: 'IRSTCI01EZM156N' },
-  { code: 'GBP', name: 'Sterling', ticker: 'GBPUSD=X', usdPerUnit: true, rateSeries: 'IR3TIB01GBM156N', overnightSeries: 'IRSTCI01GBM156N' },
-  { code: 'JPY', name: 'Yen', ticker: 'JPY=X', usdPerUnit: false, rateSeries: 'IR3TIB01JPM156N', overnightSeries: 'IRSTCI01JPM156N' },
-  { code: 'CHF', name: 'Swiss franc', ticker: 'CHF=X', usdPerUnit: false, rateSeries: 'IR3TIB01CHM156N', overnightSeries: 'IRSTCI01CHM156N' },
-  { code: 'AUD', name: 'Australian dollar', ticker: 'AUDUSD=X', usdPerUnit: true, rateSeries: 'IR3TIB01AUM156N', overnightSeries: 'IRSTCI01AUM156N' },
-  { code: 'NZD', name: 'New Zealand dollar', ticker: 'NZDUSD=X', usdPerUnit: true, rateSeries: 'IR3TIB01NZM156N', overnightSeries: 'IRSTCI01NZM156N' },
-  { code: 'CAD', name: 'Canadian dollar', ticker: 'CAD=X', usdPerUnit: false, rateSeries: 'IR3TIB01CAM156N', overnightSeries: 'IRSTCI01CAM156N' },
+  { code: 'EUR', name: 'Euro', ticker: 'EURUSD=X', usdPerUnit: true, rateSeries: 'IR3TIB01EZM156N', fallbacks: [{ id: 'IRSTCI01EZM156N', label: 'the overnight rate' }, { id: 'ECBDFR', label: 'the ECB deposit facility rate' }] },
+  { code: 'GBP', name: 'Sterling', ticker: 'GBPUSD=X', usdPerUnit: true, rateSeries: 'IR3TIB01GBM156N', fallbacks: [{ id: 'IRSTCI01GBM156N', label: 'the overnight rate' }] },
+  { code: 'JPY', name: 'Yen', ticker: 'JPY=X', usdPerUnit: false, rateSeries: 'IR3TIB01JPM156N', fallbacks: [{ id: 'IRSTCI01JPM156N', label: 'the overnight rate' }] },
+  { code: 'CHF', name: 'Swiss franc', ticker: 'CHF=X', usdPerUnit: false, rateSeries: 'IR3TIB01CHM156N', fallbacks: [{ id: 'IRSTCI01CHM156N', label: 'the overnight rate' }] },
+  { code: 'AUD', name: 'Australian dollar', ticker: 'AUDUSD=X', usdPerUnit: true, rateSeries: 'IR3TIB01AUM156N', fallbacks: [{ id: 'IRSTCI01AUM156N', label: 'the overnight rate' }] },
+  { code: 'NZD', name: 'New Zealand dollar', ticker: 'NZDUSD=X', usdPerUnit: true, rateSeries: 'IR3TIB01NZM156N', fallbacks: [{ id: 'IRSTCI01NZM156N', label: 'the overnight rate' }] },
+  { code: 'CAD', name: 'Canadian dollar', ticker: 'CAD=X', usdPerUnit: false, rateSeries: 'IR3TIB01CAM156N', fallbacks: [{ id: 'IRSTCI01CAM156N', label: 'the overnight rate' }] },
 ];
 export const US_RATE_SERIES = 'IR3TIB01USM156N';
 export const CARRY_GROUPS = [
@@ -78,6 +78,18 @@ export function spliceRateSeries(primarySeries, fallbackSeries, { primaryLabel, 
   if (!after.length || !stopped) return { points: primary, source: primaryLabel, splicedFrom: null };
   if (!primary.length) return { points: after, source: fallbackLabel, splicedFrom: after[0].date.slice(0, 7) };
   return { points: [...primary, ...after], source: `${primaryLabel} through ${lastPrimary}, then ${fallbackLabel}`, splicedFrom: after[0].date.slice(0, 7) };
+}
+
+/**
+ * The primary spliced to the first fallback that is still publishing: a leg
+ * whose overnight series has stopped too can continue on a policy rate.
+ */
+export function spliceWithFallbacks(primarySeries, fallbacks, { primaryLabel }) {
+  for (const fallback of fallbacks ?? []) {
+    const spliced = spliceRateSeries(primarySeries, fallback.points, { primaryLabel, fallbackLabel: fallback.label });
+    if (spliced.splicedFrom) return spliced;
+  }
+  return spliceRateSeries(primarySeries, [], { primaryLabel, fallbackLabel: '' });
 }
 
 /** The U.S. leg: the 3-month bill, converted from its discount quote, after the interbank series. */

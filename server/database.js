@@ -178,6 +178,38 @@ export async function persistModelOutput(modelId, model, inputLineage = [], inge
 }
 
 /**
+ * Stores an output only if its model has none for that vintage yet. Backfill
+ * rows are recomputed on every run; written unconditionally, each run added
+ * another copy of every vintage, and the retention trim - by vintage, not by
+ * row - never removed them.
+ */
+export async function persistModelOutputIfNew(modelId, model, inputLineage = [], ingestionRunId = null) {
+  if (!pool || !model || model.status === 'unavailable' || !model.asOf) return false;
+  const result = await pool.query(
+    `INSERT INTO model_outputs (model_id, version, calculated_at, effective_at, output, input_lineage, ingestion_run_id)
+     SELECT $1, $2, NOW(), $3, $4::jsonb, $5::jsonb, $6
+     WHERE NOT EXISTS (SELECT 1 FROM model_outputs WHERE model_id = $1 AND effective_at = $3)`,
+    [modelId, model.version, model.asOf, JSON.stringify(model), JSON.stringify(inputLineage), ingestionRunId],
+  );
+  return (result.rowCount ?? 0) > 0;
+}
+
+/** Removes repeated rows for one vintage of a model, keeping the newest. */
+export async function dedupeModelOutputs(modelId) {
+  if (!pool) return 0;
+  const result = await pool.query(
+    `DELETE FROM model_outputs older
+     USING model_outputs newer
+     WHERE older.model_id = $1
+       AND newer.model_id = older.model_id
+       AND newer.effective_at = older.effective_at
+       AND newer.calculated_at > older.calculated_at`,
+    [modelId],
+  );
+  return result.rowCount ?? 0;
+}
+
+/**
  * Trims a model's stored outputs to its most recent `keep` vintages.
  *
  * Nothing has ever deleted these. Every run writes one row per model and the

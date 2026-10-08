@@ -301,12 +301,28 @@ export function calculateModelConsensus(models = {}, { gap = CONTRADICTION_GAP }
 }
 
 /**
+ * A model's stored live runs, preceded by its backfill for the dates before
+ * its first live run. The backfill is recomputed from today's vintage of the
+ * inputs, which is fine for asking how models move together and is not what
+ * the model said at the time; it never overlaps the live runs, so two scorers
+ * do not interleave within one period.
+ */
+export function mergeLiveAndBackfill(live = [], backfill = []) {
+  const firstLive = (live ?? []).map(storedOutputDate).filter(Boolean).sort()[0] ?? null;
+  const earlier = (backfill ?? []).filter((entry) => {
+    const date = storedOutputDate(entry);
+    return date && (!firstLive || date < firstLive);
+  });
+  return { outputs: [...earlier, ...(live ?? [])], backfilled: earlier.length };
+}
+
+/**
  * Which models actually move together, computed from their stored output
  * history. Several composites share inputs — the macro regime carries the
  * liquidity model as a driver — so a high correlation between them is expected
  * and a high one between models that share nothing is the finding.
  */
-export function calculateModelCorrelationMatrix(outputsByModel = {}, { minimumObservations = 12 } = {}) {
+export function calculateModelCorrelationMatrix(outputsByModel = {}, { minimumObservations = 12, databaseConfigured = false, backfilledModels = [] } = {}) {
   const version = 'macro-model-correlation-v1';
   const seriesByModel = Object.entries(outputsByModel).map(([modelId, outputs]) => {
     const points = (outputs ?? [])
@@ -326,7 +342,7 @@ export function calculateModelCorrelationMatrix(outputsByModel = {}, { minimumOb
     return {
       version,
       status: 'unavailable',
-      reason: `Needs two models with ${minimumObservations} stored readings each; ${seriesByModel.length} qualify. Model outputs accumulate only once PostgreSQL is configured and ingestion has run.`,
+      reason: `Needs two models with ${minimumObservations} stored readings each; ${seriesByModel.length} qualify. ${databaseConfigured ? 'Readings accumulate with each ingestion run, and the backfill fills in earlier weeks once the liquidity job has stored it.' : 'Model outputs are stored only once PostgreSQL is configured and ingestion has run.'}`,
       pairs: [],
       models: seriesByModel.map(([modelId]) => modelId),
     };
@@ -375,12 +391,13 @@ export function calculateModelCorrelationMatrix(outputsByModel = {}, { minimumOb
     status: calculated.length ? 'calculated' : 'unavailable',
     reason: calculated.length ? null : 'No model pair shares enough vintages to correlate.',
     models: seriesByModel.map(([modelId]) => modelId),
+    backfilledModels: backfilledModels.filter((modelId) => seriesByModel.some(([id]) => id === modelId)),
     pairs,
     redundantPairs: redundant.map((pair) => pair.key),
     read: calculated.length
       ? `${calculated.length} of ${pairs.length} model pairs could be correlated across their shared vintages${redundant.length ? `; ${redundant.length} move at 0.9 or above, which is near-duplication rather than confirmation` : ', none of them above 0.9'}.`
       : 'No model pair shares enough stored vintages to correlate.',
-    methodology: 'Correlation of published scores across the vintages two models share, with one reading kept per vintage so repeated runs over the same data cannot stack identical points and pull every correlation toward one. Several composites share inputs by design — the macro regime carries the liquidity model as a driver — so a high reading between those is expected; a high reading between models that share no input is the finding.',
+    methodology: 'Correlation of published scores across the vintages two models share, with one reading kept per vintage so repeated runs over the same data cannot stack identical points and pull every correlation toward one. Weeks before a model’s first stored run come from its backfill, recomputed from today’s vintage of its inputs: evidence about how models move together, not about what either said at the time. Several composites share inputs by design — the macro regime carries the liquidity model as a driver — so a high reading between those is expected; a high reading between models that share no input is the finding.',
   };
 }
 

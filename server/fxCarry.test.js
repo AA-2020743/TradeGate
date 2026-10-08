@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { CARRY_CURRENCIES, calculateFxCarry, dollarsPerUnit, spliceRateSeries, spliceUsRate } from './fxCarry.js';
+import { CARRY_CURRENCIES, calculateFxCarry, dollarsPerUnit, spliceRateSeries, spliceUsRate, spliceWithFallbacks } from './fxCarry.js';
 
 function tradingDays(count) {
   const out = [];
@@ -95,4 +95,22 @@ test('a foreign leg whose 3-month series stopped continues on its overnight rate
   assert.deepEqual(spliced.points.map((point) => Math.round(point.value * 100) / 100), [0.1, 0.1, 0.15, 0.2]);
   assert.equal(spliced.splicedFrom, '2021-12');
   assert.equal(spliced.source, '3-month interbank through 2021-11, then the overnight rate');
+});
+
+test('a leg whose overnight series stopped too continues on the next fallback that still publishes', () => {
+  const months = (from, count, value) => Array.from({ length: count }, (_unused, index) => {
+    const [year, month] = from.split('-').map(Number);
+    const total = year * 12 + month - 1 + index;
+    return { date: `${Math.floor(total / 12)}-${String((total % 12) + 1).padStart(2, '0')}-01`, value };
+  });
+  const primary = months('2025-06', 8, 2.1);
+  const overnightStopped = months('2025-06', 8, 1.9);
+  const deposit = months('2025-06', 16, 2);
+  const spliced = spliceWithFallbacks(primary, [{ label: 'the overnight rate', points: overnightStopped }, { label: 'the ECB deposit facility rate', points: deposit }], { primaryLabel: '3-month interbank' });
+  assert.equal(spliced.splicedFrom, '2026-02');
+  assert.match(spliced.source, /3-month interbank through 2026-01, then the ECB deposit facility rate/);
+  assert.equal(spliced.points.length, 16);
+  const none = spliceWithFallbacks(primary, [{ label: 'x', points: overnightStopped }], { primaryLabel: '3-month interbank' });
+  assert.equal(none.splicedFrom, null);
+  assert.equal(none.points.length, 8);
 });

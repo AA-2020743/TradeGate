@@ -6,6 +6,7 @@ import { buildWorkspaceNarrative, calculateTechnicalSnapshot, isPublished } from
 import {
   acquireIngestionLock,
   closeAbandonedIngestionRuns,
+  dedupeModelOutputs,
   finishIngestionRun,
   hasIngestedMarketHistoriesSince,
   insertModelAlerts,
@@ -13,6 +14,7 @@ import {
   getRecentModelOutputs,
   listStoredModelIds,
   persistModelOutput,
+  persistModelOutputIfNew,
   persistSeries,
   pruneModelOutputs,
   startIngestionRun,
@@ -256,15 +258,14 @@ export async function persistLiquiditySnapshot(snapshot, { runId = null, reportW
       }, lineageFor(macroKeys), runId);
     }
 
-    // Backfilled readings are stored once, keyed by their own vintage, so a
-    // model that has only ever run a handful of times still has a history to be
-    // correlated against. They are flagged in the stored output so nothing
-    // reads them as live runs.
+    // Backfilled readings are stored once per vintage, so a model that has
+    // only ever run a handful of times still has a history to be correlated
+    // against. They are flagged in the stored output so nothing reads them as
+    // live runs.
     let backfilledRows = 0;
     for (const entry of snapshot.macroBackfill ?? []) {
       for (const row of entry.rows) {
-        await persistModelOutput(`${entry.modelId}-backfill`, row.output, [{ provider: entry.source, asOf: row.asOf }], runId);
-        backfilledRows += 1;
+        if (await persistModelOutputIfNew(`${entry.modelId}-backfill`, row.output, [{ provider: entry.source, asOf: row.asOf }], runId)) backfilledRows += 1;
       }
     }
 
@@ -273,6 +274,8 @@ export async function persistLiquiditySnapshot(snapshot, { runId = null, reportW
     let prunedOutputs = 0;
     try {
       for (const storedModelId of await listStoredModelIds()) {
+        // Earlier runs stored every backfill vintage again on each run.
+        if (storedModelId.endsWith('-backfill')) prunedOutputs += await dedupeModelOutputs(storedModelId);
         prunedOutputs += await pruneModelOutputs(storedModelId);
       }
     } catch (error) {

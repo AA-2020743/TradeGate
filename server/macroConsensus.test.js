@@ -537,3 +537,19 @@ test('the macro verdict declines when the regime model has not published', () =>
   assert.equal(calculateMacroVerdict({}).status, 'unavailable');
   assert.equal(calculateMacroVerdict({ macroRegime: { status: 'unavailable', reason: 'no drivers' } }).status, 'unavailable');
 });
+
+test('the correlation matrix uses backfill only for weeks before a model’s first live run', async () => {
+  const { mergeLiveAndBackfill, calculateModelCorrelationMatrix: matrix } = await import('./macroConsensus.js');
+  const week = (index) => new Date(Date.UTC(2025, 0, 6) + index * 7 * 86_400_000).toISOString().slice(0, 10);
+  const backfill = Array.from({ length: 20 }, (_unused, index) => ({ output: { asOf: week(index), score: 40 + index } }));
+  const live = [{ output: { asOf: week(18), score: 90 } }, { output: { asOf: week(19), score: 91 } }];
+  const merged = mergeLiveAndBackfill(live, backfill);
+  assert.equal(merged.backfilled, 18, 'backfill stops at the first live run');
+  assert.deepEqual(merged.outputs.slice(-2).map((entry) => entry.output.score), [90, 91]);
+  const other = mergeLiveAndBackfill([], backfill.map((entry) => ({ output: { ...entry.output, score: 100 - entry.output.score } })));
+  const result = matrix({ a: merged.outputs, b: other.outputs }, { databaseConfigured: true, backfilledModels: ['a', 'b'] });
+  assert.equal(result.status, 'calculated');
+  assert.deepEqual(result.backfilledModels, ['a', 'b']);
+  assert.match(matrix({}, { databaseConfigured: true }).reason, /Readings accumulate with each ingestion run/);
+  assert.match(matrix({}).reason, /only once PostgreSQL is configured/);
+});

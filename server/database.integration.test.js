@@ -720,3 +720,17 @@ describe('the daily snapshot is stored once a day and compared with the stored c
   assert.equal(nextDay.changes[0].delta, 7);
   assert.equal((await database.getRecentModelOutputs(DAILY_SNAPSHOT_MODEL_ID, 10)).length, 2);
 });
+
+describe('a backfill vintage is stored once, and earlier duplicates are removed', async () => {
+  await reset();
+  const row = { version: 'us-liquidity-backfill', asOf: '2026-03-02', score: 55, backfilled: true };
+  assert.equal(await database.persistModelOutputIfNew('us-liquidity-backfill', row), true);
+  assert.equal(await database.persistModelOutputIfNew('us-liquidity-backfill', row), false, 'the same vintage again is skipped');
+  assert.equal((await database.getRecentModelOutputs('us-liquidity-backfill', 10)).length, 1);
+  // Rows written by the old unconditional path: three copies of one vintage.
+  for (let copy = 0; copy < 3; copy += 1) await database.persistModelOutput('global-liquidity-backfill', { ...row, version: 'global-liquidity-backfill', score: 50 + copy });
+  assert.equal(await database.dedupeModelOutputs('global-liquidity-backfill'), 2);
+  const kept = await database.getRecentModelOutputs('global-liquidity-backfill', 10);
+  assert.equal(kept.length, 1);
+  assert.equal(kept[0].output.score, 52, 'the newest copy is kept');
+});

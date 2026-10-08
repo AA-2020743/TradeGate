@@ -8,7 +8,7 @@ import { calculateBitcoinRangeModels } from './bitcoinOhlc.js';
 import { buildCoingeckoRequest, buildHeatmapRow, buildSocrataRequest, buildLiquidityNarrative, buildLiquidityTransmission, buildWorkspaceNarrative, calculateBitcoinCyclePhase, calculateChangeCorrelations, calculateCryptoRotation, calculateDollarScenarios, calculateDollarTransmissionRead, calculateLeadLag, calculateLiquidityRunway, calculateOpenInterestQuadrant, calculatePositioningModel, calculateCrossMarketRelationship, calculateGlobalLiquidityModel, calculateHeatmapRisk, calculateMacroRegimeModel, calculateMetalsCostStructure, calculateRsi, calculateScreenerScores, calculateTechnicalSnapshot, calculateTrendQuality, classifyHeadlineSentiment, isPublished, calculateUsdStrengthModel, calculateUsLiquidityModel } from './analytics.js';
 import { getStoredFredSeries, getStoredMarketHistory, getStoredMarketHistoryWithProvider, getStoredMarketSnapshot, getModelAlertsSince, getRecentModelOutputs, isDatabaseConfigured, reserveProviderCredits } from './database.js';
 import { getAllEquityHistorySymbols, getCoreEquityHistorySymbols } from './equityCatalog.js';
-import { buildBackfillRows, calculateConsensusHistory, calculateMacroVerdict, calculateModelConsensus, calculateModelCorrelationMatrix, calculateWeightOverlap, evaluateMacroAlerts } from './macroConsensus.js';
+import { buildBackfillRows, calculateConsensusHistory, calculateMacroVerdict, calculateModelConsensus, calculateModelCorrelationMatrix, calculateWeightOverlap, evaluateMacroAlerts, mergeLiveAndBackfill } from './macroConsensus.js';
 import { calculateDataSurprise, calculateLiquidityPayoff, calculateNominalDecomposition, calculateRateDivergence, calculateReserveScarcity, calculateTermPremium } from './macroRates.js';
 import { calculateGrowthNowcast, calculateInflationNowcast, calculateLiquidityCalendar, calculateRatePath, calculateRegimeTransitions, calculateYieldCurveModel, seriesPoints } from './macroModels.js';
 import { buildCryptoVerdict, buildFxVerdict, buildMetalsVerdict } from './verdict.js';
@@ -33,7 +33,7 @@ import { RECESSION_PROBABILITY_VERSION, calculateRecessionProbability } from './
 import { GOLD_REAL_YIELD_VERSION, calculateGoldRealYield } from './goldRealYield.js';
 import { BITCOIN_CROSS_ASSET_VERSION, calculateBitcoinCrossAsset } from './bitcoinCrossAsset.js';
 import { DIVERSIFICATION_ASSETS, DIVERSIFICATION_VERSION, calculateDiversificationRegime } from './diversificationRegime.js';
-import { CARRY_CURRENCIES, FX_CARRY_VERSION, US_RATE_SERIES, calculateFxCarry, dollarsPerUnit, spliceRateSeries, spliceUsRate } from './fxCarry.js';
+import { CARRY_CURRENCIES, FX_CARRY_VERSION, US_RATE_SERIES, calculateFxCarry, dollarsPerUnit, spliceUsRate, spliceWithFallbacks } from './fxCarry.js';
 import { VIX_BACKWARDATION_RATIO, VIX_FLAT_RATIO, VIX_TERM_RECORD_VERSION, calculateVixTermRecord } from './vixTermRecord.js';
 import { INDEX_VALUATION_VERSION, SHILLER_FALLBACK_URLS, SHILLER_PAGE, calculateIndexValuation, findShillerDataLink, parseShillerRows } from './indexValuation.js';
 import { readWorkbook, sheetRows } from './xls.js';
@@ -2098,13 +2098,14 @@ export async function getRecessionProbability() {
 /**
  * Gold against the 10-year TIPS yield since 2003. FRED's keyless CSV carries
  * the full daily DFII10 history (the keyed API call elsewhere is capped at the
- * newest 2,500 days), and Yahoo's chart endpoint the full gold history; both
- * are read once and cached for twelve hours.
+ * newest 2,500 days). Gold is requested by date range: Yahoo's range=max
+ * answer for GC=F came back missing 41 of 286 months. Both are cached for
+ * twelve hours.
  */
 export async function getGoldRealYield() {
   return withCache('analytics:gold-real-yield', 12 * 60 * 60_000, async () => {
     const [goldResult, yieldResult] = await Promise.allSettled([
-      getYahooHistory('GC=F', 'max'),
+      getYahooDailyHistory('GC=F', '2002-12-01'),
       getFredCsvSeries({ id: 'DFII10', key: 'realYield10y', name: '10-year real yield' }),
     ]);
     const failures = [
@@ -2152,7 +2153,7 @@ export async function getFxCarry() {
       { code: 'USD', id: US_RATE_SERIES },
       { code: 'USD-BILL', id: 'TB3MS' },
       ...CARRY_CURRENCIES.map((currency) => ({ code: currency.code, id: currency.rateSeries })),
-      ...CARRY_CURRENCIES.map((currency) => ({ code: `${currency.code}-OVERNIGHT`, id: currency.overnightSeries })),
+      ...CARRY_CURRENCIES.flatMap((currency) => currency.fallbacks.map((fallback) => ({ code: `${currency.code}:${fallback.id}`, id: fallback.id }))),
     ];
     const [spotResult, ...rateResults] = await Promise.allSettled([
       getLongDailyHistories(CARRY_CURRENCIES.map((currency) => currency.ticker), 10),
@@ -2171,10 +2172,12 @@ export async function getFxCarry() {
       histories.set(series.code, result.value.history);
     });
     const { points: usRate, source: usRateSource } = spliceUsRate(histories.get('USD'), histories.get('USD-BILL'));
-    // Each foreign leg: its 3-month rate, then its overnight rate after the 3-month series stops.
+    // Each foreign leg: its 3-month rate, then the first fallback still
+    // publishing after the 3-month series stops.
     const rateSources = [];
     for (const currency of CARRY_CURRENCIES) {
-      const spliced = spliceRateSeries(histories.get(currency.code), histories.get(`${currency.code}-OVERNIGHT`), { primaryLabel: '3-month interbank', fallbackLabel: 'the overnight rate' });
+      const fallbacks = currency.fallbacks.map((fallback) => ({ label: fallback.label, points: histories.get(`${currency.code}:${fallback.id}`) ?? [] }));
+      const spliced = spliceWithFallbacks(histories.get(currency.code), fallbacks, { primaryLabel: '3-month interbank' });
       if (spliced.points.length) rates.set(currency.code, spliced.points);
       if (spliced.splicedFrom) rateSources.push(`${currency.code}: ${spliced.source}`);
     }
@@ -3624,8 +3627,19 @@ export async function getLiquiditySnapshot(options = {}) {
       try {
         const tracked = ['us-liquidity', 'global-liquidity', 'usd-strength', 'macro-regime', 'growth-nowcast', 'yield-curve', 'data-surprise', 'reserve-scarcity'];
         consensusHistory = calculateConsensusHistory(await getRecentModelOutputs('macro-consensus', 120).catch(() => []));
-        const stored = await Promise.all(tracked.map((modelId) => getRecentModelOutputs(modelId, 120).catch(() => [])));
-        modelCorrelation = calculateModelCorrelationMatrix(Object.fromEntries(tracked.map((modelId, index) => [modelId, stored[index]])));
+        // Live runs plus the backfill stored for the weeks before them; the
+        // backfill lives under its own id so nothing reads it as a live run.
+        const merged = await Promise.all(tracked.map(async (modelId) => {
+          const [live, backfill] = await Promise.all([
+            getRecentModelOutputs(modelId, 120).catch(() => []),
+            getRecentModelOutputs(`${modelId}-backfill`, 240).catch(() => []),
+          ]);
+          return mergeLiveAndBackfill(live, backfill);
+        }));
+        modelCorrelation = calculateModelCorrelationMatrix(Object.fromEntries(tracked.map((modelId, index) => [modelId, merged[index].outputs])), {
+          databaseConfigured: true,
+          backfilledModels: tracked.filter((_modelId, index) => merged[index].backfilled > 0),
+        });
         weightOverlap = calculateWeightOverlap(macroRegime, modelCorrelation, { driverToModelId: REGIME_DRIVER_MODELS });
       } catch (error) {
         modelCorrelation = { version: 'macro-model-correlation-v1', status: 'unavailable', reason: `Stored model outputs could not be read: ${error.message}`, pairs: [], models: [] };
