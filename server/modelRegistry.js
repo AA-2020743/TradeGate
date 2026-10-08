@@ -235,7 +235,7 @@ export const MODEL_REGISTRY = [
     name: 'Currency carry',
     page: 'Forex',
     measures: 'Each major currency\u2019s 3-month rate gap to the dollar, its carry per unit of realized volatility, and a monthly track record of the high-, middle- and low-carry groups\u2019 returns against the dollar including carry, with the high-minus-low trade\u2019s worst months.',
-    inputs: ['FRED OECD 3-month interbank rates (IR3TIB01 series) for the U.S. and seven currencies', 'Ten years of daily Yahoo spot rates against the dollar'],
+    inputs: ['FRED OECD 3-month interbank rates (IR3TIB01 series) for the U.S. and seven currencies, spliced to the OECD overnight rate (IRSTCI01) - and for the U.S. to the 3-month T-bill (TB3MS) - after a 3-month series stops', 'Ten years of daily Yahoo spot rates against the dollar'],
     failureModes: [
       'Interbank rates are a proxy for the forward points a trade earns, and OECD publishes them weeks late.',
       'Seven currencies make two-currency groups; one central bank moves a whole group.',

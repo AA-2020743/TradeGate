@@ -21,18 +21,19 @@
 
 import { evaluateTrackRecord } from './trackRecord.js';
 import { median } from './statistics.js';
+import { bondEquivalentYield } from './recessionProbability.js';
 
 export const FX_CARRY_VERSION = 'fx-carry-v1';
 // `usdPerUnit` is true when the Yahoo quote is dollars per unit of the
 // currency (EURUSD); false when it is units per dollar (USDJPY) and is inverted.
 export const CARRY_CURRENCIES = [
-  { code: 'EUR', name: 'Euro', ticker: 'EURUSD=X', usdPerUnit: true, rateSeries: 'IR3TIB01EZM156N' },
-  { code: 'GBP', name: 'Sterling', ticker: 'GBPUSD=X', usdPerUnit: true, rateSeries: 'IR3TIB01GBM156N' },
-  { code: 'JPY', name: 'Yen', ticker: 'JPY=X', usdPerUnit: false, rateSeries: 'IR3TIB01JPM156N' },
-  { code: 'CHF', name: 'Swiss franc', ticker: 'CHF=X', usdPerUnit: false, rateSeries: 'IR3TIB01CHM156N' },
-  { code: 'AUD', name: 'Australian dollar', ticker: 'AUDUSD=X', usdPerUnit: true, rateSeries: 'IR3TIB01AUM156N' },
-  { code: 'NZD', name: 'New Zealand dollar', ticker: 'NZDUSD=X', usdPerUnit: true, rateSeries: 'IR3TIB01NZM156N' },
-  { code: 'CAD', name: 'Canadian dollar', ticker: 'CAD=X', usdPerUnit: false, rateSeries: 'IR3TIB01CAM156N' },
+  { code: 'EUR', name: 'Euro', ticker: 'EURUSD=X', usdPerUnit: true, rateSeries: 'IR3TIB01EZM156N', overnightSeries: 'IRSTCI01EZM156N' },
+  { code: 'GBP', name: 'Sterling', ticker: 'GBPUSD=X', usdPerUnit: true, rateSeries: 'IR3TIB01GBM156N', overnightSeries: 'IRSTCI01GBM156N' },
+  { code: 'JPY', name: 'Yen', ticker: 'JPY=X', usdPerUnit: false, rateSeries: 'IR3TIB01JPM156N', overnightSeries: 'IRSTCI01JPM156N' },
+  { code: 'CHF', name: 'Swiss franc', ticker: 'CHF=X', usdPerUnit: false, rateSeries: 'IR3TIB01CHM156N', overnightSeries: 'IRSTCI01CHM156N' },
+  { code: 'AUD', name: 'Australian dollar', ticker: 'AUDUSD=X', usdPerUnit: true, rateSeries: 'IR3TIB01AUM156N', overnightSeries: 'IRSTCI01AUM156N' },
+  { code: 'NZD', name: 'New Zealand dollar', ticker: 'NZDUSD=X', usdPerUnit: true, rateSeries: 'IR3TIB01NZM156N', overnightSeries: 'IRSTCI01NZM156N' },
+  { code: 'CAD', name: 'Canadian dollar', ticker: 'CAD=X', usdPerUnit: false, rateSeries: 'IR3TIB01CAM156N', overnightSeries: 'IRSTCI01CAM156N' },
 ];
 export const US_RATE_SERIES = 'IR3TIB01USM156N';
 export const CARRY_GROUPS = [
@@ -56,6 +57,33 @@ function monthsBetween(from, to) {
   const [fromYear, fromMonth] = from.split('-').map(Number);
   const [toYear, toMonth] = to.split('-').map(Number);
   return (toYear - fromYear) * 12 + (toMonth - fromMonth);
+}
+
+/**
+ * One rate series spliced from two: the primary while it publishes, then the
+ * fallback for every month after it stops. The OECD 3-month interbank rates
+ * for the dollar, sterling, the Swiss franc and the yen were built on LIBOR,
+ * which ended between 2021 and 2023; a carry model whose legs froze then would
+ * compare live rates with years-old ones. The months spliced are named.
+ */
+export function spliceRateSeries(primarySeries, fallbackSeries, { primaryLabel, fallbackLabel, convert = (value) => value, stoppedAfterMonths = 3 }) {
+  const primary = (primarySeries ?? []).filter((point) => Number.isFinite(point.value)).sort((left, right) => String(left.date).localeCompare(String(right.date)));
+  const fallback = (fallbackSeries ?? []).filter((point) => Number.isFinite(point.value)).map((point) => ({ date: point.date, value: convert(point.value) }));
+  const lastPrimary = primary.at(-1)?.date?.slice(0, 7) ?? null;
+  const after = fallback.filter((point) => !lastPrimary || String(point.date).slice(0, 7) > lastPrimary).sort((left, right) => String(left.date).localeCompare(String(right.date)));
+  // A primary a month or two behind its fallback is publishing late, not
+  // stopped; its own newest month is still to come.
+  const lastFallback = after.at(-1)?.date?.slice(0, 7) ?? null;
+  const stopped = !lastPrimary || (lastFallback && monthsBetween(lastPrimary, lastFallback) >= stoppedAfterMonths);
+  if (!after.length || !stopped) return { points: primary, source: primaryLabel, splicedFrom: null };
+  if (!primary.length) return { points: after, source: fallbackLabel, splicedFrom: after[0].date.slice(0, 7) };
+  return { points: [...primary, ...after], source: `${primaryLabel} through ${lastPrimary}, then ${fallbackLabel}`, splicedFrom: after[0].date.slice(0, 7) };
+}
+
+/** The U.S. leg: the 3-month bill, converted from its discount quote, after the interbank series. */
+export function spliceUsRate(interbank, billDiscount) {
+  const { points, source } = spliceRateSeries(interbank, billDiscount, { primaryLabel: 'OECD U.S. 3-month interbank rate', fallbackLabel: 'the 3-month Treasury bill (bond-equivalent)', convert: bondEquivalentYield });
+  return { points, source };
 }
 
 /** Spot as dollars per unit of the currency, whichever way it is quoted. */

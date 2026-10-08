@@ -31,7 +31,7 @@ import { RECESSION_PROBABILITY_VERSION, calculateRecessionProbability } from './
 import { GOLD_REAL_YIELD_VERSION, calculateGoldRealYield } from './goldRealYield.js';
 import { BITCOIN_CROSS_ASSET_VERSION, calculateBitcoinCrossAsset } from './bitcoinCrossAsset.js';
 import { DIVERSIFICATION_ASSETS, DIVERSIFICATION_VERSION, calculateDiversificationRegime } from './diversificationRegime.js';
-import { CARRY_CURRENCIES, FX_CARRY_VERSION, US_RATE_SERIES, calculateFxCarry, dollarsPerUnit } from './fxCarry.js';
+import { CARRY_CURRENCIES, FX_CARRY_VERSION, US_RATE_SERIES, calculateFxCarry, dollarsPerUnit, spliceRateSeries, spliceUsRate } from './fxCarry.js';
 import { VIX_BACKWARDATION_RATIO, VIX_FLAT_RATIO, VIX_TERM_RECORD_VERSION, calculateVixTermRecord } from './vixTermRecord.js';
 import { INDEX_VALUATION_VERSION, SHILLER_FALLBACK_URLS, SHILLER_PAGE, calculateIndexValuation, findShillerDataLink, parseShillerRows } from './indexValuation.js';
 import { readWorkbook, sheetRows } from './xls.js';
@@ -2146,7 +2146,12 @@ export async function getDiversificationRegime() {
  */
 export async function getFxCarry() {
   return withCache('analytics:fx-carry', 12 * 60 * 60_000, async () => {
-    const rateSeries = [{ code: 'USD', id: US_RATE_SERIES }, ...CARRY_CURRENCIES.map((currency) => ({ code: currency.code, id: currency.rateSeries }))];
+    const rateSeries = [
+      { code: 'USD', id: US_RATE_SERIES },
+      { code: 'USD-BILL', id: 'TB3MS' },
+      ...CARRY_CURRENCIES.map((currency) => ({ code: currency.code, id: currency.rateSeries })),
+      ...CARRY_CURRENCIES.map((currency) => ({ code: `${currency.code}-OVERNIGHT`, id: currency.overnightSeries })),
+    ];
     const [spotResult, ...rateResults] = await Promise.allSettled([
       getLongDailyHistories(CARRY_CURRENCIES.map((currency) => currency.ticker), 10),
       ...rateSeries.map((series) => {
@@ -2156,16 +2161,23 @@ export async function getFxCarry() {
     ]);
     if (spotResult.status === 'rejected') return { version: FX_CARRY_VERSION, status: 'unavailable', reason: `Yahoo spot rates did not load (${spotResult.reason?.message ?? 'failed'}).` };
     const rates = new Map();
-    let usRate = [];
+    const histories = new Map();
     const rateErrors = [];
     rateSeries.forEach((series, index) => {
       const result = rateResults[index];
       if (result.status === 'rejected') { rateErrors.push(`${series.id}: ${result.reason?.message ?? 'failed'}`); return; }
-      if (series.code === 'USD') usRate = result.value.history;
-      else rates.set(series.code, result.value.history);
+      histories.set(series.code, result.value.history);
     });
+    const { points: usRate, source: usRateSource } = spliceUsRate(histories.get('USD'), histories.get('USD-BILL'));
+    // Each foreign leg: its 3-month rate, then its overnight rate after the 3-month series stops.
+    const rateSources = [];
+    for (const currency of CARRY_CURRENCIES) {
+      const spliced = spliceRateSeries(histories.get(currency.code), histories.get(`${currency.code}-OVERNIGHT`), { primaryLabel: '3-month interbank', fallbackLabel: 'the overnight rate' });
+      if (spliced.points.length) rates.set(currency.code, spliced.points);
+      if (spliced.splicedFrom) rateSources.push(`${currency.code}: ${spliced.source}`);
+    }
     const spots = new Map(CARRY_CURRENCIES.map((currency) => [currency.code, dollarsPerUnit(spotResult.value.get(currency.ticker), currency.usdPerUnit)]));
-    return { calculatedAt: new Date().toISOString(), rateErrors, fetchedByDateRange: spotResult.value.fetchedByDateRange, ...calculateFxCarry({ spots, rates, usRate }) };
+    return { calculatedAt: new Date().toISOString(), rateErrors, usRateSource, rateSources, fetchedByDateRange: spotResult.value.fetchedByDateRange, ...calculateFxCarry({ spots, rates, usRate }) };
   });
 }
 

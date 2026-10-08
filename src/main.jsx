@@ -1684,7 +1684,7 @@ function FxCarryPanel() {
         <StatusKicker label="CURRENCY CARRY" published={published} />
         <h3>{published ? `Long ${model.trade.long.join(' and ')} against ${model.trade.short.join(' and ')} carries ${model.trade.carry} points a year` : loadStatus === 'loading' ? 'Reading interbank rates and ten years of spot\u2026' : 'Awaiting interbank rates and spot histories'}</h3>
       </div>
-      {published ? <span className="data-pill">U.S. 3m {model.usRate}% · {model.usRateMonth}</span> : null}
+      {published ? <span className="data-pill" title={model.usRateSource ?? ''}>U.S. 3m {model.usRate}% · {model.usRateMonth}</span> : null}
     </div>
     {published ? <>
       {model.excluded?.length ? <p className="portfolio-missing" role="status">Left out: {model.excluded.join('; ')}.</p> : null}
@@ -1707,8 +1707,8 @@ function FxCarryPanel() {
         <div><span>Worst month</span><b className="negative">{history.worstMonths[0].value}%</b><small>{history.worstMonths[0].month} · long {history.worstMonths[0].long.join('/')}</small></div>
       </div>
       <TrackRecordTable record={model.record} title="WHAT FOLLOWED EACH CARRY GROUP, AGAINST THE DOLLAR" stateLabel="Group" assumption="carry assumes" unit="months" />
-      <p className="model-footnote">{model.methodology} {model.limits}</p>
-    </> : <div className="equity-empty">{model?.reason ?? (loadStatus === 'loading' ? 'Eight monthly FRED series and seven spot histories; cached for twelve hours.' : `The carry model could not be loaded: ${error}`)}</div>}
+      <p className="model-footnote">{model.usRateSource ? `U.S. leg: ${model.usRateSource}. ` : ''}{model.rateSources?.length ? `Spliced legs: ${model.rateSources.join('; ')}. ` : ''}{model.methodology} {model.limits}</p>
+    </> : <div className="equity-empty">{model?.reason ?? (loadStatus === 'loading' ? 'Sixteen monthly FRED series and seven spot histories; cached for twelve hours.' : `The carry model could not be loaded: ${error}`)}</div>}
   </article>;
 }
 

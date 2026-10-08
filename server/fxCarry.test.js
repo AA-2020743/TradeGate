@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { CARRY_CURRENCIES, calculateFxCarry, dollarsPerUnit } from './fxCarry.js';
+import { CARRY_CURRENCIES, calculateFxCarry, dollarsPerUnit, spliceRateSeries, spliceUsRate } from './fxCarry.js';
 
 function tradingDays(count) {
   const out = [];
@@ -73,4 +73,26 @@ test('too few currencies or too short a history refuses with a reason', () => {
   for (const code of ['EUR', 'GBP', 'JPY']) input.spots.delete(code);
   assert.match(calculateFxCarry(input).reason, /at least 5 currencies/);
   assert.match(calculateFxCarry(market({ sessions: 900 })).reason, /months of spot and rates; 60 are needed/);
+});
+
+test('the U.S. leg switches to the bond-equivalent T-bill after the interbank series stops, and only then', () => {
+  const interbank = [{ date: '2023-05-01', value: 5.4 }, { date: '2023-06-01', value: 5.5 }];
+  const bills = [{ date: '2023-06-01', value: 5.2 }, { date: '2023-07-01', value: 5.3 }, { date: '2023-08-01', value: 5.3 }, { date: '2023-09-01', value: 5.3 }];
+  const spliced = spliceUsRate(interbank, bills);
+  assert.deepEqual(spliced.points.map((point) => point.date), ['2023-05-01', '2023-06-01', '2023-07-01', '2023-08-01', '2023-09-01']);
+  // Two months behind is late, not stopped.
+  assert.equal(spliceUsRate(interbank, bills.slice(0, 3)).points.length, 2);
+  assert.equal(spliced.points[1].value, 5.5, 'the interbank month is kept where it exists');
+  assert.ok(spliced.points[2].value > 5.3, 'the bill is converted from its discount quote');
+  assert.match(spliced.source, /interbank rate through 2023-06, then the 3-month Treasury bill/);
+  assert.equal(spliceUsRate(bills.map((point) => ({ ...point })), []).source, 'OECD U.S. 3-month interbank rate');
+  assert.equal(spliceUsRate([], bills).points.length, 4);
+});
+
+test('a foreign leg whose 3-month series stopped continues on its overnight rate', () => {
+  const overnight = ['2021-11', '2021-12', '2022-01', '2022-02'].map((month, index) => ({ date: `${month}-01`, value: 0.05 + index * 0.05 }));
+  const spliced = spliceRateSeries([{ date: '2021-11-01', value: 0.1 }], overnight, { primaryLabel: '3-month interbank', fallbackLabel: 'the overnight rate' });
+  assert.deepEqual(spliced.points.map((point) => Math.round(point.value * 100) / 100), [0.1, 0.1, 0.15, 0.2]);
+  assert.equal(spliced.splicedFrom, '2021-12');
+  assert.equal(spliced.source, '3-month interbank through 2021-11, then the overnight rate');
 });
