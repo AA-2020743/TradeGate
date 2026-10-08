@@ -161,7 +161,7 @@ export const SOURCES = [
     name: 'Yahoo 10-year asset-class ETFs (diversification)',
     endpoint: '/api/analytics/diversification',
     load: getDiversificationRegime,
-    figure: (payload) => (payload.stockBond ? `stock-bond ${payload.stockBond.short} (${payload.stockBond.stateLabel}), ${payload.effectiveBets.now} of ${payload.effectiveBets.of} bets; ${payload.sessions} sessions to ${payload.date}` : null),
+    figure: (payload) => (payload.stockBond ? `stock-bond ${payload.stockBond.short} (${payload.stockBond.stateLabel}), ${payload.effectiveBets.now} of ${payload.effectiveBets.of} bets; ${payload.sessions} sessions to ${payload.date}${payload.fetchedByDateRange?.length ? `; by date range: ${payload.fetchedByDateRange.join(', ')}` : ''}` : null),
     plausible: (payload) => [
       { label: 'shared sessions', value: payload.sessions, min: 1500, max: 2600 },
       { label: 'effective bets', value: payload.effectiveBets?.now, min: 1, max: 6 },
@@ -171,7 +171,7 @@ export const SOURCES = [
     name: 'Yahoo 10-year BTC, QQQ, GLD (bitcoin regime)',
     endpoint: '/api/analytics/bitcoin-cross-asset',
     load: getBitcoinCrossAsset,
-    figure: (payload) => (payload.regimeLabel ? `${payload.regimeLabel} since ${payload.regimeSince}; ${payload.sessions} shared sessions to ${payload.date}` : null),
+    figure: (payload) => (payload.regimeLabel ? `${payload.regimeLabel} since ${payload.regimeSince}; ${payload.sessions} shared sessions to ${payload.date}${payload.fetchedByDateRange?.length ? `; by date range: ${payload.fetchedByDateRange.join(', ')}` : ''}` : null),
     plausible: (payload) => [
       { label: 'shared sessions', value: payload.sessions, min: 1500, max: 2600 },
       { label: 'beta to QQQ (1y)', value: payload.betaToNasdaq?.year, min: -1, max: 6 },

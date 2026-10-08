@@ -119,3 +119,28 @@ test('every market the heatmap scores is stored by the daily history job', async
   const stored = new Set(getIngestionHistorySymbols());
   assert.deepEqual(heatmapSymbols().filter((symbol) => !stored.has(symbol)), []);
 });
+
+test('a symbol spark returns short or not at all is fetched by date range from the chart endpoint', async () => {
+  const { getLongDailyHistories } = await import('./providers.js');
+  const stamps = (count) => Array.from({ length: count }, (_unused, index) => Math.floor(Date.UTC(2016, 0, 4) / 1000) + index * 86_400);
+  const original = globalThis.fetch;
+  const requested = [];
+  globalThis.fetch = async (url) => {
+    const text = String(url);
+    requested.push(text);
+    const body = text.includes('/spark')
+      // AAA comes back with a year of closes, BBB not at all.
+      ? { spark: { result: [{ symbol: 'AAA', response: [{ timestamp: stamps(300), indicators: { quote: [{ close: stamps(300).map(() => 10) }] } }] }] } }
+      : { chart: { result: [{ timestamp: stamps(2600), indicators: { quote: [{ close: stamps(2600).map(() => 20) }] } }] } };
+    return new Response(JSON.stringify(body), { status: 200, headers: { 'Content-Type': 'application/json' } });
+  };
+  try {
+    const histories = await getLongDailyHistories(['AAA', 'BBB'], 10);
+    assert.equal(histories.get('AAA').length, 2600);
+    assert.equal(histories.get('BBB').length, 2600);
+    assert.deepEqual(histories.fetchedByDateRange, ['AAA', 'BBB']);
+    assert.ok(requested.some((url) => url.includes('/v8/finance/chart/AAA?period1=')));
+  } finally {
+    globalThis.fetch = original;
+  }
+});

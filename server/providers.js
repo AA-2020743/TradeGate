@@ -1103,6 +1103,39 @@ async function getSparkDatedHistories(symbols, range = '5y') {
   return merged;
 }
 
+/**
+ * Multi-year daily closes for a handful of symbols. Spark answers many
+ * symbols per request but has only been relied on here up to five years, so
+ * any symbol it does not return with most of the span - absent, short, or
+ * coarsened - is fetched by date range from the chart endpoint instead.
+ */
+export async function getLongDailyHistories(symbols, years) {
+  const from = new Date(Date.now() - years * 365.25 * 86_400_000).toISOString().slice(0, 10);
+  const enough = years * 240 * 0.9;
+  let spark = new Map();
+  try {
+    spark = await getSparkDatedHistories(symbols, `${years}y`);
+  } catch {
+    spark = new Map();
+  }
+  const out = new Map();
+  const short = [];
+  for (const symbol of symbols) {
+    const points = spark.get(symbol.replace(/\./g, '-'));
+    if (points?.length >= enough) out.set(symbol, points);
+    else short.push(symbol);
+  }
+  const settled = await Promise.allSettled(short.map((symbol) => getYahooDailyHistory(symbol, from)));
+  short.forEach((symbol, index) => {
+    const result = settled[index];
+    const sparkPoints = spark.get(symbol.replace(/\./g, '-'));
+    if (result.status === 'fulfilled' && result.value.length > (sparkPoints?.length ?? 0)) out.set(symbol, result.value);
+    else if (sparkPoints?.length) out.set(symbol, sparkPoints);
+  });
+  out.fetchedByDateRange = short;
+  return out;
+}
+
 async function getIntradayCloses(symbols, range = '5d', interval = '30m') {
   const settled = await Promise.allSettled(symbols.map((symbol) => getSparkBatch([symbol], { range, interval })));
   const aligned = new Map();
@@ -2088,10 +2121,10 @@ export async function getGoldRealYield() {
 /** Bitcoin against the Nasdaq-100 and gold, from ten years of keyless Yahoo closes. */
 export async function getBitcoinCrossAsset() {
   return withCache('analytics:bitcoin-cross-asset', 6 * 60 * 60_000, async () => {
-    const histories = await getSparkDatedHistories(['BTC-USD', 'QQQ', 'GLD'], '10y');
+    const histories = await getLongDailyHistories(['BTC-USD', 'QQQ', 'GLD'], 10);
     const missing = ['BTC-USD', 'QQQ', 'GLD'].filter((symbol) => !histories.get(symbol)?.length);
     if (missing.length) return { version: BITCOIN_CROSS_ASSET_VERSION, status: 'unavailable', reason: `Yahoo returned no ten-year history for ${missing.join(', ')}.` };
-    return { calculatedAt: new Date().toISOString(), source: 'Yahoo Finance daily closes', ...calculateBitcoinCrossAsset({ bitcoin: histories.get('BTC-USD'), nasdaq: histories.get('QQQ'), gold: histories.get('GLD') }) };
+    return { calculatedAt: new Date().toISOString(), source: 'Yahoo Finance daily closes', fetchedByDateRange: histories.fetchedByDateRange, ...calculateBitcoinCrossAsset({ bitcoin: histories.get('BTC-USD'), nasdaq: histories.get('QQQ'), gold: histories.get('GLD') }) };
   });
 }
 
@@ -2099,10 +2132,10 @@ export async function getBitcoinCrossAsset() {
 export async function getDiversificationRegime() {
   return withCache('analytics:diversification-regime', 6 * 60 * 60_000, async () => {
     const symbols = DIVERSIFICATION_ASSETS.map((asset) => asset.symbol);
-    const histories = await getSparkDatedHistories(symbols, '10y');
+    const histories = await getLongDailyHistories(symbols, 10);
     const missing = symbols.filter((symbol) => !histories.get(symbol)?.length);
     if (missing.length) return { version: DIVERSIFICATION_VERSION, status: 'unavailable', reason: `Yahoo returned no ten-year history for ${missing.join(', ')}.` };
-    return { calculatedAt: new Date().toISOString(), source: 'Yahoo Finance daily closes', ...calculateDiversificationRegime({ histories }) };
+    return { calculatedAt: new Date().toISOString(), source: 'Yahoo Finance daily closes', fetchedByDateRange: histories.fetchedByDateRange, ...calculateDiversificationRegime({ histories }) };
   });
 }
 
@@ -2115,7 +2148,7 @@ export async function getFxCarry() {
   return withCache('analytics:fx-carry', 12 * 60 * 60_000, async () => {
     const rateSeries = [{ code: 'USD', id: US_RATE_SERIES }, ...CARRY_CURRENCIES.map((currency) => ({ code: currency.code, id: currency.rateSeries }))];
     const [spotResult, ...rateResults] = await Promise.allSettled([
-      getSparkDatedHistories(CARRY_CURRENCIES.map((currency) => currency.ticker), '10y'),
+      getLongDailyHistories(CARRY_CURRENCIES.map((currency) => currency.ticker), 10),
       ...rateSeries.map((series) => {
         const request = { id: series.id, key: `rate3m${series.code}`, name: `${series.code} 3-month interbank rate` };
         return config.fredApiKey ? getFredSeries(request) : getFredCsvSeries(request);
@@ -2132,7 +2165,7 @@ export async function getFxCarry() {
       else rates.set(series.code, result.value.history);
     });
     const spots = new Map(CARRY_CURRENCIES.map((currency) => [currency.code, dollarsPerUnit(spotResult.value.get(currency.ticker), currency.usdPerUnit)]));
-    return { calculatedAt: new Date().toISOString(), rateErrors, ...calculateFxCarry({ spots, rates, usRate }) };
+    return { calculatedAt: new Date().toISOString(), rateErrors, fetchedByDateRange: spotResult.value.fetchedByDateRange, ...calculateFxCarry({ spots, rates, usRate }) };
   });
 }
 
