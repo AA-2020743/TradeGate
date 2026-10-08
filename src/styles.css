@@ -691,3 +691,7 @@ html[data-theme='dark'] .heldout-band { fill: #222c25; }
   .valuation-bucket.fx-carry-row > span:nth-child(2), .valuation-bucket.fx-carry-row > span:nth-child(4) { display: none; }
   .valuation-bucket.fx-carry-row > span:last-child { display: block; }
 }
+
+/* Overview: what changed since yesterday */
+.daily-changes { margin-top: 18px; }
+.daily-changes > .panel { margin: 0; }

@@ -400,6 +400,8 @@ function App() {
             <button className="strip-more">•••</button>
           </section>
 
+          <div className="daily-changes"><DailyChangesPanel /></div>
+
           <section className="focus-header"><div><p className="section-kicker">IN FOCUS</p><h2>{selectedTicker} <span>·</span> {selectedAsset.name}</h2></div><button className="watch-button">☆ Add to watchlist</button></section>
 
           <section className="focus-grid">
@@ -1221,6 +1223,52 @@ function formatSnapshotTime(iso) {
   return typeof iso === 'string' ? `${iso.slice(0, 16).replace('T', ' ')} UTC` : 'unknown time';
 }
 
+function SnapshotDiffView({ diff, savedSide = 'The earlier snapshot' }) {
+  return <div className="snapshot-diff">
+      <p className="snapshot-summary">
+        {formatSnapshotTime(diff.from.takenAt)} to {formatSnapshotTime(diff.to.takenAt)}
+        {Number.isFinite(diff.elapsedDays) ? ` (${diff.elapsedDays} ${diff.elapsedDays === 1 ? 'day' : 'days'})` : ''}.{' '}
+        {diff.changes.length ? `${diff.changes.length} ${diff.changes.length === 1 ? 'reading' : 'readings'} changed, ${diff.unchanged} did not.` : `Nothing changed across ${diff.unchanged} readings.`}
+        {diff.codeChanged ? ` The code changed too (${diff.from.commit} to ${diff.to.commit}).` : ''}
+        {diff.swapped ? ` ${savedSide} was newer than now, so it is treated as the later side.` : ''}
+      </p>
+      {diff.changes.length ? <div className="snapshot-causes">
+        {Object.entries(SNAPSHOT_CAUSES).filter(([key]) => diff.byCause[key]).map(([key, cause]) => <span key={key} className={`snapshot-cause cause-${key}`} title={cause.title}>{diff.byCause[key]} {cause.label}</span>)}
+      </div> : null}
+      {diff.changes.length ? <div className="snapshot-table" role="table" aria-label="Changed readings">
+        <div className="snapshot-row snapshot-head" role="row"><span role="columnheader">Reading</span><span role="columnheader">Was</span><span role="columnheader">Now</span><span role="columnheader">Why</span></div>
+        {diff.changes.map((change) => <div className="snapshot-row" role="row" key={change.key}>
+          <span role="cell"><b>{change.name}</b><small>{change.key}</small></span>
+          <span role="cell" data-label="Was">{snapshotValue(change.from)}{change.from.asOf ? <small>{String(change.from.asOf).slice(0, 10)}</small> : null}</span>
+          <span role="cell" data-label="Now">{snapshotValue(change.to)}{change.delta !== null ? <i className={change.delta > 0 ? 'delta-up' : 'delta-down'}> {change.delta > 0 ? '+' : ''}{change.delta}</i> : null}{change.to.asOf ? <small>{String(change.to.asOf).slice(0, 10)}</small> : null}</span>
+          <span role="cell" data-label="Why"><span className={`snapshot-cause cause-${change.cause}`} title={SNAPSHOT_CAUSES[change.cause].title}>{SNAPSHOT_CAUSES[change.cause].label}</span>{change.cause === 'model' ? <small>{change.from.version} to {change.to.version}</small> : null}</span>
+        </div>)}
+      </div> : null}
+      <p className="snapshot-note">
+        {diff.vintages.advanced.length
+          ? `${diff.vintages.advanced.length} of ${diff.vintages.compared} macro inputs printed since: ${diff.vintages.advanced.map((series) => `${series.id} (${series.from} to ${series.to})`).join(', ')}.`
+          : diff.vintages.compared ? `None of the ${diff.vintages.compared} macro inputs printed a new observation in between.` : 'Neither snapshot carried macro input dates.'}
+        {diff.appeared.length ? ` New since: ${diff.appeared.map((entry) => entry.name).join(', ')}.` : ''}
+        {diff.disappeared.length ? ` No longer published: ${diff.disappeared.map((entry) => entry.name).join(', ')}.` : ''}
+      </p>
+    </div>;
+}
+
+function DailyChangesPanel() {
+  const { status: loadStatus, data, error } = useLazyResource('/api/snapshot/changes');
+  const published = data?.status === 'calculated';
+  return <article className={`panel snapshot-panel ${published ? '' : 'preview-section'}`}>
+    <div className="panel-title">
+      <div>
+        <p className="section-kicker">SINCE YESTERDAY · {published ? 'CALCULATED' : data?.status === 'provisional' ? 'STARTING' : 'UNAVAILABLE'}</p>
+        <h3>{published ? (data.changes.length ? `${data.changes.length} ${data.changes.length === 1 ? 'reading' : 'readings'} changed since ${formatSnapshotTime(data.from.takenAt)}` : `No reading changed since ${formatSnapshotTime(data.from.takenAt)}`) : loadStatus === 'loading' ? 'Comparing the workspace with yesterday\u2019s snapshot\u2026' : 'What changed since yesterday'}</h3>
+      </div>
+      {published ? <span className="data-pill">{data.storedSnapshots} daily {data.storedSnapshots === 1 ? "snapshot" : "snapshots"} kept</span> : null}
+    </div>
+    {published ? <SnapshotDiffView diff={data} /> : <div className="equity-empty">{data?.reason ?? (loadStatus === 'loading' ? 'Taking a snapshot of every model takes a few seconds.' : `The comparison could not be loaded: ${error}`)}</div>}
+  </article>;
+}
+
 function SnapshotPanel() {
   const [state, setState] = React.useState({ status: 'idle' });
   const compareWith = async (file) => {
@@ -1261,34 +1309,7 @@ function SnapshotPanel() {
     </div>
     {state.status === 'loading' ? <p className="snapshot-note">Taking a current snapshot to compare with {state.file}…</p> : null}
     {state.status === 'invalid' ? <p className="snapshot-note snapshot-error" role="alert">{state.reason}</p> : null}
-    {state.status === 'compared' ? <div className="snapshot-diff">
-      <p className="snapshot-summary">
-        {formatSnapshotTime(diff.from.takenAt)} to {formatSnapshotTime(diff.to.takenAt)}
-        {Number.isFinite(diff.elapsedDays) ? ` (${diff.elapsedDays} ${diff.elapsedDays === 1 ? 'day' : 'days'})` : ''}.{' '}
-        {diff.changes.length ? `${diff.changes.length} ${diff.changes.length === 1 ? 'reading' : 'readings'} changed, ${diff.unchanged} did not.` : `Nothing changed across ${diff.unchanged} readings.`}
-        {diff.codeChanged ? ` The code changed too (${diff.from.commit} to ${diff.to.commit}).` : ''}
-        {diff.swapped ? ' The saved file was newer than now, so it is treated as the later side.' : ''}
-      </p>
-      {diff.changes.length ? <div className="snapshot-causes">
-        {Object.entries(SNAPSHOT_CAUSES).filter(([key]) => diff.byCause[key]).map(([key, cause]) => <span key={key} className={`snapshot-cause cause-${key}`} title={cause.title}>{diff.byCause[key]} {cause.label}</span>)}
-      </div> : null}
-      {diff.changes.length ? <div className="snapshot-table" role="table" aria-label="Changed readings">
-        <div className="snapshot-row snapshot-head" role="row"><span role="columnheader">Reading</span><span role="columnheader">Was</span><span role="columnheader">Now</span><span role="columnheader">Why</span></div>
-        {diff.changes.map((change) => <div className="snapshot-row" role="row" key={change.key}>
-          <span role="cell"><b>{change.name}</b><small>{change.key}</small></span>
-          <span role="cell" data-label="Was">{snapshotValue(change.from)}{change.from.asOf ? <small>{String(change.from.asOf).slice(0, 10)}</small> : null}</span>
-          <span role="cell" data-label="Now">{snapshotValue(change.to)}{change.delta !== null ? <i className={change.delta > 0 ? 'delta-up' : 'delta-down'}> {change.delta > 0 ? '+' : ''}{change.delta}</i> : null}{change.to.asOf ? <small>{String(change.to.asOf).slice(0, 10)}</small> : null}</span>
-          <span role="cell" data-label="Why"><span className={`snapshot-cause cause-${change.cause}`} title={SNAPSHOT_CAUSES[change.cause].title}>{SNAPSHOT_CAUSES[change.cause].label}</span>{change.cause === 'model' ? <small>{change.from.version} to {change.to.version}</small> : null}</span>
-        </div>)}
-      </div> : null}
-      <p className="snapshot-note">
-        {diff.vintages.advanced.length
-          ? `${diff.vintages.advanced.length} of ${diff.vintages.compared} macro inputs printed since: ${diff.vintages.advanced.map((series) => `${series.id} (${series.from} to ${series.to})`).join(', ')}.`
-          : diff.vintages.compared ? `None of the ${diff.vintages.compared} macro inputs printed a new observation in between.` : 'Neither snapshot carried macro input dates.'}
-        {diff.appeared.length ? ` New since: ${diff.appeared.map((entry) => entry.name).join(', ')}.` : ''}
-        {diff.disappeared.length ? ` No longer published: ${diff.disappeared.map((entry) => entry.name).join(', ')}.` : ''}
-      </p>
-    </div> : null}
+    {state.status === 'compared' ? <SnapshotDiffView diff={diff} savedSide="The saved file" /> : null}
   </article>;
 }
 

@@ -4,7 +4,7 @@ import { createHash } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import { config } from './config.js';
-import { closeDatabase, getDatabaseHealth, getIngestionStatus, getRecentModelAlerts, getRecentModelOutputs, getStoredSeriesCoverage, getWatchlists, insertModelAlerts, isDatabaseConfigured, persistModelOutput, replaceWatchlists } from './database.js';
+import { closeDatabase, getDatabaseHealth, pruneModelOutputs, getIngestionStatus, getRecentModelAlerts, getRecentModelOutputs, getStoredSeriesCoverage, getWatchlists, insertModelAlerts, isDatabaseConfigured, persistModelOutput, replaceWatchlists } from './database.js';
 import {
   attachSeriesCoverage,
   breadthRequirements,
@@ -25,6 +25,8 @@ import { authorizeWrite, contentSecurityPolicy, describeWriteProtection, securit
 import { buildInfo } from './buildInfo.js';
 import { MODEL_REGISTRY } from './modelRegistry.js';
 import { buildWorkspaceSnapshot, snapshotToCsv } from './workspaceSnapshot.js';
+import { DAILY_SNAPSHOT_MODEL_ID, getDailyChanges } from './dailySnapshot.js';
+import { withCache } from './cache.js';
 
 const app = express();
 const rootDirectory = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -168,15 +170,35 @@ function withTimeout(promise, milliseconds, name) {
   ]).finally(() => clearTimeout(timer));
 }
 
+async function takeWorkspaceSnapshot() {
+  const names = Object.keys(SNAPSHOT_SOURCES);
+  const settled = await Promise.allSettled(names.map((name) => withTimeout(Promise.resolve().then(SNAPSHOT_SOURCES[name]), SNAPSHOT_LOADER_TIMEOUT_MS, name)));
+  return buildWorkspaceSnapshot({
+    build: buildInfo,
+    registry: MODEL_REGISTRY,
+    sources: Object.fromEntries(names.map((name, index) => [name, settled[index]])),
+  });
+}
+
+// The page view and the daily comparison share one snapshot per ten minutes
+// rather than each re-running every model.
+app.get('/api/snapshot/changes', async (_request, response, next) => {
+  try {
+    response.json(await getDailyChanges({
+      databaseConfigured: isDatabaseConfigured(),
+      take: () => withCache('snapshot:daily-compare', 10 * 60_000, takeWorkspaceSnapshot),
+      load: () => getRecentModelOutputs(DAILY_SNAPSHOT_MODEL_ID, 10),
+      store: (snapshot) => persistModelOutput(DAILY_SNAPSHOT_MODEL_ID, { ...snapshot, version: snapshot.snapshotVersion, asOf: snapshot.takenAt, status: 'calculated' }),
+      prune: (keep) => pruneModelOutputs(DAILY_SNAPSHOT_MODEL_ID, keep),
+    }));
+  } catch (error) {
+    next(error);
+  }
+});
+
 app.get('/api/snapshot', async (request, response, next) => {
   try {
-    const names = Object.keys(SNAPSHOT_SOURCES);
-    const settled = await Promise.allSettled(names.map((name) => withTimeout(Promise.resolve().then(SNAPSHOT_SOURCES[name]), SNAPSHOT_LOADER_TIMEOUT_MS, name)));
-    const snapshot = buildWorkspaceSnapshot({
-      build: buildInfo,
-      registry: MODEL_REGISTRY,
-      sources: Object.fromEntries(names.map((name, index) => [name, settled[index]])),
-    });
+    const snapshot = await takeWorkspaceSnapshot();
     const stamp = snapshot.takenAt.slice(0, 16).replace(/[-:]/g, '').replace('T', '-');
     if (request.query.format === 'csv') {
       response.set('Content-Type', 'text/csv; charset=utf-8');

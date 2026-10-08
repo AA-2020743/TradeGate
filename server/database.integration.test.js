@@ -696,3 +696,27 @@ describe('a schema behind the migrations on disk is not reported as migrated', a
   assert.equal(behind.mode, 'migration-required');
   assert.deepEqual(behind.pending, ['999_future.sql']);
 });
+
+describe('the daily snapshot is stored once a day and compared with the stored copy', async () => {
+  await reset();
+  const { getDailyChanges, DAILY_SNAPSHOT_MODEL_ID } = await import('./dailySnapshot.js');
+  const { SNAPSHOT_VERSION } = await import('../src/snapshotDiff.js');
+  const snap = (takenAt, score) => ({ snapshotVersion: SNAPSHOT_VERSION, takenAt, build: { commit: 'a' }, readings: [{ key: 'k', name: 'K', status: 'calculated', score, asOf: takenAt.slice(0, 10), version: 'v1' }], vintages: [] });
+  const io = (takenAt, score, now) => ({
+    databaseConfigured: true,
+    now,
+    take: async () => snap(takenAt, score),
+    load: () => database.getRecentModelOutputs(DAILY_SNAPSHOT_MODEL_ID, 10),
+    store: (snapshot) => database.persistModelOutput(DAILY_SNAPSHOT_MODEL_ID, { ...snapshot, version: snapshot.snapshotVersion, asOf: snapshot.takenAt, status: 'calculated' }),
+    prune: (keep) => database.pruneModelOutputs(DAILY_SNAPSHOT_MODEL_ID, keep),
+  });
+  const first = await getDailyChanges(io('2026-10-07T09:00:00.000Z', 40, Date.parse('2026-10-07T09:00:00Z')));
+  assert.equal(first.status, 'provisional');
+  const sameDay = await getDailyChanges(io('2026-10-07T15:00:00.000Z', 42, Date.parse('2026-10-07T15:00:00Z')));
+  assert.equal(sameDay.status, 'provisional');
+  assert.equal((await database.getRecentModelOutputs(DAILY_SNAPSHOT_MODEL_ID, 10)).length, 1, 'no second copy within twenty hours');
+  const nextDay = await getDailyChanges(io('2026-10-08T10:00:00.000Z', 47, Date.parse('2026-10-08T10:00:00Z')));
+  assert.equal(nextDay.status, 'calculated');
+  assert.equal(nextDay.changes[0].delta, 7);
+  assert.equal((await database.getRecentModelOutputs(DAILY_SNAPSHOT_MODEL_ID, 10)).length, 2);
+});
