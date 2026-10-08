@@ -2770,8 +2770,69 @@ function WatchlistsDashboard({ data }) {
       {symbols.map((symbol) => <WatchlistRow key={`${activeList}-${symbol}`} symbol={symbol} onRemove={removeSymbol} onSnapshot={updateSnapshot} />)}
       {!symbols.length && <div className="calculation-empty">This list is empty — add a ticker above to start tracking calculated signals.</div>}
     </section>
+    <WatchlistRiskPanel listName={activeList} symbols={symbols} />
     <p className="independence-note">TradeGate is an independent market research platform and is not affiliated with Tradegate AG.</p>
   </div>;
+}
+
+function signedPercent(value) {
+  return Number.isFinite(value) ? `${value > 0 ? '+' : ''}${value}%` : '\u2014';
+}
+
+function WatchlistRiskPanel({ listName, symbols }) {
+  const query = symbols.join(',');
+  if (symbols.length < 2) {
+    return <article className="panel portfolio-panel preview-section">
+      <div className="panel-title"><div><StatusKicker label="LIST AS A PORTFOLIO" published={false} /><h3>Add a second symbol to read this list as a portfolio</h3></div></div>
+      <div className="equity-empty">With two or more symbols this shows how many independent bets the list amounts to, which positions move together, and where its risk comes from.</div>
+    </article>;
+  }
+  return <LazyWatchlistRisk key={query} listName={listName} query={query} />;
+}
+
+function LazyWatchlistRisk({ listName, query }) {
+  const { status: loadStatus, data: risk, error } = useLazyResource(`/api/analytics/watchlist-risk?symbols=${encodeURIComponent(query)}`);
+  const published = risk?.status === 'calculated';
+  const missing = risk?.missing ?? [];
+  const summary = risk?.summary;
+  const widest = published ? Math.max(...risk.positions.map((position) => position.riskSharePercent), 1) : 1;
+  return <article className={`panel portfolio-panel ${published ? '' : 'preview-section'}`}>
+    <div className="panel-title">
+      <div>
+        <StatusKicker label="LIST AS A PORTFOLIO" published={published} />
+        <h3>{published ? `${listName}: ${summary.positions} symbols, ${summary.effectiveBets} independent ${summary.effectiveBets === 1 ? 'bet' : 'bets'}` : loadStatus === 'loading' ? 'Reading a year of closes for this list\u2026' : 'Awaiting a year of closes for this list'}</h3>
+      </div>
+      {published ? <span className="data-pill">{risk.from} to {risk.to} · {risk.sessions} sessions</span> : null}
+    </div>
+    {missing.length ? <p className="portfolio-missing" role="status">Left out, no year of daily closes found: {missing.join(', ')}.</p> : null}
+    {published ? <>
+      <div className="portfolio-stats">
+        <div><span>Independent bets</span><b>{summary.effectiveBets}</b><small>of {summary.positions} symbols · avg correlation {summary.averageCorrelation}</small></div>
+        <div><span>Volatility</span><b>{summary.volatilityPercent}%</b><small>diversification ratio {summary.diversificationRatio}</small></div>
+        <div><span>Beta to S&amp;P 500</span><b>{summary.beta}</b><small>held in equal weights</small></div>
+        <div><span>Year return</span><b className={summary.returnPercent >= 0 ? 'positive' : 'negative'}>{signedPercent(summary.returnPercent)}</b><small>worst drawdown {summary.maxDrawdownPercent}%</small></div>
+      </div>
+      <p className="dca-read">{risk.read}</p>
+      <div className="portfolio-table" role="table" aria-label="Positions by share of the list’s risk">
+        <div className="portfolio-row portfolio-head" role="row"><span role="columnheader">Symbol</span><span role="columnheader">Share of risk</span><span role="columnheader">Volatility</span><span role="columnheader">Beta</span><span role="columnheader">Corr. SPY</span><span role="columnheader">Year</span><span role="columnheader">Drawdown</span></div>
+        {risk.positions.map((position) => <div className="portfolio-row" role="row" key={position.symbol}>
+          <span role="cell"><b>{position.symbol}</b></span>
+          <span role="cell" className="portfolio-share"><i style={{ width: `${Math.max(0, position.riskSharePercent) / widest * 100}%` }} className={position.riskSharePercent < 0 ? 'hedge' : ''}></i><em>{position.riskSharePercent}%</em></span>
+          <span role="cell">{position.volatilityPercent}%</span>
+          <span role="cell">{position.beta}</span>
+          <span role="cell">{position.correlationToBenchmark}</span>
+          <span role="cell" className={position.returnPercent >= 0 ? 'positive' : 'negative'}>{signedPercent(position.returnPercent)}</span>
+          <span role="cell">{position.maxDrawdownPercent}%</span>
+        </div>)}
+      </div>
+      <p className="portfolio-note">Equal weight is {Math.round(1000 / summary.positions) / 10}% each; a share above that means the position adds more than its weight to the list’s swings, a negative share means it offsets them.</p>
+      {risk.positions.length > 2 ? <div className="portfolio-pairs">
+        <div><span>Move most alike</span>{risk.mostAlike.map((pair) => <p key={`${pair.left}-${pair.right}`}><b>{pair.left} · {pair.right}</b><em>{pair.correlation}</em></p>)}</div>
+        <div><span>Move least alike</span>{risk.leastAlike.map((pair) => <p key={`${pair.left}-${pair.right}`}><b>{pair.left} · {pair.right}</b><em>{pair.correlation}</em></p>)}</div>
+      </div> : null}
+      <p className="model-footnote">{risk.methodology} {risk.limits}</p>
+    </> : <div className="equity-empty">{risk?.reason ?? (loadStatus === 'loading' ? 'Daily closes come from Yahoo\u2019s keyless endpoint and are cached for half an hour.' : `The portfolio reading could not be loaded: ${error}`)}</div>}
+  </article>;
 }
 
 function screenerLeader(rows) {

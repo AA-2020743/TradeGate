@@ -277,3 +277,11 @@ test('writes carry their own rate-limit budget, separate from reads', async () =
   assert.equal(Number(response.headers.get('ratelimit-limit')), config.apiWriteRateLimit);
   await response.json();
 });
+
+test('watchlist risk refuses a list it cannot read before fetching anything', async () => {
+  for (const [query, reason] of [['', /at least two symbols/], ['AAPL', /at least two symbols/], ['AAPL,<script>', /Not a symbol/], [Array.from({ length: 51 }, (_unused, index) => `S${index}`).join(','), /At most 50/]]) {
+    const response = await get(`/api/analytics/watchlist-risk?symbols=${encodeURIComponent(query)}`);
+    assert.equal(response.status, 400, query);
+    assert.match((await response.json()).error, reason);
+  }
+});

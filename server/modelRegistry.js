@@ -217,6 +217,19 @@ export const MODEL_REGISTRY = [
     ],
     trackRecord: 'screener-track-record-v1',
   },
+  {
+    id: 'portfolio-risk-v1',
+    name: 'Watchlist as a portfolio',
+    page: 'Watchlists',
+    measures: 'A watchlist held in equal weights over the last year: how many independent bets it amounts to (N\u00b2 over the summed squared correlations), each position\u2019s share of the list\u2019s variance, beta and correlation to SPY, and the pairs that move most and least alike.',
+    inputs: ['One to two years of daily closes for each listed symbol and SPY (Yahoo spark)'],
+    failureModes: [
+      'Equal weights, not actual position sizes: a small holding in a volatile name reads as a large share of the risk.',
+      'Correlations measured in a calm year understate how alike positions become in a sell-off.',
+      'Only dates every symbol shares count, so one recent listing shortens the window for the whole list.',
+    ],
+    trackRecord: null,
+  },
 ];
 
 export function registryEntry(id) {

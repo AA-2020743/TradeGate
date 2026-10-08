@@ -25,6 +25,7 @@ import { crossCheckSeries, dataQualityFor, gateOnDataQuality, summarizeCrossChec
 import { resolveVintage, screenVintage } from './vintage.js';
 import { parseBisMonthlySeries } from './bisData.js';
 import { SCREENER_TRACK_RECORD_VERSION, calculateScreenerTrackRecord } from './screenerTrackRecord.js';
+import { PORTFOLIO_RISK_VERSION, calculatePortfolioRisk, yahooTickerFor } from './portfolioRisk.js';
 import { INDEX_VALUATION_VERSION, SHILLER_FALLBACK_URLS, SHILLER_PAGE, calculateIndexValuation, findShillerDataLink, parseShillerRows } from './indexValuation.js';
 import { readWorkbook, sheetRows } from './xls.js';
 import { ALERT_HORIZONS, ALERT_OUTCOMES_VERSION, BENCHMARK, claimFor, scoreAlertOutcomes } from './alertOutcomes.js';
@@ -1965,6 +1966,44 @@ export async function getScreenerTrackRecord() {
       failedBatches: histories.failures ?? 0,
       ...calculateScreenerTrackRecord({ histories, benchmark }),
     };
+  });
+}
+
+export const WATCHLIST_RISK_MAX_SYMBOLS = 50;
+
+/** Watchlist query text to clean, distinct symbols, or a reason it cannot be read. */
+export function parseWatchlistSymbols(raw) {
+  const symbols = [...new Set(String(raw ?? '').split(',').map((symbol) => symbol.trim().toUpperCase()).filter(Boolean))];
+  const invalid = symbols.filter((symbol) => !/^[A-Z0-9.\-]{1,10}$/.test(symbol));
+  if (invalid.length) return { ok: false, reason: `Not a symbol: ${invalid.slice(0, 3).join(', ')}.` };
+  if (symbols.length < 2) return { ok: false, reason: 'A portfolio reading needs at least two symbols.' };
+  if (symbols.length > WATCHLIST_RISK_MAX_SYMBOLS) return { ok: false, reason: `At most ${WATCHLIST_RISK_MAX_SYMBOLS} symbols.` };
+  return { ok: true, symbols };
+}
+
+/**
+ * A watchlist read as an equal-weighted portfolio over the last year. Daily
+ * closes come from Yahoo's keyless spark endpoint, so a page view spends no
+ * Twelve Data credits; the reading is cached per list for half an hour.
+ */
+export async function getWatchlistRisk(symbols) {
+  const key = [...symbols].sort().join(',');
+  return withCache(`analytics:watchlist-risk:${key}`, 30 * 60_000, async () => {
+    const tickers = new Map(symbols.map((symbol) => [symbol, yahooTickerFor(symbol)]));
+    const histories = await getSparkDatedHistories([...tickers.values(), 'SPY'], '2y');
+    const benchmark = histories.get('SPY');
+    if (!benchmark?.length) {
+      return { version: PORTFOLIO_RISK_VERSION, status: 'unavailable', reason: 'SPY did not return a year of closes to measure against.', missing: [] };
+    }
+    const found = new Map();
+    const missing = [];
+    for (const [symbol, ticker] of tickers) {
+      const points = histories.get(ticker);
+      if (points?.length) found.set(symbol, points);
+      else missing.push(symbol);
+    }
+    const result = calculatePortfolioRisk({ histories: found, benchmark });
+    return { asOf: new Date().toISOString(), source: 'Yahoo Finance daily closes', requested: symbols.length, ...result, missing };
   });
 }
 

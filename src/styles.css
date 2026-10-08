@@ -103,7 +103,17 @@ html[data-theme='dark'] .equities-pulse, html[data-theme='dark'] .equity-index-p
 html[data-theme='dark'] .screener-search { background: #1a221d; border-color: #303b34; color: #dce5dc; }
 
 .watchlist-actions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }.watchlist-head, .watchlist-row { display: grid; grid-template-columns: 64px 1fr 84px 76px minmax(140px, 1fr) 26px; gap: 10px; align-items: center; font-size: 10px; }.watchlist-head { color: #9ca29b; text-transform: uppercase; letter-spacing: .35px; font-size: 8px; padding-bottom: 7px; border-bottom: 1px solid #e9ebe4; }.watchlist-row { min-height: 44px; border-top: 1px solid #e9ebe4; }.watchlist-row > b { font: 500 11px 'DM Mono', monospace; }.watchlist-row > span { font: 500 10px 'DM Mono', monospace; }.watchlist-row > span.positive { color: #3f7a35; }.watchlist-row > span.negative { color: #a04b3a; }.watchlist-row > small { color: #7d867e; font-size: 9px; }.watchlist-row .sparkline { height: 26px; }.watchlist-row > button { border: 0; background: transparent; color: #98a098; font-size: 14px; cursor: pointer; }.watchlist-row > button:hover { color: #a04b3a; }
-@media (max-width: 700px) { .watchlist-head, .watchlist-row { min-width: 540px; } }
+/* On a phone the row folds onto two lines - symbol, trend, price, change and remove, then the technical state across the width - instead of a 540px row scrolling off the page. */
+@media (max-width: 700px) {
+  .watchlist-head, .watchlist-row { grid-template-columns: 52px minmax(0, 1fr) auto auto 22px; grid-template-areas: 'sym trend latest change remove' 'state state state state state'; gap: 4px 8px; }
+  .watchlist-head > :nth-child(1), .watchlist-row > :nth-child(1) { grid-area: sym; }
+  .watchlist-head > :nth-child(2), .watchlist-row > :nth-child(2) { grid-area: trend; min-width: 0; }
+  .watchlist-head > :nth-child(3), .watchlist-row > :nth-child(3) { grid-area: latest; }
+  .watchlist-head > :nth-child(4), .watchlist-row > :nth-child(4) { grid-area: change; }
+  .watchlist-row > :nth-child(5) { grid-area: state; padding-bottom: 6px; }
+  .watchlist-head > :nth-child(5) { display: none; }
+  .watchlist-head > :nth-child(6), .watchlist-row > :nth-child(6) { grid-area: remove; }
+}
 
 .workspace-pulse { margin-top: 17px; padding: 18px 20px; }
 
@@ -601,3 +611,30 @@ html[data-theme='dark'] .asset-badge { color: #17201b; }
 .screener-record-panel { margin: 1.2rem 0; }
 /* The screen presets are seven buttons; on a phone they wrap instead of pushing the page 180px wide. */
 .screener-controls-row .window-buttons { flex-wrap: wrap; max-width: 100%; }
+
+/* Watchlist read as a portfolio */
+.portfolio-panel { margin-top: 18px; }
+.portfolio-missing { margin: 0.2rem 0 0.6rem; font-size: 0.8rem; color: #8a5a1f; }
+.portfolio-stats { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 0.8rem; margin: 0.8rem 0; }
+.portfolio-stats > div { display: flex; flex-direction: column; min-width: 0; }
+.portfolio-stats span, .portfolio-head, .portfolio-pairs span { color: #5f6861; font: 500 0.68rem 'DM Mono', monospace; text-transform: uppercase; letter-spacing: 0.04em; }
+.portfolio-stats b { font: 600 1.25rem 'DM Mono', monospace; margin-top: 2px; }
+.portfolio-stats small { color: #5f6861; font-size: 0.72rem; line-height: 1.4; }
+.portfolio-table { display: grid; margin-top: 0.8rem; font: 0.8rem 'DM Mono', monospace; }
+.portfolio-row { display: grid; grid-template-columns: minmax(0, 0.8fr) minmax(0, 1.6fr) repeat(5, minmax(0, 0.7fr)); gap: 0.6rem; align-items: center; padding: 0.4rem; border-bottom: 1px solid #e9ebe4; }
+.portfolio-row > span { min-width: 0; overflow-wrap: anywhere; }
+.portfolio-share { display: flex; align-items: center; gap: 0.5rem; }
+.portfolio-share i { display: block; height: 8px; min-width: 2px; border-radius: 2px; background: #6f8f72; flex: 0 1 auto; max-width: 70%; }
+.portfolio-share i.hedge { background: #9aa39b; }
+.portfolio-share em { font-style: normal; white-space: nowrap; }
+.portfolio-note { margin: 0.5rem 0 0; font-size: 0.75rem; color: #5f6861; line-height: 1.5; }
+.portfolio-pairs { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 1.2rem; margin-top: 0.9rem; }
+.portfolio-pairs p { display: flex; justify-content: space-between; gap: 0.6rem; margin: 0.3rem 0 0; padding-bottom: 0.3rem; border-bottom: 1px solid #e9ebe4; font: 0.8rem 'DM Mono', monospace; }
+.portfolio-pairs em { font-style: normal; }
+@media (max-width: 700px) {
+  .portfolio-stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .portfolio-row { grid-template-columns: minmax(0, 0.7fr) minmax(0, 1.4fr) auto auto; gap: 0.4rem 0.6rem; }
+  .portfolio-row > span:nth-child(4), .portfolio-row > span:nth-child(5), .portfolio-row > span:nth-child(7) { display: none; }
+  .portfolio-row > span { overflow-wrap: normal; white-space: nowrap; }
+  .portfolio-pairs { grid-template-columns: minmax(0, 1fr); gap: 0.6rem; }
+}
