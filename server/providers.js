@@ -29,6 +29,7 @@ import { PORTFOLIO_RISK_VERSION, calculatePortfolioRisk, yahooTickerFor } from '
 import { RECESSION_PROBABILITY_VERSION, calculateRecessionProbability } from './recessionProbability.js';
 import { GOLD_REAL_YIELD_VERSION, calculateGoldRealYield } from './goldRealYield.js';
 import { BITCOIN_CROSS_ASSET_VERSION, calculateBitcoinCrossAsset } from './bitcoinCrossAsset.js';
+import { DIVERSIFICATION_ASSETS, DIVERSIFICATION_VERSION, calculateDiversificationRegime } from './diversificationRegime.js';
 import { INDEX_VALUATION_VERSION, SHILLER_FALLBACK_URLS, SHILLER_PAGE, calculateIndexValuation, findShillerDataLink, parseShillerRows } from './indexValuation.js';
 import { readWorkbook, sheetRows } from './xls.js';
 import { ALERT_HORIZONS, ALERT_OUTCOMES_VERSION, BENCHMARK, claimFor, scoreAlertOutcomes } from './alertOutcomes.js';
@@ -2070,6 +2071,17 @@ export async function getBitcoinCrossAsset() {
     const missing = ['BTC-USD', 'QQQ', 'GLD'].filter((symbol) => !histories.get(symbol)?.length);
     if (missing.length) return { version: BITCOIN_CROSS_ASSET_VERSION, status: 'unavailable', reason: `Yahoo returned no ten-year history for ${missing.join(', ')}.` };
     return { asOf: new Date().toISOString(), source: 'Yahoo Finance daily closes', ...calculateBitcoinCrossAsset({ bitcoin: histories.get('BTC-USD'), nasdaq: histories.get('QQQ'), gold: histories.get('GLD') }) };
+  });
+}
+
+/** Stock-bond correlation and cross-asset breadth from ten years of keyless Yahoo ETF closes. */
+export async function getDiversificationRegime() {
+  return withCache('analytics:diversification-regime', 6 * 60 * 60_000, async () => {
+    const symbols = DIVERSIFICATION_ASSETS.map((asset) => asset.symbol);
+    const histories = await getSparkDatedHistories(symbols, '10y');
+    const missing = symbols.filter((symbol) => !histories.get(symbol)?.length);
+    if (missing.length) return { version: DIVERSIFICATION_VERSION, status: 'unavailable', reason: `Yahoo returned no ten-year history for ${missing.join(', ')}.` };
+    return { asOf: new Date().toISOString(), source: 'Yahoo Finance daily closes', ...calculateDiversificationRegime({ histories }) };
   });
 }
 

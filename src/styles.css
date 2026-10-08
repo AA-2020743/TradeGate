@@ -679,3 +679,6 @@ html[data-theme='dark'] .heldout-band { fill: #222c25; }
 @media (max-width: 700px) {
   .valuation-bucket.btc-stress-row > span:last-child, .valuation-bucket.btc-time-row > span:last-child { display: block; }
 }
+
+/* Diversification regime (Markets) */
+.diversification-panel { margin-top: 16px; }

@@ -8,6 +8,7 @@ import {
   getBitcoinCrossAsset,
   getBitcoinCycleWorkspace,
   getCryptoOptionsWorkspace,
+  getDiversificationRegime,
   getFactorReturns,
   getGoldRealYield,
   getIndexValuation,
@@ -129,6 +130,16 @@ export const SOURCES = [
     endpoint: '/api/analytics/price-crosscheck',
     load: getPriceCrossCheck,
     figure: (payload) => `${payload.passed?.length ?? 0} verified, ${payload.review?.length ?? 0} under review, ${payload.notIndependent?.length ?? 0} not independent, ${payload.unavailable?.length ?? 0} unavailable`,
+  },
+  {
+    name: 'Yahoo 10-year asset-class ETFs (diversification)',
+    endpoint: '/api/analytics/diversification',
+    load: getDiversificationRegime,
+    figure: (payload) => (payload.stockBond ? `stock-bond ${payload.stockBond.short} (${payload.stockBond.stateLabel}), ${payload.effectiveBets.now} of ${payload.effectiveBets.of} bets; ${payload.sessions} sessions to ${payload.date}` : null),
+    plausible: (payload) => [
+      { label: 'shared sessions', value: payload.sessions, min: 1500, max: 2600 },
+      { label: 'effective bets', value: payload.effectiveBets?.now, min: 1, max: 6 },
+    ],
   },
   {
     name: 'Yahoo 10-year BTC, QQQ, GLD (bitcoin regime)',

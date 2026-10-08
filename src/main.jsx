@@ -1556,6 +1556,86 @@ function BitcoinCrossAssetPanel() {
   </article>;
 }
 
+function DiversificationChart({ history }) {
+  const [hoveredIndex, setHoveredIndex] = React.useState(null);
+  const [plotRef, measured] = useElementWidth(640);
+  const points = (history ?? []).filter((point) => Number.isFinite(point.stockBond));
+  if (points.length < 2) return null;
+  const width = Math.max(280, measured);
+  const height = width < 520 ? 160 : 200;
+  const padding = { top: 10, right: 10, bottom: 24, left: 36 };
+  const xOf = (index) => padding.left + index * ((width - padding.left - padding.right) / (points.length - 1));
+  const yOf = (value) => padding.top + ((1 - value) / 2) * (height - padding.top - padding.bottom);
+  const polyline = points.map((point, index) => `${xOf(index).toFixed(1)},${yOf(point.stockBond).toFixed(1)}`).join(' ');
+  const activeIndex = hoveredIndex ?? points.length - 1;
+  const active = points[activeIndex];
+  const yearStep = width < 520 ? 4 : 2;
+  const years = [];
+  points.forEach((point, index) => { const year = Number(point.date.slice(0, 4)); if (year % yearStep === 0 && (index === 0 || points[index - 1].date.slice(0, 4) !== point.date.slice(0, 4))) years.push(index); });
+  const select = (event) => {
+    const bounds = event.currentTarget.getBoundingClientRect();
+    const ratio = Math.min(1, Math.max(0, ((event.clientX - bounds.left) / bounds.width - padding.left / width) / ((width - padding.left - padding.right) / width)));
+    setHoveredIndex(Math.round(ratio * (points.length - 1)));
+  };
+  return <div className="cape-chart-wrap">
+    <div className="cape-readout" aria-live="polite"><b>{active.date}</b><span>stock-bond {active.stockBond}</span><span>{active.effectiveBets} independent bets</span></div>
+    <div ref={plotRef} className="liquidity-history-plot cape-chart recession-chart" style={{ height: `${height}px` }} onPointerMove={select} onPointerLeave={() => setHoveredIndex(null)}>
+    <svg viewBox={`0 0 ${width} ${height}`} width={width} height={height} role="img" aria-label={`Stock-bond correlation over 63 sessions, latest ${points.at(-1).stockBond}`}>
+      {[-0.2, 0.2].map((value) => <line key={value} x1={padding.left} x2={width - padding.right} y1={yOf(value)} y2={yOf(value)} className="cape-median-line" vectorEffect="non-scaling-stroke" />)}
+      {[-1, 0, 1].map((value) => <g key={value}><line x1={padding.left} x2={width - padding.right} y1={yOf(value)} y2={yOf(value)} className="liquidity-grid-line" /><text x={padding.left - 6} y={yOf(value) + 4} textAnchor="end" className="liquidity-axis-label">{value}</text></g>)}
+      <polyline points={polyline} fill="none" stroke="#71c45f" strokeWidth="1.6" vectorEffect="non-scaling-stroke" />
+      <line x1={xOf(activeIndex)} x2={xOf(activeIndex)} y1={padding.top} y2={height - padding.bottom} className="liquidity-crosshair" />
+      {years.map((index) => <text key={index} x={xOf(index)} y={height - 8} textAnchor="middle" className="liquidity-axis-label">{points[index].date.slice(0, 4)}</text>)}
+    </svg>
+    </div>
+  </div>;
+}
+
+function DiversificationPanel() {
+  const { status: loadStatus, data: model, error } = useLazyResource('/api/analytics/diversification');
+  const published = model?.status === 'calculated';
+  const record = model?.record;
+  const [days, setDays] = React.useState(90);
+  const horizon = record?.status === 'calculated' ? record.horizons.find((entry) => entry.days === days) ?? record.horizons[0] : null;
+  const cell = (stats) => (Number.isFinite(stats?.median)
+    ? <span><b>{stats.median}%</b><small>n<sub>eff</sub> {stats.effective}{stats.status === 'thin' ? ' (thin)' : ''}</small></span>
+    : <span><b className="track-insufficient">&mdash;</b><small>{stats?.n ? <>n<sub>eff</sub> {stats.effective}, too few</> : 'no weeks'}</small></span>);
+  const score = (value) => (Number.isFinite(value) ? `${value > 0 ? '+' : ''}${value}` : 'n/a');
+  return <article className={`panel diversification-panel ${published ? '' : 'preview-section'}`}>
+    <div className="panel-title">
+      <div>
+        <StatusKicker label="DIVERSIFICATION REGIME" published={published} />
+        <h3>{published ? `${model.stockBond.stateLabel.replace(/ \(.*\)$/, '')} since ${model.stockBond.since}` : loadStatus === 'loading' ? 'Reading ten years of asset-class ETFs\u2026' : 'Awaiting asset-class ETF histories'}</h3>
+      </div>
+      {published ? <span className="data-pill">{model.sessions} sessions · to {model.date}</span> : null}
+    </div>
+    {published ? <>
+      <div className="portfolio-stats">
+        <div><span>Stock-bond, {model.windows.short}d</span><b>{model.stockBond.short}</b><small>{ordinal(model.stockBond.percentile)} percentile · {model.stockBond.long} over {model.windows.long}</small></div>
+        <div><span>Independent bets</span><b>{model.effectiveBets.now}</b><small>of {model.effectiveBets.of} asset classes · median {model.effectiveBets.median}</small></div>
+        <div><span>Breadth rank</span><b>{ordinal(model.effectiveBets.percentile)}</b><small>percentile since {model.from.slice(0, 4)}</small></div>
+        <div><span>60/40 drawdown</span><b>{model.balancedDrawdownPercent}%</b><small>from its high, SPY/IEF</small></div>
+      </div>
+      <DiversificationChart history={model.history} />
+      <p className="dca-read">{model.read}</p>
+      {horizon ? <div className="track-record">
+        <div className="track-title">
+          <p className="section-kicker">60/40 WORST FALL THAT FOLLOWED, BY STOCK-BOND REGIME</p>
+          <div className="track-tabs">{record.horizons.map((entry) => <button key={entry.days} className={entry.days === horizon.days ? 'active' : ''} aria-pressed={entry.days === horizon.days} onClick={() => setDays(entry.days)}>{entry.days}d</button>)}</div>
+        </div>
+        <div className="track-head"><span>Regime</span><span>Before {record.holdoutFrom}</span><span>Held out since</span><span>Vs all weeks</span></div>
+        {horizon.states.map((state) => <div className={`track-row ${state.key === model.stockBond.state ? 'current' : ''}`} key={state.key}>
+          <span>{state.label}</span>{cell(state.development.stats)}{cell(state.heldOut.stats)}
+          <small className={state.consistent ? (state.heldOut.edge > 0 ? 'positive' : 'negative') : ''}>{state.consistent ? (state.heldOut.edge > 0 ? 'shallower both times' : 'deeper both times') : Number.isFinite(state.development.edge) && Number.isFinite(state.heldOut.edge) && state.heldOut.edge !== 0 && state.development.edge !== 0 ? 'flipped' : '\u2014'}</small>
+        </div>)}
+        <div className="track-row track-all"><span>All weeks</span>{cell(horizon.development.all)}{cell(horizon.heldOut.all)}<small></small></div>
+        <p className="treasury-note">Median worst peak-to-trough fall of a daily-rebalanced 60/40 portfolio over the next {horizon.days} days. Ordering, where +1 means hedging weeks were followed by the shallowest falls and falling-together weeks by the deepest: {score(horizon.development.ordering)} before, {score(horizon.heldOut.ordering)} held out. {record.methodology}</p>
+      </div> : record?.reason ? <p className="treasury-note">Track record: {record.reason}</p> : null}
+      <p className="model-footnote">{model.methodology} {model.limits}</p>
+    </> : <div className="equity-empty">{model?.reason ?? (loadStatus === 'loading' ? 'Six ten-year daily histories; cached for six hours.' : `The diversification regime could not be loaded: ${error}`)}</div>}
+  </article>;
+}
+
 const RECESSION_OUTCOME_LABELS = { followed: 'Recession followed', 'not followed': 'No recession within 2 years', pending: 'Too soon to judge', late: 'Recession already underway' };
 
 function RecessionProbabilityPanel() {
@@ -2057,6 +2137,7 @@ function MarketsDashboard({ data }) {
     </section>
 
     <SignalRecordsPanel records={data.signalRecords} />
+    <DiversificationPanel />
     <CrossCheckPanel check={data.crossCheck} />
     <ModelRegistryPanel registry={data.models} />
     <SnapshotPanel />

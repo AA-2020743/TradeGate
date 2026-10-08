@@ -218,6 +218,19 @@ export const MODEL_REGISTRY = [
     trackRecord: 'screener-track-record-v1',
   },
   {
+    id: 'diversification-regime-v1',
+    name: 'Diversification regime',
+    page: 'Markets',
+    measures: 'The 63- and 252-session stock-bond correlation (SPY, IEF) and the effective number of independent bets among six asset-class ETFs, with a track record of the 60/40 portfolio\u2019s worst drawdown over the next 30 and 90 days by stock-bond regime.',
+    inputs: ['Ten years of daily SPY, EFA, EEM, IEF, GLD and DBC closes (Yahoo spark)'],
+    failureModes: [
+      'Ten years hold one shift from hedging to falling together (2022); the positive regime rests on few episodes.',
+      'Correlations change fastest in the sell-offs a hedge is meant for.',
+      'Intermediate Treasuries only; longer bonds hedge, and fail, by more.',
+    ],
+    trackRecord: 'diversification-regime-v1',
+  },
+  {
     id: 'bitcoin-cross-asset-v1',
     name: 'Bitcoin cross-asset regime',
     page: 'Crypto',
