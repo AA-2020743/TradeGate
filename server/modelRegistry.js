@@ -218,6 +218,19 @@ export const MODEL_REGISTRY = [
     trackRecord: 'screener-track-record-v1',
   },
   {
+    id: 'bitcoin-cross-asset-v1',
+    name: 'Bitcoin cross-asset regime',
+    page: 'Crypto',
+    measures: 'Rolling 90- and 252-session correlations of bitcoin\u2019s daily returns with the Nasdaq-100 and gold, a regime label from them, up- and down-day betas to QQQ, and how bitcoin moved on every Nasdaq fall of 2% or more, grouped by the regime of the session before.',
+    inputs: ['Ten years of daily BTC-USD, QQQ and GLD closes (Yahoo spark)'],
+    failureModes: [
+      'Regimes change without warning; the label describes the last 90 sessions, not the next.',
+      'Bitcoin\u2019s close is stamped four hours after the U.S. close, muting daily correlations slightly.',
+      'Stress days cluster in a few sell-offs, so their count overstates the independent evidence.',
+    ],
+    trackRecord: null,
+  },
+  {
     id: 'gold-real-yield-v1',
     name: 'Gold against real yields',
     page: 'Metals',

@@ -28,6 +28,7 @@ import { SCREENER_TRACK_RECORD_VERSION, calculateScreenerTrackRecord } from './s
 import { PORTFOLIO_RISK_VERSION, calculatePortfolioRisk, yahooTickerFor } from './portfolioRisk.js';
 import { RECESSION_PROBABILITY_VERSION, calculateRecessionProbability } from './recessionProbability.js';
 import { GOLD_REAL_YIELD_VERSION, calculateGoldRealYield } from './goldRealYield.js';
+import { BITCOIN_CROSS_ASSET_VERSION, calculateBitcoinCrossAsset } from './bitcoinCrossAsset.js';
 import { INDEX_VALUATION_VERSION, SHILLER_FALLBACK_URLS, SHILLER_PAGE, calculateIndexValuation, findShillerDataLink, parseShillerRows } from './indexValuation.js';
 import { readWorkbook, sheetRows } from './xls.js';
 import { ALERT_HORIZONS, ALERT_OUTCOMES_VERSION, BENCHMARK, claimFor, scoreAlertOutcomes } from './alertOutcomes.js';
@@ -2059,6 +2060,16 @@ export async function getGoldRealYield() {
       return { asOf: new Date().toISOString(), ...result, status: 'provisional', reason: `FRED DFII10 last printed ${yieldResult.value.date}, later than its daily schedule.` };
     }
     return { asOf: new Date().toISOString(), ...result };
+  });
+}
+
+/** Bitcoin against the Nasdaq-100 and gold, from ten years of keyless Yahoo closes. */
+export async function getBitcoinCrossAsset() {
+  return withCache('analytics:bitcoin-cross-asset', 6 * 60 * 60_000, async () => {
+    const histories = await getSparkDatedHistories(['BTC-USD', 'QQQ', 'GLD'], '10y');
+    const missing = ['BTC-USD', 'QQQ', 'GLD'].filter((symbol) => !histories.get(symbol)?.length);
+    if (missing.length) return { version: BITCOIN_CROSS_ASSET_VERSION, status: 'unavailable', reason: `Yahoo returned no ten-year history for ${missing.join(', ')}.` };
+    return { asOf: new Date().toISOString(), source: 'Yahoo Finance daily closes', ...calculateBitcoinCrossAsset({ bitcoin: histories.get('BTC-USD'), nasdaq: histories.get('QQQ'), gold: histories.get('GLD') }) };
   });
 }
 

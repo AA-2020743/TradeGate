@@ -1478,6 +1478,84 @@ function GoldRealYieldPanel() {
   </article>;
 }
 
+function BitcoinCorrelationChart({ history }) {
+  const [hoveredIndex, setHoveredIndex] = React.useState(null);
+  const [plotRef, measured] = useElementWidth(640);
+  const points = (history ?? []).filter((point) => Number.isFinite(point.nasdaq) && Number.isFinite(point.gold));
+  if (points.length < 2) return null;
+  const width = Math.max(280, measured);
+  const height = width < 520 ? 170 : 210;
+  const padding = { top: 10, right: 10, bottom: 24, left: 34 };
+  const low = Math.min(-0.4, ...points.map((point) => Math.min(point.nasdaq, point.gold)));
+  const high = Math.max(0.8, ...points.map((point) => Math.max(point.nasdaq, point.gold)));
+  const xOf = (index) => padding.left + index * ((width - padding.left - padding.right) / (points.length - 1));
+  const yOf = (value) => padding.top + ((high - value) / (high - low)) * (height - padding.top - padding.bottom);
+  const line = (key) => points.map((point, index) => `${xOf(index).toFixed(1)},${yOf(point[key]).toFixed(1)}`).join(' ');
+  const activeIndex = hoveredIndex ?? points.length - 1;
+  const active = points[activeIndex];
+  const yearStep = width < 520 ? 4 : 2;
+  const years = [];
+  points.forEach((point, index) => { const year = Number(point.date.slice(0, 4)); if (year % yearStep === 0 && (index === 0 || points[index - 1].date.slice(0, 4) !== point.date.slice(0, 4))) years.push(index); });
+  const select = (event) => {
+    const bounds = event.currentTarget.getBoundingClientRect();
+    const ratio = Math.min(1, Math.max(0, ((event.clientX - bounds.left) / bounds.width - padding.left / width) / ((width - padding.left - padding.right) / width)));
+    setHoveredIndex(Math.round(ratio * (points.length - 1)));
+  };
+  return <div className="cape-chart-wrap">
+    <div className="cape-readout" aria-live="polite">
+      <b>{active.date}</b><span className="btc-key-nasdaq">Nasdaq {active.nasdaq}</span><span className="btc-key-gold">gold {active.gold}</span>
+    </div>
+    <div ref={plotRef} className="liquidity-history-plot cape-chart recession-chart" style={{ height: `${height}px` }} onPointerMove={select} onPointerLeave={() => setHoveredIndex(null)}>
+    <svg viewBox={`0 0 ${width} ${height}`} width={width} height={height} role="img" aria-label={`Bitcoin's 90-session correlation with the Nasdaq-100 and gold, latest ${points.at(-1).nasdaq} and ${points.at(-1).gold}`}>
+      {[0, 0.4].map((value) => <g key={value}><line x1={padding.left} x2={width - padding.right} y1={yOf(value)} y2={yOf(value)} className={value ? 'cape-median-line' : 'liquidity-grid-line'} /><text x={padding.left - 6} y={yOf(value) + 4} textAnchor="end" className="liquidity-axis-label">{value}</text></g>)}
+      <polyline points={line('gold')} fill="none" stroke="#d1a84a" strokeWidth="1.5" vectorEffect="non-scaling-stroke" />
+      <polyline points={line('nasdaq')} fill="none" stroke="#5f9ad1" strokeWidth="1.5" vectorEffect="non-scaling-stroke" />
+      <line x1={xOf(activeIndex)} x2={xOf(activeIndex)} y1={padding.top} y2={height - padding.bottom} className="liquidity-crosshair" />
+      {years.map((index) => <text key={index} x={xOf(index)} y={height - 8} textAnchor="middle" className="liquidity-axis-label">{points[index].date.slice(0, 4)}</text>)}
+    </svg>
+    </div>
+  </div>;
+}
+
+function BitcoinCrossAssetPanel() {
+  const { status: loadStatus, data: model, error } = useLazyResource('/api/analytics/bitcoin-cross-asset');
+  const published = model?.status === 'calculated';
+  const signedPct = (value) => (Number.isFinite(value) ? `${value > 0 ? '+' : ''}${value}%` : '\u2014');
+  return <article className={`panel btc-cross-panel ${published ? '' : 'preview-section'}`}>
+    <div className="panel-title">
+      <div>
+        <StatusKicker label="BITCOIN CROSS-ASSET REGIME" published={published} />
+        <h3>{published ? `${model.regimeLabel} since ${model.regimeSince}` : loadStatus === 'loading' ? 'Reading ten years of bitcoin, Nasdaq and gold\u2026' : 'Awaiting bitcoin, QQQ and GLD histories'}</h3>
+      </div>
+      {published ? <span className="data-pill">{model.sessions} sessions · to {model.date}</span> : null}
+    </div>
+    {published ? <>
+      <div className="portfolio-stats">
+        <div><span>Corr. Nasdaq-100</span><b>{model.correlations.nasdaq.short}</b><small>{model.windows.short} sessions · range {model.correlations.nasdaq.shortRange.join(' to ')} · {model.correlations.nasdaq.long} over {model.windows.long}</small></div>
+        <div><span>Corr. gold</span><b>{model.correlations.gold.short}</b><small>range {model.correlations.gold.shortRange.join(' to ')} · {model.correlations.gold.long} over {model.windows.long}</small></div>
+        <div><span>Beta to QQQ</span><b>{model.betaToNasdaq.year ?? '\u2014'}</b><small>down days {model.betaToNasdaq.downDays ?? '\u2014'} · up days {model.betaToNasdaq.upDays ?? '\u2014'}</small></div>
+        <div><span>Nasdaq rank</span><b>{ordinal(model.correlations.nasdaq.percentile)}</b><small>percentile since {model.from.slice(0, 4)}</small></div>
+      </div>
+      <BitcoinCorrelationChart history={model.history} />
+      <p className="dca-read">{model.read}</p>
+      <div className="recession-columns">
+        {model.stress.all.days ? <div className="valuation-buckets" role="table" aria-label="Bitcoin on Nasdaq stress days by regime">
+          <div className="valuation-bucket btc-stress-row valuation-head" role="row"><span role="columnheader">Regime the day before</span><span role="columnheader">Days</span><span role="columnheader">Median BTC</span><span role="columnheader">BTC fell</span></div>
+          {model.stress.byRegime.filter((entry) => entry.days).map((entry) => <div className={`valuation-bucket btc-stress-row ${entry.key === model.regime ? 'current' : ''}`} role="row" key={entry.key}>
+            <span role="cell">{entry.label}</span><span role="cell">{entry.days}</span><span role="cell" className={entry.medianBitcoin < 0 ? 'negative' : 'positive'}>{signedPct(entry.medianBitcoin)}</span><span role="cell">{entry.fellShare}%</span>
+          </div>)}
+          <p className="portfolio-note">Sessions the Nasdaq-100 fell {Math.abs(model.stressDayPercent)}% or more since {model.from.slice(0, 4)}: {model.stress.all.days}.</p>
+        </div> : <p className="portfolio-note">The Nasdaq-100 has not fallen {Math.abs(model.stressDayPercent)}% in a session since {model.from.slice(0, 4)}, so there are no stress days to judge the regimes on.</p>}
+        <div className="valuation-buckets" role="table" aria-label="Share of months in each regime">
+          <div className="valuation-bucket btc-time-row valuation-head" role="row"><span role="columnheader">Regime</span><span role="columnheader">Share of months</span></div>
+          {model.timeInRegime.map((entry) => <div className={`valuation-bucket btc-time-row ${entry.key === model.regime ? 'current' : ''}`} role="row" key={entry.key}><span role="cell">{entry.label}</span><span role="cell">{entry.sharePercent}%</span></div>)}
+        </div>
+      </div>
+      <p className="model-footnote">{model.methodology} {model.limits}</p>
+    </> : <div className="equity-empty">{model?.reason ?? (loadStatus === 'loading' ? 'Three ten-year daily histories; cached for six hours.' : `The bitcoin regime could not be loaded: ${error}`)}</div>}
+  </article>;
+}
+
 const RECESSION_OUTCOME_LABELS = { followed: 'Recession followed', 'not followed': 'No recession within 2 years', pending: 'Too soon to judge', late: 'Recession already underway' };
 
 function RecessionProbabilityPanel() {
@@ -3246,6 +3324,7 @@ function CryptoDashboard({ data }) {
         </div>
         <p className="model-footnote">{transmission?.reason ? `${transmission.reason} ` : ''}Favorability applies broad-dollar direction and level through the measured DXY/BTC correlation rather than an assumed one: a falling dollar only helps bitcoin while the link is inverse, the same move reads as a headwind under a positive link, and inside a ±0.2 correlation band the dollar transmits nothing.</p>
       </article>
+      <BitcoinCrossAssetPanel />
       <article className={`crypto-tailwind-panel panel ${data.bitcoin?.ethRotation?.status === 'calculated' ? '' : 'preview-section'}`}><div className="panel-title"><div><StatusKicker label="ETHEREUM & ROTATION" published={data.bitcoin?.ethRotation?.status === 'calculated'} /><h3>{data.bitcoin?.ethRotation?.btcEthRatio?.read ?? 'Awaiting histories'}</h3></div><span className="data-pill">{data.bitcoin?.ethRotation?.version ?? 'Unavailable'}</span></div>
         <div className="btc-cycle-grid">
           <div className="btc-cycle-cell"><small>ETH spot</small><b>{Number.isFinite(data.bitcoin?.ethRotation?.price) ? `$${Math.round(data.bitcoin.ethRotation.price).toLocaleString()}` : '—'}</b><span>{Number.isFinite(data.bitcoin?.ethRotation?.pctVsSma200) ? `${data.bitcoin.ethRotation.pctVsSma200 > 0 ? '+' : ''}${data.bitcoin.ethRotation.pctVsSma200}% vs 200D` : 'Yahoo ETH-USD history required'}</span></div>

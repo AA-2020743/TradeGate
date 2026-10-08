@@ -669,3 +669,13 @@ html[data-theme='dark'] .heldout-band { fill: #222c25; }
   .valuation-bucket.gold-yield-row { grid-template-columns: minmax(0, 1.3fr) minmax(0, 0.8fr) minmax(0, 0.9fr) minmax(0, 0.8fr); gap: 0.4rem; }
   .valuation-bucket.gold-yield-row > span:last-child { display: block; }
 }
+
+/* Bitcoin cross-asset regime (Crypto) */
+.btc-cross-panel { margin: 0; }
+.btc-key-nasdaq { color: #3f74a8; }
+.btc-key-gold { color: #8a6a1f; }
+.valuation-bucket.btc-stress-row { grid-template-columns: minmax(0, 1.5fr) minmax(0, 0.5fr) minmax(0, 0.8fr) minmax(0, 0.6fr); }
+.valuation-bucket.btc-time-row { grid-template-columns: minmax(0, 1.5fr) minmax(0, 0.8fr); }
+@media (max-width: 700px) {
+  .valuation-bucket.btc-stress-row > span:last-child, .valuation-bucket.btc-time-row > span:last-child { display: block; }
+}

@@ -5,6 +5,7 @@
 import {
   getAccumulationSchedules,
   getAlertOutcomes,
+  getBitcoinCrossAsset,
   getBitcoinCycleWorkspace,
   getCryptoOptionsWorkspace,
   getFactorReturns,
@@ -128,6 +129,17 @@ export const SOURCES = [
     endpoint: '/api/analytics/price-crosscheck',
     load: getPriceCrossCheck,
     figure: (payload) => `${payload.passed?.length ?? 0} verified, ${payload.review?.length ?? 0} under review, ${payload.notIndependent?.length ?? 0} not independent, ${payload.unavailable?.length ?? 0} unavailable`,
+  },
+  {
+    name: 'Yahoo 10-year BTC, QQQ, GLD (bitcoin regime)',
+    endpoint: '/api/analytics/bitcoin-cross-asset',
+    load: getBitcoinCrossAsset,
+    figure: (payload) => (payload.regimeLabel ? `${payload.regimeLabel} since ${payload.regimeSince}; ${payload.sessions} shared sessions to ${payload.date}` : null),
+    plausible: (payload) => [
+      { label: 'shared sessions', value: payload.sessions, min: 1500, max: 2600 },
+      { label: 'beta to QQQ (1y)', value: payload.betaToNasdaq?.year, min: -1, max: 6 },
+      { label: 'Nasdaq stress days', value: payload.stress?.all?.days, min: 20, max: 400 },
+    ],
   },
   {
     name: 'Yahoo gold history + FRED TIPS yield (gold model)',
