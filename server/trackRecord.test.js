@@ -105,3 +105,16 @@ test('a three-state signal is ranked from its two extremes when the middle is th
   assert.equal(thirty.states.find((state) => state.key === 'mid').development.stats.status, 'insufficient');
   assert.equal(thirty.development.ordering, 1);
 });
+
+test('an ordering short of 0.8 is described as mostly as assumed, not as assumed', async () => {
+  const { describeCurrentState } = await import('./trackRecord.js');
+  const cell = (median) => ({ stats: { median, status: 'measured', effective: 12 } });
+  const record = (ordering) => ({
+    status: 'calculated',
+    holdoutFrom: '2025-01-01',
+    horizons: [{ days: 90, development: { all: { median: 1 }, ordering }, heldOut: { all: { median: 1 }, ordering }, states: [{ key: 'a', development: cell(2), heldOut: cell(2) }] }],
+  });
+  const options = { name: 'X', state: 'a', phrase: () => 'weeks in A', subject: 'tiers', best: 'A', worst: 'E' };
+  assert.match(describeCurrentState(record(0.6), options).text, /ranked mostly as assumed, with A ahead of E/);
+  assert.match(describeCurrentState(record(0.9), options).text, /ranked as assumed, A followed by the best returns/);
+});

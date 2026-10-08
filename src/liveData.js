@@ -30,7 +30,6 @@ export function usePlatformData() {
     treasury: null,
     factors: null,
     signalRecords: null,
-    alertOutcomes: null,
     indexValuation: null,
     crossCheck: null,
     models: null,
@@ -44,7 +43,7 @@ export function usePlatformData() {
     let active = true;
 
     const load = async () => {
-      const [health, markets, liquidity, dxyBtc, regimeCorrelations, positioning, heatmap, metals, fx, hardMoney, accumulation, cryptoOptions, treasury, factors, signalRecords, crossCheck, models, sentiment, bitcoin, equityRisk, news, screener, alerts, alertOutcomes, indexValuation] = await Promise.allSettled([
+      const [health, markets, liquidity, dxyBtc, regimeCorrelations, positioning, heatmap, metals, fx, hardMoney, accumulation, cryptoOptions, treasury, factors, signalRecords, crossCheck, models, sentiment, bitcoin, equityRisk, news, screener, alerts, indexValuation] = await Promise.allSettled([
         requestJson('/api/health'),
         requestJson('/api/markets/snapshot'),
         requestJson('/api/macro/liquidity'),
@@ -68,7 +67,6 @@ export function usePlatformData() {
         requestJson('/api/news/wire'),
         requestJson('/api/analytics/screener'),
         requestJson('/api/alerts'),
-        requestJson('/api/analytics/alert-outcomes'),
         requestJson('/api/analytics/index-valuation'),
       ]);
       if (!active) return;
@@ -88,7 +86,6 @@ export function usePlatformData() {
       const treasuryData = treasury.status === 'fulfilled' ? treasury.value : null;
       const factorsData = factors.status === 'fulfilled' ? factors.value : null;
       const signalRecordsData = signalRecords.status === 'fulfilled' ? signalRecords.value : null;
-      const alertOutcomesData = alertOutcomes.status === 'fulfilled' ? alertOutcomes.value : null;
       const indexValuationData = indexValuation.status === 'fulfilled' ? indexValuation.value : null;
       const crossCheckData = crossCheck.status === 'fulfilled' ? crossCheck.value : null;
       const modelsData = models.status === 'fulfilled' ? models.value : null;
@@ -125,7 +122,6 @@ export function usePlatformData() {
         treasury: treasuryData,
         factors: factorsData,
         signalRecords: signalRecordsData,
-        alertOutcomes: alertOutcomesData,
         indexValuation: indexValuationData,
         crossCheck: crossCheckData,
         models: modelsData,
@@ -170,6 +166,27 @@ export function useMarketHistory(symbol, range) {
     };
   }, [range, symbol]);
 
+  return state;
+}
+
+/**
+ * A resource fetched when the panel that shows it mounts, not with the page
+ * batch. The batch waits for every request before drawing anything, so a
+ * slow first computation - a five-year replay of the screener, sixty alert
+ * histories - held every page on a cold server.
+ */
+export function useLazyResource(path) {
+  const [state, setState] = useState({ status: 'loading', data: null, error: null });
+  useEffect(() => {
+    let active = true;
+    setState({ status: 'loading', data: null, error: null });
+    requestJson(path)
+      .then((data) => { if (active) setState({ status: 'loaded', data, error: null }); })
+      .catch((error) => { if (active) setState({ status: 'unavailable', data: null, error: error.message }); });
+    return () => {
+      active = false;
+    };
+  }, [path]);
   return state;
 }
 

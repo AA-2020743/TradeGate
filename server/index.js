@@ -19,7 +19,7 @@ import { getEquityDashboard, getSectorDashboard } from './equities.js';
 import { logger } from './log.js';
 import { startIngestionScheduler } from './ingestion.js';
 import { createRateLimiter } from './rateLimit.js';
-import { calculateDollarTransmission, getBitcoinCycleWorkspace, getBlockedSources, getCryptoGlobal, getDxyBitcoinRelationship, getEquityRiskAppetite, getEquityScreener, getEthereumRotation, getAccumulationSchedules, getAlertOutcomes, getCryptoOptionsWorkspace, getIndexValuation, getFactorReturns, getFxWorkspace, getHardMoneyValuation, getIntradayRotation, getLiquiditySnapshot, getMarketHeatmap, getMarketHistory, getMarketPositioning, getMarketSnapshot, getMetalsWorkspace, getNewsWire, getPriceCrossCheck, getProviderHealth, getRegimeCorrelations, getSentimentSnapshot, getSignalTrackRecords, getStablecoinLeadLag, getTechnicalSnapshot, getTreasuryFunding } from './providers.js';
+import { calculateDollarTransmission, getBitcoinCycleWorkspace, getBlockedSources, getCryptoGlobal, getDxyBitcoinRelationship, getEquityRiskAppetite, getEquityScreener, getEthereumRotation, getAccumulationSchedules, getAlertOutcomes, getCryptoOptionsWorkspace, getIndexValuation, getScreenerTrackRecord, getFactorReturns, getFxWorkspace, getHardMoneyValuation, getIntradayRotation, getLiquiditySnapshot, getMarketHeatmap, getMarketHistory, getMarketPositioning, getMarketSnapshot, getMetalsWorkspace, getNewsWire, getPriceCrossCheck, getProviderHealth, getRegimeCorrelations, getSentimentSnapshot, getSignalTrackRecords, getStablecoinLeadLag, getTechnicalSnapshot, getTreasuryFunding } from './providers.js';
 import { buildAtomFeed } from './analytics.js';
 import { authorizeWrite, contentSecurityPolicy, describeWriteProtection, securityHeaders } from './security.js';
 import { buildInfo } from './buildInfo.js';
@@ -287,6 +287,14 @@ app.get('/api/analytics/alert-outcomes', async (_request, response, next) => {
 app.get('/api/analytics/index-valuation', async (_request, response, next) => {
   try {
     response.json(await getIndexValuation());
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.get('/api/analytics/screener-track-record', async (_request, response, next) => {
+  try {
+    response.json(await getScreenerTrackRecord());
   } catch (error) {
     next(error);
   }

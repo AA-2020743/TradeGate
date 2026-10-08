@@ -1,7 +1,7 @@
 import React, { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 import './styles.css';
-import { changeOverSpan, formatPercent, formatSpanLabel, formatTimestamp, formatUsd, useEquityResearch, useMarketHistory, usePlatformData, useTechnicalAnalytics } from './liveData.js';
+import { changeOverSpan, formatPercent, formatSpanLabel, formatTimestamp, formatUsd, useEquityResearch, useLazyResource, useMarketHistory, usePlatformData, useTechnicalAnalytics } from './liveData.js';
 import { buildRoute, parseRoute } from './routing.js';
 import { addSymbolToList, normalizeWatchlists } from './watchlistRules.js';
 import { SCREENER_COLUMNS, ariaSortFor, nextSortState, sortRows } from './screenerSort.js';
@@ -806,7 +806,7 @@ function formatLevel(value) {
  * the held-out block. A cell without enough independent observations shows
  * its effective count and no statistics, so thin evidence reads as thin.
  */
-function TrackRecordTable({ record, current = null, title = 'TRACK RECORD', stateLabel = 'Tier', assumption = 'the ladder assumes' }) {
+function TrackRecordTable({ record, current = null, title = 'TRACK RECORD', stateLabel = 'Tier', assumption = 'the ladder assumes', unit = 'weeks' }) {
   // Open on the horizon the written read is about, so the sentence above the
   // table and the numbers in it describe the same thing.
   const [days, setDays] = React.useState(record?.readHorizonDays ?? 90);
@@ -823,14 +823,14 @@ function TrackRecordTable({ record, current = null, title = 'TRACK RECORD', stat
       <p className="section-kicker">{title}</p>
       <div className="track-tabs">{record.horizons.map((entry) => <button key={entry.days} className={entry.days === horizon.days ? 'active' : ''} aria-pressed={entry.days === horizon.days} onClick={() => setDays(entry.days)}>{entry.days}d</button>)}</div>
     </div>
-    <div className="track-head"><span>{stateLabel}</span><span>Before {record.holdoutFrom}</span><span>Held out since</span><span>Vs all weeks</span></div>
+    <div className="track-head"><span>{stateLabel}</span><span>Before {record.holdoutFrom}</span><span>Held out since</span><span>Vs all {unit}</span></div>
     {horizon.states.map((state) => <div className={`track-row ${state.key === current ? 'current' : ''}`} key={state.key}>
       <span>{state.label}</span>
       {cell(state.development.stats)}
       {cell(state.heldOut.stats)}
       <small className={state.consistent ? (state.heldOut.edge > 0 ? 'positive' : 'negative') : ''}>{state.consistent ? (state.heldOut.edge > 0 ? 'above both times' : 'below both times') : Number.isFinite(state.development.edge) && Number.isFinite(state.heldOut.edge) ? 'flipped' : '\u2014'}</small>
     </div>)}
-    <div className="track-row track-all"><span>All weeks</span>{cell(horizon.development.all)}{cell(horizon.heldOut.all)}<small></small></div>
+    <div className="track-row track-all"><span>All {unit}</span>{cell(horizon.development.all)}{cell(horizon.heldOut.all)}<small></small></div>
     <p className="treasury-note">Median return over the next {horizon.days} days. {stateLabel} ordering, where +1 is exactly as {assumption} and &minus;1 the reverse: {score(horizon.development.ordering)} before, {score(horizon.heldOut.ordering)} held out. {record.methodology} {record.limits}</p>
   </div>;
 }
@@ -2257,6 +2257,31 @@ function AlertOutcomesPanel({ outcomes }) {
   </article>;
 }
 
+function LazyAlertOutcomesPanel() {
+  const { status, data, error } = useLazyResource('/api/analytics/alert-outcomes');
+  const outcomes = data ?? { status: 'unavailable', reason: status === 'loading' ? 'Loading alert outcomes\u2026' : `Alert outcomes could not be loaded: ${error}` };
+  return <AlertOutcomesPanel outcomes={outcomes} />;
+}
+
+function ScreenerTrackRecordPanel() {
+  const { status: loadStatus, data: record, error } = useLazyResource('/api/analytics/screener-track-record');
+  const published = record?.status === 'calculated';
+  return <article className={`panel screener-record-panel ${published ? '' : 'preview-section'}`}>
+    <div className="panel-title">
+      <div>
+        <StatusKicker label="SCREENER TRACK RECORD" published={published} />
+        <h3>{published ? 'Did a high score pick stocks that beat the index?' : loadStatus === 'loading' ? 'Replaying the score over five years\u2026' : 'Awaiting five years of constituent closes'}</h3>
+      </div>
+      {published ? <span className="data-pill">{record.replayDates} monthly replays · {record.members} stocks</span> : null}
+    </div>
+    {published ? <>
+      <p className="dca-read">{record.read}</p>
+      <TrackRecordTable record={record} title="BY SCORE FIFTH, AGAINST SPY" stateLabel="Fifth" assumption="the score assumes" unit="months" />
+      <p className="model-footnote">{record.methodology} {record.limits}</p>
+    </> : <div className="equity-empty">{record?.reason ?? (loadStatus === 'loading' ? 'The first replay after a restart takes a few seconds; it is cached for a day.' : `The track record could not be loaded: ${error}`)}</div>}
+  </article>;
+}
+
 function MacroDashboard({ data }) {
   const [activeModel, setActiveModel] = React.useState('Overview');
   const [correlationWindow, setCorrelationWindow] = React.useState('60D');
@@ -2417,7 +2442,7 @@ function MacroDashboard({ data }) {
       <article className={`sensitivity-panel panel ${regimeCorrelations?.status === 'calculated' ? '' : 'preview-section'}`}><div className="panel-title"><div><StatusKicker label="ASSET SENSITIVITY" published={sensitivityRows.some((row) => Number.isFinite(row.value))} /><h3>Current macro exposures</h3></div><button onClick={() => setActiveModel('Correlations')}>Details →</button></div><div className="sensitivity-list">{sensitivityRows.map((row) => <div key={row.asset}><b>{row.asset}</b><span>{row.driver} <i>{row.strength}</i></span><small>{Number.isFinite(row.value) ? `${row.value > 0 ? '+' : ''}${row.value.toFixed(2)}` : '—'}</small></div>)}</div><p className="model-footnote">Sensitivities are the {correlationWindow} correlations from <code>regime-correlation-v1</code>; strength labels derive from |r| thresholds of 0.25 and 0.50.</p></article>
       <article className="sources-panel panel"><p className="section-kicker">DATA PROVENANCE</p><h3>Connected and target sources.</h3><p>FRED is connected, including ECB and BoJ balance sheets with H.10 FX conversion, and PBoC total assets arrive via BIS WS_CBTA on DBnomics. BoE, IMF broad money, and institutional market feeds remain planned inputs.</p><button>Explore sources and lags →</button></article>
     </section>
-    <AlertOutcomesPanel outcomes={data.alertOutcomes} />
+    <LazyAlertOutcomesPanel />
     <p className="independence-note">TradeGate is an independent market research platform and is not affiliated with Tradegate AG.</p>
     {liquidityChartOpen && <LiquidityChartDialog history={liquidityModel?.history ?? []} title="Calculated net US liquidity" description="Move across the chart to inspect a date. Click or tap to pin the observation for comparison." onClose={() => setLiquidityChartOpen(false)} />}
     {globalChartOpen && <LiquidityChartDialog history={globalLiquidity?.history ?? []} title="Calculated global central-bank liquidity" description="US net liquidity plus ECB and BoJ balance sheets in USD. Move across the chart to inspect a date; click to pin." label="global central-bank liquidity" onClose={() => setGlobalChartOpen(false)} />}
@@ -2539,6 +2564,7 @@ function ScreenerDashboard({ data }) {
         </div>)}
       </section>
     </> : null}
+    <ScreenerTrackRecordPanel />
     <p className="independence-note">TradeGate is an independent market research platform and is not affiliated with Tradegate AG.</p>
   </div>;
 }

@@ -598,3 +598,6 @@ html[data-theme='dark'] .asset-badge { color: #17201b; }
 .cape-median-key { margin-left: auto; display: inline-flex; align-items: center; gap: 0.35rem; }
 .cape-median-key i { display: inline-block; width: 16px; border-top: 1px dashed #8a948b; }
 .cape-chart .liquidity-axis-label { font-size: 11px; }
+.screener-record-panel { margin: 1.2rem 0; }
+/* The screen presets are seven buttons; on a phone they wrap instead of pushing the page 180px wide. */
+.screener-controls-row .window-buttons { flex-wrap: wrap; max-width: 100%; }

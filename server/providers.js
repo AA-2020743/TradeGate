@@ -24,6 +24,7 @@ import { evaluateTrackRecord } from './trackRecord.js';
 import { crossCheckSeries, dataQualityFor, gateOnDataQuality, summarizeCrossChecks } from './priceCrossCheck.js';
 import { resolveVintage, screenVintage } from './vintage.js';
 import { parseBisMonthlySeries } from './bisData.js';
+import { SCREENER_TRACK_RECORD_VERSION, calculateScreenerTrackRecord } from './screenerTrackRecord.js';
 import { INDEX_VALUATION_VERSION, SHILLER_FALLBACK_URLS, SHILLER_PAGE, calculateIndexValuation, findShillerDataLink, parseShillerRows } from './indexValuation.js';
 import { readWorkbook, sheetRows } from './xls.js';
 import { ALERT_HORIZONS, ALERT_OUTCOMES_VERSION, BENCHMARK, claimFor, scoreAlertOutcomes } from './alertOutcomes.js';
@@ -1034,6 +1035,48 @@ async function getSparkBatch(symbols, { range = '1y', interval = '1d' } = {}) {
   return { series: out, latest };
 }
 
+/**
+ * Daily closes paired with their dates, for histories that must be aligned
+ * across symbols by date. The bare-close path drops null bars, which shifts a
+ * symbol's later closes onto earlier days; pairing each close with its own
+ * stamp keeps a gap a gap.
+ */
+async function getSparkDatedBatch(symbols, range) {
+  const url = `https://query1.finance.yahoo.com/v7/finance/spark?symbols=${encodeURIComponent(symbols.join(','))}&range=${range}&interval=1d`;
+  const payload = await fetchJson(url, 0, 2, BROWSER_HEADERS);
+  const out = new Map();
+  for (const row of payload?.spark?.result ?? []) {
+    const response = row?.response?.[0];
+    const closes = response?.indicators?.quote?.[0]?.close ?? [];
+    const stamps = response?.timestamp ?? [];
+    const points = stamps.flatMap((stamp, index) => {
+      const value = asNumber(closes[index]);
+      return Number.isFinite(stamp) && value !== null && value > 0 ? [{ date: new Date(stamp * 1000).toISOString().slice(0, 10), value }] : [];
+    });
+    if (points.length >= 210) out.set(row.symbol, points);
+  }
+  return out;
+}
+
+async function getSparkDatedHistories(symbols, range = '5y') {
+  const normalized = [...new Set(symbols.map((symbol) => symbol.replace(/\./g, '-')))];
+  const merged = new Map();
+  let failures = 0;
+  for (let index = 0; index < normalized.length; index += 80) {
+    const wave = [];
+    for (let offset = index; offset < Math.min(index + 80, normalized.length); offset += 20) wave.push(normalized.slice(offset, offset + 20));
+    const settled = await Promise.allSettled(wave.map((batch) => getSparkDatedBatch(batch, range)));
+    for (const result of settled) {
+      if (result.status === 'fulfilled') for (const [key, value] of result.value) merged.set(key, value);
+      else failures += 1;
+    }
+    if (index + 80 < normalized.length) await wait(500);
+  }
+  if (!merged.size) throw new Error(`Every ${range} spark batch failed (${failures} failures)`);
+  merged.failures = failures;
+  return merged;
+}
+
 async function getIntradayCloses(symbols, range = '5d', interval = '30m') {
   const settled = await Promise.allSettled(symbols.map((symbol) => getSparkBatch([symbol], { range, interval })));
   const aligned = new Map();
@@ -1902,6 +1945,26 @@ export async function getIndexValuation() {
       // The valuation stands without it; only the TIPS comparison is lost.
     }
     return { asOf: new Date().toISOString(), source: sourceUrl, sourceName: 'Robert Shiller, U.S. Stock Markets 1871-Present', ...calculateIndexValuation(parsed.months, { realYield10y, realYieldDate }) };
+  });
+}
+
+/** The screener score replayed monthly over five years of S&P 500 closes. */
+export async function getScreenerTrackRecord() {
+  return withCache('analytics:screener-track-record', 24 * 60 * 60_000, async () => {
+    const universe = await getSpxUniverse();
+    const histories = await getSparkDatedHistories([...universe.symbols, 'SPY'], '5y');
+    const benchmark = histories.get('SPY');
+    histories.delete('SPY');
+    if (!benchmark?.length) {
+      return { version: SCREENER_TRACK_RECORD_VERSION, status: 'unavailable', reason: 'SPY did not return a five-year history to measure against.' };
+    }
+    return {
+      asOf: new Date().toISOString(),
+      universeSize: universe.symbols.length,
+      historiesReceived: histories.size,
+      failedBatches: histories.failures ?? 0,
+      ...calculateScreenerTrackRecord({ histories, benchmark }),
+    };
   });
 }
 

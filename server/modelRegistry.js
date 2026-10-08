@@ -204,6 +204,19 @@ export const MODEL_REGISTRY = [
     ],
     trackRecord: null,
   },
+  {
+    id: 'screener-track-record-v1',
+    name: 'Screener track record',
+    page: 'Screener',
+    measures: 'The screener score replayed monthly over five years: every S&P 500 member scored on closes available that day, split into fifths, each fifth\u2019s equal-weighted return over 30 and 90 days measured against SPY.',
+    inputs: ['Five years of daily S&P 500 constituent closes and SPY (Yahoo spark)'],
+    failureModes: [
+      'Survivorship: today\u2019s index members only, so stocks that left the index after falling are missing from every past date.',
+      'Equal-weighted and before costs; a top fifth that turns over every month would pay for it.',
+      'Five years is one market regime or two; a momentum-heavy score has had long losing stretches in other decades.',
+    ],
+    trackRecord: 'screener-track-record-v1',
+  },
 ];
 
 export function registryEntry(id) {

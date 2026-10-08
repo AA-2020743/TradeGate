@@ -182,7 +182,9 @@ export function describeCurrentState(record, { name, state, phrase, subject, bes
   const ordered = horizon.heldOut.ordering ?? horizon.development.ordering;
   const block = Number.isFinite(horizon.heldOut.ordering) ? 'held-out block' : 'development history';
   if (Number.isFinite(ordered)) {
-    if (ordered >= 0.6) parts.push(`across the ${block} the ${subject} ranked as assumed, ${best} followed by the best returns and ${worst} by the worst`);
+    // Between 0.6 and 0.8 a pair or two of states are out of place: "mostly".
+    if (ordered >= 0.8) parts.push(`across the ${block} the ${subject} ranked as assumed, ${best} followed by the best returns and ${worst} by the worst`);
+    else if (ordered >= 0.6) parts.push(`across the ${block} the ${subject} ranked mostly as assumed, with ${best} ahead of ${worst}`);
     else if (ordered <= -0.2) parts.push(`across the ${block} the ${subject} did not rank as assumed: ${worst} was followed by better returns than ${best}`);
     else parts.push(`across the ${block} the ${subject} ranked only loosely in the assumed order`);
   }

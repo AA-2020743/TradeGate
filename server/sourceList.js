@@ -12,6 +12,7 @@ import {
   getLiquiditySnapshot,
   getMarketSnapshot,
   getPriceCrossCheck,
+  getScreenerTrackRecord,
   getTreasuryFunding,
 } from './providers.js';
 
@@ -125,6 +126,16 @@ export const SOURCES = [
     endpoint: '/api/analytics/price-crosscheck',
     load: getPriceCrossCheck,
     figure: (payload) => `${payload.passed?.length ?? 0} verified, ${payload.review?.length ?? 0} under review, ${payload.notIndependent?.length ?? 0} not independent, ${payload.unavailable?.length ?? 0} unavailable`,
+  },
+  {
+    name: 'Yahoo 5-year constituent closes (screener record)',
+    endpoint: '/api/analytics/screener-track-record',
+    load: getScreenerTrackRecord,
+    figure: (payload) => (Number.isFinite(payload.replayDates) ? `${payload.historiesReceived} of ${payload.universeSize} members, ${payload.replayDates} monthly replays from ${payload.from}` : null),
+    plausible: (payload) => [
+      { label: 'members with 5y history', value: payload.historiesReceived, min: 300, max: 520 },
+      { label: 'monthly replays', value: payload.replayDates, min: 30, max: 70 },
+    ],
   },
   {
     name: 'Stored alerts (PostgreSQL) + outcomes',
