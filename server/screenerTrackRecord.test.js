@@ -85,3 +85,14 @@ test('too short a history refuses with a reason', () => {
   assert.equal(result.status, 'unavailable');
   assert.match(result.reason, /two years of benchmark closes/);
 });
+
+test('each input of the score is replayed on its own, and the read says which carry it', () => {
+  // Per-stock drifts: past momentum and distance from the 200-day average
+  // carry over; every stock has the same volatility, so calm carries nothing.
+  const result = calculateScreenerTrackRecord(universe({ persistence: true }));
+  assert.deepEqual(result.components.map((component) => component.key), ['momentum', 'trend', 'calm']);
+  const ordering = (key) => result.components.find((component) => component.key === key).record.horizons.find((entry) => entry.days === 90).development.ordering;
+  assert.ok(ordering('trend') >= 0.6, `trend ${ordering('trend')}`);
+  assert.ok(Math.abs(ordering('calm') ?? 0) < 0.8, `calm ${ordering('calm')}`);
+  assert.match(result.read, /Ranked on its own over 90 days, 20-session momentum [^;]+; distance above the 200-day average [^;]+; and calm \(low 20-session volatility\) [^.]+\./);
+});

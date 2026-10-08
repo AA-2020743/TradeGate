@@ -1189,6 +1189,18 @@ function weightSentence(model) {
 }
 
 /** What each model reads and how it is known to fail, with the build that served it. */
+const SCORECARD_VERDICT_LABELS = {
+  held: 'Held up out of sample',
+  'held-recent': 'Ordered only in the held-out block',
+  faded: 'Ordered before, only loosely since',
+  reversed: 'Ran against its assumed order since',
+  'no-order': 'No reliable order in either block',
+  untested: 'Held-out block too thin to judge',
+  thin: 'Too few independent observations in either block',
+  unavailable: 'No track record available',
+};
+const signedScore = (value) => (Number.isFinite(value) ? `${value > 0 ? '+' : ''}${value}` : '\u2014');
+
 const SCORECARD_TONE = { held: 'positive', 'held-recent': 'positive', faded: 'neutral', reversed: 'negative', 'no-order': 'neutral', untested: '', thin: '', unavailable: '' };
 
 function ScorecardPanel() {
@@ -2839,6 +2851,16 @@ function ScreenerTrackRecordPanel() {
     {published ? <>
       <p className="dca-read">{record.read}</p>
       <TrackRecordTable record={record} title="BY SCORE FIFTH, AGAINST SPY" stateLabel="Fifth" assumption="the score assumes" unit="months" />
+      {(record.components ?? []).some((component) => component.summary) ? <div className="scorecard-table screener-components" role="table" aria-label="Each input of the score ranked on its own">
+        <div className="scorecard-row scorecard-head" role="row"><span role="columnheader">Input, ranked alone</span><span role="columnheader">Weight</span><span role="columnheader">Before</span><span role="columnheader">Held out</span><span role="columnheader">Top minus bottom, held out</span></div>
+        {record.components.map((component) => <div className="scorecard-row" role="row" key={component.key}>
+          <span role="cell"><b>{component.label}</b><small className={SCORECARD_TONE[component.summary?.verdict] ?? ''}>{component.summary ? SCORECARD_VERDICT_LABELS[component.summary.verdict] : component.record?.reason ?? 'not replayed'}</small></span>
+          <span role="cell">{component.weight}%</span>
+          <span role="cell">{signedScore(component.summary?.developmentOrdering)}</span>
+          <span role="cell">{signedScore(component.summary?.heldOutOrdering)}</span>
+          <span role="cell">{Number.isFinite(component.summary?.heldOutSpread) ? `${component.summary.heldOutSpread > 0 ? '+' : ''}${component.summary.heldOutSpread} pts over ${component.summary.days}d` : '\u2014'}</span>
+        </div>)}
+      </div> : null}
       <p className="model-footnote">{record.methodology} {record.limits}</p>
     </> : <div className="equity-empty">{record?.reason ?? (loadStatus === 'loading' ? 'The first replay after a restart takes a few seconds; it is cached for a day.' : `The track record could not be loaded: ${error}`)}</div>}
   </article>;

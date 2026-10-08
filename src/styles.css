@@ -715,3 +715,13 @@ html[data-theme='dark'] .heldout-band { fill: #222c25; }
 
 /* Bitcoin cycle phase track record (Crypto) */
 .cycle-record-panel { margin-top: 14px; }
+
+.screener-components { margin-top: 0.9rem; }
+.screener-components .scorecard-row { grid-template-columns: minmax(0, 1.6fr) minmax(0, 0.5fr) minmax(0, 0.5fr) minmax(0, 0.6fr) minmax(0, 1fr); }
+@media (max-width: 760px) {
+  .screener-components .scorecard-row { grid-template-columns: minmax(0, 1.5fr) minmax(0, 0.55fr) minmax(0, 0.6fr) minmax(0, 0.9fr); }
+  .screener-components .scorecard-row > span:nth-child(2) { display: none; }
+  .screener-components .scorecard-row > span:last-child { grid-column: auto; }
+  .screener-components .scorecard-head > span:last-child { display: block; }
+}
+.scorecard-row small.positive, .scorecard-row small.negative, .scorecard-row small.neutral { font-weight: 600; }
