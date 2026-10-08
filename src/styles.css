@@ -270,6 +270,10 @@ html[data-theme='dark'] .screener-search { background: #1a221d; border-color: #3
 
 .verdict-margin, .verdict-reason { margin: 0.85rem 0 0; font-size: 0.85rem; line-height: 1.5; opacity: 0.82; }
 .verdict-missing-line { opacity: 0.65; }
+/* The call's own replayed record, kept beside the call. */
+.verdict-record-line { opacity: 0.92; padding-top: 0.75rem; border-top: 1px solid var(--hairline, rgba(127, 127, 127, 0.18)); }
+.verdict-record-caution { color: #7a5d12; font-weight: 600; }
+html[data-theme='dark'] .verdict-record-caution { color: #e0be70; }
 .verdict-missing { margin: 0.7rem 0 0; padding-left: 1.1rem; font-size: 0.85rem; line-height: 1.6; opacity: 0.75; }
 
 /* Which session a screen reflects, and which names did not reach it. */

@@ -6,14 +6,18 @@ import {
   calculateVerdictRecord,
   closesAsOf,
   forwardReturn,
+  forwardWorstFall,
   macroLegsAsOf,
   prepareSeriesList,
   replayVerdicts,
   seriesListAsOf,
   replayDates,
+  summarizeForBanner,
   usdBreadthAsOf,
+  VERDICT_REPLAYS,
 } from './verdictTrackRecord.js';
 import { calculateGlobalLiquidityModel } from './analytics.js';
+import { scoreTrackRecord } from './scorecard.js';
 
 let seed = 5;
 const noise = () => { seed = (seed * 1103515245 + 12345) % 2147483648; return (seed / 2147483648) - 0.5; };
@@ -115,6 +119,20 @@ test('cross-rate breadth counts the pairs the dollar gained on over the last 20 
   assert.equal(usdBreadthAsOf({ 'fx:a': falling }, '2020-01-10'), null);
 });
 
+test('the worst fall is the deepest drop from any peak inside the window', () => {
+  const points = [
+    { date: '2020-01-01', value: 100 },
+    { date: '2020-01-05', value: 120 },
+    { date: '2020-01-10', value: 90 },
+    { date: '2020-01-20', value: 130 },
+    { date: '2020-03-01', value: 50 },
+  ];
+  // Within 30 days: up to 120, down to 90 (-25%), up to 130; the March crash is outside.
+  assert.equal(Math.round(forwardWorstFall(points, '2020-01-01', 30)), -25);
+  assert.equal(forwardWorstFall([{ date: '2020-01-01', value: 1 }, { date: '2020-02-15', value: 2 }], '2020-01-01', 30), 0);
+  assert.equal(forwardWorstFall(points, '2020-02-15', 30), null);
+});
+
 test('forward returns read the last close on or before each end, and stop where the history does', () => {
   const points = [
     { date: '2020-01-01', value: 100 },
@@ -146,8 +164,17 @@ test('the replayed verdicts are scored on the dates their inputs allow', { timeo
     assert.ok(record.readings > (key === 'crypto' ? 90 : 150), `${key}: ${record.readings}`);
     assert.equal(record.stepDays, 14);
     assert.deepEqual(record.record.horizons.map((horizon) => horizon.days), [30, 90, 180]);
+    // The same calls, followed by the worst fall rather than the return.
+    assert.equal(record.falls.status, 'calculated', key);
+    assert.deepEqual(record.falls.horizons[0].states.map((state) => state.key), record.record.horizons[0].states.map((state) => state.key));
+    assert.ok(record.falls.horizons.every((horizon) => horizon.states.every((state) => !Number.isFinite(state.development.stats.median) || state.development.stats.median <= 0)), key);
     assert.equal(record.timeInCall.reduce((total, entry) => total + entry.readings, 0), record.readings);
     assert.match(record.read, /not what will\./);
+    // The banner line states both records in the scorecard's own terms.
+    assert.equal(record.summary.returns.verdict, scoreTrackRecord(record.record).verdict);
+    assert.equal(record.summary.falls.verdict, scoreTrackRecord(record.falls).verdict);
+    assert.match(record.summary.text, /^Replayed every two weeks since \d{4}-\d{2}-\d{2}/);
+    assert.doesNotMatch(record.summary.text, /undefined|NaN|null/);
     assert.doesNotMatch(record.read, /undefined|NaN|null/);
     assert.ok(record.legs.length >= 3, key);
     // Legs are counted at the replay's own step and read at the record's own
@@ -155,7 +182,7 @@ test('the replayed verdicts are scored on the dates their inputs allow', { timeo
     assert.ok(record.legs.every((leg) => leg.summary?.days === record.record.readHorizonDays), JSON.stringify(record.legs.map((leg) => leg.summary)));
     assert.match(record.read, new RegExp(`over ${record.record.readHorizonDays} days`));
   }
-  assert.deepEqual(records.crypto.omitted, ['Perpetual funding (inverted)', 'Stablecoin supply']);
+  assert.deepEqual(records.crypto.omitted, ['Perpetual funding', 'Stablecoin supply']);
   assert.match(records.crypto.methodology, /left out/);
   // Eight years of gold readings give every leg enough independent windows to
   // rank; the bitcoin replay starts four years in, once its technicals are
@@ -175,4 +202,18 @@ test('too few replayable dates refuses rather than reporting a thin record', () 
   assert.equal(record.status, 'unavailable');
   assert.match(record.reason, /52/);
   assert.equal(calculateVerdictRecord({ key: 'nope', samples, closes: gold }).status, 'unavailable');
+});
+
+test('a call that reversed on returns is labelled by what it did rank', () => {
+  const recordWith = (heldOut, development = heldOut) => ({ status: 'calculated', holdoutFrom: '2024-01-16', readHorizonDays: 90, horizons: [{ days: 90, development: { ordering: development, all: { effective: 30 } }, heldOut: { ordering: heldOut, all: { effective: 12 } }, states: [] }] });
+  const base = { from: '2017-08-22' };
+  const risk = summarizeForBanner({ ...base, record: recordWith(-1, -0.33), falls: recordWith(1) }, VERDICT_REPLAYS.metals);
+  assert.equal(risk.returns.verdict, 'reversed');
+  assert.match(risk.caution, /reading of risk/);
+  assert.match(risk.text, /on gold’s 90-day return, the calls ran against the verdict’s order after the cutoff; on its worst 90-day fall, the calls ranked as the verdict assumes, before and after the cutoff/);
+  const neither = summarizeForBanner({ ...base, record: recordWith(-1), falls: recordWith(-1) }, VERDICT_REPLAYS.fx);
+  assert.match(neither.caution, /description of conditions/);
+  assert.match(neither.text, /the broad dollar’s 90-day move/);
+  assert.equal(summarizeForBanner({ ...base, record: recordWith(1), falls: recordWith(1) }, VERDICT_REPLAYS.crypto).caution, null);
+  assert.match(summarizeForBanner({ ...base, record: recordWith(1), falls: recordWith(1) }, VERDICT_REPLAYS.crypto).text, /\(without perpetual funding and stablecoin supply\)/);
 });

@@ -174,3 +174,19 @@ test('the scorecard prints one line per track record with its verdict and orderi
   assert.equal(lines[3], 'N/A   Screener score fifths: did not load (timed out)');
   assert.match(formatScorecard({ status: 'unavailable', reason: 'x' })[0], /^Track records: x/);
 });
+
+test('each input of a composite record prints indented under its row', () => {
+  const lines = formatScorecard({
+    status: 'calculated',
+    read: 'Of 1 track record, 1 has a held-out block large enough to judge.',
+    rows: [{
+      name: 'Gold verdict, replayed', status: 'calculated', verdict: 'reversed', verdictLabel: 'Ran against its assumed order since', developmentOrdering: -0.33, heldOutOrdering: -1, holdoutFrom: '2024-01-16', horizonDays: 90,
+      components: [
+        { label: 'Gold technicals', weight: 50, days: 90, developmentOrdering: -1, heldOutOrdering: -1, verdict: 'reversed', verdictLabel: 'Ran against its assumed order since' },
+        { label: 'RSI', weight: null, days: 90, developmentOrdering: 1, heldOutOrdering: null, verdict: 'untested', verdictLabel: 'Held-out block too thin to judge' },
+      ],
+    }],
+  });
+  assert.equal(lines[2], '        · Gold technicals (50%): ran against its assumed order since (before -1, held out -1, 90 days)');
+  assert.equal(lines[3], '        · RSI: held-out block too thin to judge (before +1, held out n/a, 90 days)');
+});

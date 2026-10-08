@@ -138,7 +138,7 @@ export function scoreTrackRecord(record, { preferredDays = record?.readHorizonDa
 }
 
 /**
- * @param {Array<{ key: string, name: string, page: string, assumption: string, measure: string, result: PromiseSettledResult<object>, pick: (payload: object) => object }>} entries
+ * @param {Array<{ key: string, name: string, page: string, assumption: string, measure: string, result: PromiseSettledResult<object>, pick: (payload: object) => object, components?: (payload: object) => object[] }>} entries
  */
 export function buildScorecard(entries) {
   const rows = entries.map((entry) => {
@@ -147,7 +147,22 @@ export function buildScorecard(entries) {
       // A loader that failed or timed out says so; it is not a model without a record.
       return { ...base, status: 'unavailable', verdict: 'unavailable', verdictLabel: 'Did not load', reason: entry.result.reason?.message ?? 'The model did not load.' };
     }
-    return { ...base, ...scoreTrackRecord(entry.pick(entry.result.value)) };
+    const row = { ...base, ...scoreTrackRecord(entry.pick(entry.result.value)) };
+    // A record built from several inputs also says how each input ranked on
+    // its own, so a reversed score can be traced to the input reversing it.
+    const components = (entry.components?.(entry.result.value) ?? []).filter((component) => component?.summary);
+    return components.length ? {
+      ...row,
+      components: components.map((component) => ({
+        label: component.label,
+        weight: component.weight ?? null,
+        days: component.summary.days,
+        developmentOrdering: component.summary.developmentOrdering,
+        heldOutOrdering: component.summary.heldOutOrdering,
+        verdict: component.summary.verdict,
+        verdictLabel: SCORECARD_VERDICTS[component.summary.verdict] ?? component.summary.verdict,
+      })),
+    } : row;
   });
   const counts = Object.fromEntries(Object.keys(SCORECARD_VERDICTS).map((key) => [key, rows.filter((row) => row.verdict === key).length]));
   const judged = rows.filter((row) => !['untested', 'thin', 'unavailable'].includes(row.verdict));

@@ -41,3 +41,19 @@ test('the scorecard counts verdicts and says how many held up', () => {
   assert.equal(card.rows[2].verdictLabel, 'Did not load');
   assert.equal(card.read, 'Of 3 track records, 2 have a held-out block large enough to judge; 1 ranked as assumed both before and after their cutoff; 1 ran against the order assumed.');
 });
+
+test('a record built from several inputs carries how each ranked on its own', () => {
+  const card = buildScorecard([{
+    key: 'a', name: 'A', page: 'P', assumption: 'x', measure: 'return',
+    result: { status: 'fulfilled', value: { record: record([[90, -1, -0.33]]), parts: [
+      { label: 'Trend', weight: 40, summary: { days: 90, developmentOrdering: -1, heldOutOrdering: -1, verdict: 'reversed' } },
+      { label: 'Calm', weight: 5, summary: null },
+    ] } },
+    pick: (payload) => payload.record,
+    components: (payload) => payload.parts,
+  }]);
+  // An input with no summary - one that could not be replayed - is left out.
+  assert.deepEqual(card.rows[0].components, [{ label: 'Trend', weight: 40, days: 90, developmentOrdering: -1, heldOutOrdering: -1, verdict: 'reversed', verdictLabel: 'Ran against its assumed order since' }]);
+  const plain = buildScorecard([{ key: 'b', name: 'B', page: 'P', assumption: 'x', measure: 'return', result: { status: 'fulfilled', value: record([[90, 1, 1]]) }, pick: (payload) => payload }]);
+  assert.equal(plain.rows[0].components, undefined);
+});

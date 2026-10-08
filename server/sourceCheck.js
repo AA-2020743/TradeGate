@@ -197,6 +197,9 @@ export function formatScorecard(card) {
       ? `before ${score(row.developmentOrdering)}, held out ${score(row.heldOutOrdering)}${row.holdoutFrom ? ` since ${row.holdoutFrom}` : ''}, ${row.horizonDays} days`
       : (row.reason ?? 'no record');
     lines.push(`${SCORECARD_MARKS[row.verdict] ?? '    '}  ${row.name}: ${row.verdictLabel.toLowerCase()} (${detail})`);
+    for (const component of row.components ?? []) {
+      lines.push(`        · ${component.label}${Number.isFinite(component.weight) ? ` (${component.weight}%)` : ''}: ${component.verdictLabel.toLowerCase()} (before ${score(component.developmentOrdering)}, held out ${score(component.heldOutOrdering)}, ${component.days} days)`);
+    }
   }
   return lines;
 }

@@ -27,7 +27,7 @@
 import { calculateGlobalLiquidityModel, calculateTechnicalSnapshot, calculateUsdStrengthModel, calculateUsLiquidityModel, isPublished } from './analytics.js';
 import { calculateBitcoinTechnicals } from './bitcoinTechnicals.js';
 import { calculateRateDivergence } from './macroRates.js';
-import { componentRecords, describeComponents } from './scorecard.js';
+import { componentRecords, describeComponents, scoreTrackRecord } from './scorecard.js';
 import { evaluateTrackRecord, ownHistoryBands } from './trackRecord.js';
 import { buildCryptoVerdict, buildFxVerdict, buildMetalsVerdict } from './verdict.js';
 
@@ -124,14 +124,43 @@ export function closesAsOf(points, date, lookbackDays) {
   return points.slice(start, end);
 }
 
-/** Percent move from the last close on or before `date` to the last close on or before `date + days`. */
-export function forwardReturn(points, date, days) {
-  const dates = points.map((point) => point.date);
+// Each history's dates, kept once rather than rebuilt for every reading.
+const datesOf = new WeakMap();
+function dateIndex(points) {
+  if (!datesOf.has(points)) datesOf.set(points, points.map((point) => point.date));
+  return datesOf.get(points);
+}
+
+/** The positions of the last closes on or before `date` and `date + days`, or null past the history. */
+function windowFor(points, date, days) {
+  const dates = dateIndex(points);
   const target = addDays(date, days);
   if (!points.length || target > points.at(-1).date) return null;
-  const start = points[countKnownBy(dates, date) - 1];
-  const end = points[countKnownBy(dates, target) - 1];
-  return start && end && start.value > 0 ? ((end.value / start.value) - 1) * 100 : null;
+  const start = countKnownBy(dates, date) - 1;
+  const end = countKnownBy(dates, target) - 1;
+  return start >= 0 && end >= start && points[start].value > 0 ? { start, end } : null;
+}
+
+/** Percent move from the last close on or before `date` to the last close on or before `date + days`. */
+export function forwardReturn(points, date, days) {
+  const window = windowFor(points, date, days);
+  return window ? ((points[window.end].value / points[window.start].value) - 1) * 100 : null;
+}
+
+/**
+ * The deepest fall from any peak inside the window, starting at the close on
+ * or before `date`: 0 when it only rose, -12 for a 12% drop at some point.
+ */
+export function forwardWorstFall(points, date, days) {
+  const window = windowFor(points, date, days);
+  if (!window) return null;
+  let peak = points[window.start].value;
+  let worst = 0;
+  for (let index = window.start + 1; index <= window.end; index += 1) {
+    peak = Math.max(peak, points[index].value);
+    worst = Math.min(worst, (points[index].value / peak) - 1);
+  }
+  return worst * 100;
 }
 
 export function replayDates(from, to, stepDays = STEP_DAYS) {
@@ -203,7 +232,7 @@ export const VERDICT_REPLAYS = {
       globalLiquidity: legs.globalLiquidity,
       usdStrength: legs.usdStrength,
     }),
-    omitted: ['Perpetual funding (inverted)', 'Stablecoin supply'],
+    omitted: ['Perpetual funding', 'Stablecoin supply'],
   },
   fx: {
     name: 'Dollar verdict',
@@ -211,6 +240,8 @@ export const VERDICT_REPLAYS = {
     asset: 'dollar',
     assetLabel: 'the broad dollar',
     verdictLabel: 'dollar verdict',
+    // An index moves; it does not return anything to a holder.
+    measureLabel: 'move',
     order: [{ key: 'Firm dollar', label: 'Firm dollar' }, { key: 'Rangebound dollar', label: 'Rangebound dollar' }, { key: 'Soft dollar', label: 'Soft dollar' }],
     verdictAt: (legs, closesByAsset, date) => buildFxVerdict({
       usdStrength: legs.usdStrength,
@@ -234,6 +265,13 @@ export function calculateVerdictRecord({ key, samples, closes }) {
     date: sample.date,
     label: sample.call,
     returns: Object.fromEntries(HORIZON_DAYS.map((days) => [days, forwardReturn(closes, sample.date, days)])),
+  }));
+  // The same calls followed by the deepest fall inside each window: a call
+  // can mis-rank returns and still rank risk, which is a different claim.
+  const fallObservations = samples.map((sample) => ({
+    date: sample.date,
+    label: sample.call,
+    returns: Object.fromEntries(HORIZON_DAYS.map((days) => [days, forwardWorstFall(closes, sample.date, days)])),
   }));
   const minimum = 2 * LEG_HISTORY_MINIMUM;
   if (observations.length < minimum) {
@@ -262,6 +300,9 @@ export function calculateVerdictRecord({ key, samples, closes }) {
     stepDays: STEP_DAYS,
   });
 
+  const fallRecord = evaluateTrackRecord({ observations: fallObservations, order: replay.order, horizons: HORIZON_DAYS.map((days) => ({ days })), stepDays: STEP_DAYS });
+  const falls = fallRecord.status === 'calculated' ? { ...fallRecord, readHorizonDays: readHorizonFor(fallRecord, replay.order) } : fallRecord;
+
   const counts = Object.fromEntries(replay.order.map((state) => [state.key, samples.filter((sample) => sample.call === state.key).length]));
   const result = {
     version,
@@ -276,12 +317,14 @@ export function calculateVerdictRecord({ key, samples, closes }) {
     current: { call: samples.at(-1).call, score: samples.at(-1).score, date: samples.at(-1).date },
     omitted: replay.omitted,
     record: { ...record, readHorizonDays: readDays },
+    falls,
     legs,
     legNote: 'Each leg’s score is placed in the top, middle or bottom third of its own earlier readings, after a year of them, and tested in the order the verdict assumes - top third first. The legs share inputs (the dollar runs through both the liquidity and the dollar models), so their verdicts are not independent of one another.',
   };
   return {
     ...result,
-    read: `${describeVerdictRecord(result, replay)}${describeComponents(legs, readDays, { unit: 'readings' })}`,
+    summary: summarizeForBanner(result, replay),
+    read: `${describeVerdictRecord(result, replay)}${describeFalls(result, replay)}${describeComponents(legs, readDays, { unit: 'readings' })}`,
     methodology: `Every ${STEP_DAYS} days from ${result.from}, each macro series is cut off at what had been published by that date (its observation date plus its usual publication lag), trimmed to its trailing six years, and the page’s own model functions are run on what is left; their outputs go through the same verdict builder, and the call is followed forward ${HORIZON_DAYS.join(', ')} days by ${replay.assetLabel}’s return.${replay.omitted.length ? ` ${replay.omitted.join(' and ')} have no long history and are left out, as the builder does live when those feeds fail.` : ''}`,
     limits: 'Descriptive, not predictive. The series are today’s vintage, so revised figures are read as revised. A verdict stays in one call for months at a time, so its readings come in a few dozen runs however many there are, and the effective sample counts overlapping windows once.',
   };
@@ -322,6 +365,64 @@ function describeVerdictRecord(result, replay) {
 }
 
 const yieldToEventLoop = () => new Promise((resolve) => { setImmediate(resolve); });
+
+const BANNER_PHRASES = {
+  held: 'the calls ranked as the verdict assumes, before and after the cutoff',
+  'held-recent': 'the calls ranked as the verdict assumes only after the cutoff',
+  faded: 'the calls ranked as assumed before the cutoff and only loosely since',
+  reversed: 'the calls ran against the verdict’s order after the cutoff',
+  'no-order': 'the calls showed no reliable order',
+  untested: 'too few readings after the cutoff to judge',
+  thin: 'too few readings to judge',
+  unavailable: 'no record',
+};
+
+/**
+ * One line for the verdict banner: how the call's own replay has done on
+ * returns and on worst falls, in the scorecard's terms. A call shown without
+ * its record reads as a forecast; this keeps the evidence beside it.
+ */
+export function summarizeForBanner(result, replay) {
+  const returns = scoreTrackRecord(result.record);
+  const falls = scoreTrackRecord(result.falls);
+  const pick = (score) => ({ verdict: score.verdict, verdictLabel: score.verdictLabel, days: score.horizonDays ?? null, developmentOrdering: score.developmentOrdering ?? null, heldOutOrdering: score.heldOutOrdering ?? null });
+  const subject = replay.assetLabel;
+  // When the calls ran against their order on returns, the banner says how to
+  // read them instead: as a risk reading if they still ranked the falls, as a
+  // description of conditions if they did not.
+  const ranksRisk = ['held', 'held-recent'].includes(falls.verdict);
+  const caution = returns.verdict !== 'reversed' ? null
+    : ranksRisk ? 'It has ranked the falls that followed, not the returns: read it as a reading of risk, not a forecast.'
+      : 'Read it as a description of conditions, not a forecast.';
+  return {
+    returns: pick(returns),
+    falls: pick(falls),
+    caution,
+    holdoutFrom: result.record.holdoutFrom,
+    text: `Replayed every two weeks since ${result.from}${replay.omitted.length ? ` (without ${replay.omitted.join(' and ').toLowerCase()})` : ''}: on ${subject}’s ${returns.horizonDays ?? READ_DAYS}-day ${replay.measureLabel ?? 'return'}, ${BANNER_PHRASES[returns.verdict]}; on its worst ${falls.horizonDays ?? READ_DAYS}-day fall, ${BANNER_PHRASES[falls.verdict]}. The cutoff is ${result.record.holdoutFrom}.`,
+  };
+}
+
+/** The worst-fall record in one sentence, placed after the return record's. */
+function describeFalls(result, replay) {
+  const falls = result.falls;
+  if (falls?.status !== 'calculated') return '';
+  const days = falls.readHorizonDays;
+  const horizon = falls.horizons.find((entry) => entry.days === days);
+  const best = replay.order[0].key;
+  const worst = replay.order.at(-1).key;
+  const cell = (stateKey, block) => horizon.states.find((state) => state.key === stateKey)?.[block].stats.median;
+  const block = [best, worst].every((stateKey) => Number.isFinite(cell(stateKey, 'heldOut'))) ? 'heldOut' : 'development';
+  const shallow = cell(best, block);
+  const deep = cell(worst, block);
+  if (!Number.isFinite(shallow) || !Number.isFinite(deep)) return '';
+  const ordering = horizon[block].ordering;
+  const when = block === 'heldOut' ? 'in the held-out block' : `before ${falls.holdoutFrom}`;
+  const verdict = ordering >= 0.6 ? `so ${best} dates were followed by the shallower falls, as the call implies`
+    : ordering <= -0.2 ? `so ${best} dates were followed by the deeper falls, against what the call implies`
+      : 'with no consistent order between the calls';
+  return ` Measured by the worst fall within ${days} days ${when}, ${best} dates saw a median ${signed(shallow)} and ${worst} dates ${signed(deep)}, ${verdict}.`;
+}
 
 /**
  * Replay every defined verdict over the dates its inputs allow.

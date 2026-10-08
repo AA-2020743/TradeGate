@@ -602,7 +602,27 @@ function DriverChange({ driver }) {
  * Dissent is given the same visual weight as support - a panel that lists only
  * agreeing evidence is an advertisement, not research.
  */
-function VerdictBanner({ verdict }) {
+/**
+ * The verdict's own replayed record, in one line at the foot of its banner,
+ * so the call is never read without the evidence on how such calls have done.
+ */
+function VerdictRecordLine({ section }) {
+  const { data: payload } = useLazyResource('/api/analytics/verdict-records');
+  const summary = payload?.records?.[section]?.status === 'calculated' ? payload.records[section].summary : null;
+  if (!summary) return null;
+  return <p className="verdict-reason verdict-record-line">
+    <b>Track record:</b> {summary.text}{summary.caution ? <> <b className="verdict-record-caution">{summary.caution}</b></> : null}
+  </p>;
+}
+
+/**
+ * A reading's colour follows its own lean on the 0-100 axis, not the column it
+ * sits in: under a Guarded call the readings carrying it are low, and painting
+ * them green because they support the call read backwards.
+ */
+const leanTone = (score) => (score > 50 ? 'positive' : score < 50 ? 'negative' : 'neutral');
+
+function VerdictBanner({ verdict, recordSection = null }) {
   if (!verdict) return null;
   if (verdict.status === 'unavailable') {
     return <section className="verdict-banner verdict-unavailable panel">
@@ -642,14 +662,14 @@ function VerdictBanner({ verdict }) {
         <h4>What carries it</h4>
         {verdict.supporting.length ? verdict.supporting.slice(0, 4).map((item) => <div className="verdict-row" key={item.key}>
           <span><b>{item.name}</b>{item.detail ? <small>{item.detail}</small> : null}</span>
-          <strong className="positive">{item.score}</strong>
+          <strong className={leanTone(item.score)}>{item.score}</strong>
         </div>) : <p className="verdict-none">Nothing is pushing in this direction.</p>}
       </div>
       <div>
         <h4>What argues against it</h4>
         {verdict.opposing.length ? verdict.opposing.slice(0, 4).map((item) => <div className="verdict-row" key={item.key}>
           <span><b>{item.name}</b>{item.detail ? <small>{item.detail}</small> : null}</span>
-          <strong className="negative">{item.score}</strong>
+          <strong className={leanTone(item.score)}>{item.score}</strong>
         </div>) : <p className="verdict-none">Nothing argues the other way.</p>}
       </div>
     </div>
@@ -661,6 +681,7 @@ function VerdictBanner({ verdict }) {
     {verdict.missing?.length ? <p className="verdict-reason verdict-missing-line">
       <b>Not counted:</b> {verdict.missing.map((entry) => entry.name).join(', ')}.
     </p> : null}
+    {recordSection ? <VerdictRecordLine section={recordSection} /> : null}
   </section>;
 }
 
@@ -1866,6 +1887,7 @@ function VerdictRecordPanel({ section, liveCall = null }) {
       <p className="dca-read">{model.read}</p>
       {model.omitted?.length ? <p className="treasury-note">Replayed without {model.omitted.join(' and ').toLowerCase()}, which have no long history; the live verdict reads them.</p> : null}
       <TrackRecordTable record={model.record} current={liveCall ?? model.current.call} title={section === 'fx' ? 'BROAD DOLLAR MOVE THAT FOLLOWED, BY REPLAYED CALL' : `${asset.toUpperCase()} RETURN THAT FOLLOWED, BY REPLAYED CALL`} stateLabel="Call" assumption="the verdict assumes" unit="dates" />
+      <DrawdownRecordTable record={model.falls?.status === 'calculated' ? { ...model.falls, methodology: '', limits: '' } : model.falls} current={liveCall ?? model.current.call} title={`WORST ${section === 'fx' ? 'BROAD DOLLAR' : asset.toUpperCase()} FALL THAT FOLLOWED, BY REPLAYED CALL`} stateLabel="Call" subject={section === 'fx' ? 'the broad dollar' : asset} ordering={`${model.record.horizons[0].states[0].label} dates were followed by the shallowest falls and ${model.record.horizons[0].states.at(-1).label} dates by the deepest`} unit="dates" />
       <ComponentRecordsTable components={model.legs} spreadLabel="Top minus bottom third, held out" />
       <p className="model-footnote">{model.legNote} {model.methodology} {model.limits}</p>
     </> : <div className="equity-empty">{model?.reason ?? payload?.reason ?? (loadStatus === 'loading' ? 'The first replay after a restart takes several seconds; it is cached for a day.' : `The verdict record could not be loaded: ${error ?? 'no record for this section'}`)}</div>}
@@ -2442,7 +2464,7 @@ function MetalsDashboard({ data }) {
       <div><p className="eyebrow">PRECIOUS METALS RESEARCH</p><h1>Where monetary metal meets market structure.</h1><p className="intro">Technical, macro, physical, and positioning signals for metals and their equity proxies.</p></div>
       <div className="metals-pulse">{workspace?.status !== 'calculated' && <PreviewBadge />}<div><b>{workspace?.calculatedCount ? `${workspace.calculatedCount} of ${workspace.universeSize} series calculated` : 'Awaiting provider histories'}</b><small>technical-v1 · COMEX futures · COT</small></div></div>
     </section>
-    <VerdictBanner verdict={workspace?.verdict} />
+    <VerdictBanner verdict={workspace?.verdict} recordSection="metals" />
     <DataDisclosure data={data} message={workspace?.status === 'calculated' ? 'Spot metals prices come from front COMEX/CME futures via Yahoo Finance; scores, momentum, volatility, and RSI are technical-v1 calculations. ETF flows, physical-market indicators, and producer costs remain previews until dedicated feeds are connected.' : 'The metals workspace publishes once futures and miner histories are available.'} />
 
     <section className={`metal-asset-strip ${assets.length ? '' : 'preview-section'}`}>{assets.map((asset) => <button className={`metal-asset ${selectedMetal?.symbol === asset.symbol ? 'selected' : ''}`} onClick={() => setSelectedSymbol(asset.symbol)} key={asset.symbol}><span className="metal-symbol" style={{ '--metal-color': metalColors[asset.symbol] }}>{asset.symbol}</span><span><b>{asset.name}</b><small>{asset.regime}</small></span><span className="metal-price"><b>{formatPrice(asset.price)}</b><small className={(asset.change20d ?? 0) >= 0 ? 'positive' : 'negative'}>{Number.isFinite(asset.change20d) ? `${asset.change20d > 0 ? '+' : ''}${asset.change20d}%` : '—'} 20s</small></span><span className="metal-spark"><Sparkline color={metalColors[asset.symbol]} values={asset.sparkline ?? []} /></span></button>)}{!assets.length && <div className="equity-empty">Futures histories are required before metals can publish.</div>}</section>
@@ -3530,7 +3552,7 @@ function ForexDashboard({ data }) {
     <section className="forex-grid">
       <article className={`fx-outlook-panel panel ${calculatedCurrencies.length ? '' : 'preview-section'}`}><div className="panel-title"><div><StatusKicker label="20-SESSION MOVE VS THE DOLLAR" published={Boolean(calculatedCurrencies.length)} /><h3>Currency momentum versus the dollar</h3></div><span className="data-pill">{calculatedCurrencies.length ? `${calculatedCurrencies.length} of ${currencyMomentum.length} calculated` : 'Awaiting rates'}</span></div><div className="fx-outlook-head"><span>Currency</span><span>20-session move</span><span>Score</span><span>Dominant driver</span></div>{currencyMomentum.map((row) => <div className="fx-outlook-row" key={row.currency}><b>{row.currency}</b><span className={row.bias === 'USD weak' ? 'positive' : row.bias === 'USD strong' ? 'negative' : 'neutral'}>{row.bias}</span><strong>{row.score ?? '—'}</strong><small>{Number.isFinite(row.change) ? `${row.change > 0 ? '+' : ''}${row.change.toFixed(2)}% 20-session` : row.driver}</small></div>)}{fxWorkspace?.usdBreadth && <div className="fx-outlook-row" key="usd-breadth"><b>USD</b><span className={fxWorkspace.usdBreadth.pct20d >= 70 ? 'negative' : fxWorkspace.usdBreadth.pct20d <= 30 ? 'positive' : 'neutral'}>{fxWorkspace.usdBreadth.read}</span><strong>{fxWorkspace.usdBreadth.pct20d ?? '—'}</strong><small>{`stronger vs ${fxWorkspace.usdBreadth.strong20d}/${fxWorkspace.usdBreadth.total} crosses 20D · ${fxWorkspace.usdBreadth.strong60d}/60D window`}</small></div>}<p className="model-footnote">A description of the last 20 sessions, not a forecast: the record beside this panel tests whether such moves have carried on. Six currencies come from the calculated FX workspace (Yahoo crosses oriented for currency strength, technical-v1 scores, CFTC COT percentiles); CNH derives from stored FRED H.10 rates. Per-USD quotes are inverted so positive change means currency strength. The USD breadth row counts crosses where the dollar gained over the trailing 20 and 60 sessions.</p></article>
       <FxMomentumRecordPanel />
-      <VerdictBanner verdict={fxWorkspace?.verdict} />
+      <VerdictBanner verdict={fxWorkspace?.verdict} recordSection="fx" />
       <article className={`fx-positioning-panel panel ${cotPublished ? '' : 'preview-section'}`}><div className="panel-title"><div><p className="section-kicker">FX POSITIONING · {cotPublished ? 'CALCULATED' : 'UNAVAILABLE'}</p><h3>CFTC net speculative exposure</h3></div><span className="data-pill">3Y percentile</span></div>{fxWorkspace?.usdCot && <div className="fx-position-row" key="usd"><div><b>US Dollar Index</b><small>{fxWorkspace.usdCot.stance}{Number.isFinite(fxWorkspace.usdCot.weeklyChange) ? ` · weekly ${fxWorkspace.usdCot.weeklyChange >= 0 ? '+' : ''}${fxWorkspace.usdCot.weeklyChange.toLocaleString()}` : ''} · {fxWorkspace.usdCot.asOf} · ICE</small></div><i><b style={{ width: `${Math.min(fxWorkspace.usdCot.percentile ?? 0, 100)}%` }}></b></i><strong>{Number.isFinite(fxWorkspace.usdCot.netNoncomm) ? `${Math.round(fxWorkspace.usdCot.netNoncomm / 1000)}k` : '—'}</strong><span>{fxWorkspace.usdCot.crowd}</span></div>}{(fxWorkspace?.pairs ?? []).filter((pair) => pair.cot).map((pair) => <div className="fx-position-row" key={pair.key}><div><b>{pair.name}</b><small>{pair.cot.stance}{Number.isFinite(pair.cot.weeklyChange) ? ` · weekly ${pair.cot.weeklyChange >= 0 ? '+' : ''}${pair.cot.weeklyChange.toLocaleString()}` : ''} · {pair.cot.asOf}</small></div><i><b style={{ width: `${Math.min(pair.cot.percentile ?? 0, 100)}%` }}></b></i><strong>{Number.isFinite(pair.cot.netNoncomm) ? `${Math.round(pair.cot.netNoncomm / 1000)}k` : '—'}</strong><span>{pair.cot.crowd}</span></div>)}{!(fxWorkspace?.pairs ?? []).some((pair) => pair.cot) && !fxWorkspace?.usdCot && <div className="calculation-empty">{cotReason}</div>}<p className="model-footnote">{fxWorkspace?.methodology ?? 'Awaiting FX workspace.'}</p></article>
       <article className={`fx-commodity-panel panel ${(fxWorkspace?.links ?? []).length ? '' : 'preview-section'}`}><div className="panel-title"><div><StatusKicker label="FX COMMODITY LINKS" published={Boolean((fxWorkspace?.links ?? []).length)} /><h3>60-day change correlations</h3></div><span className="data-pill">{fxWorkspace?.riskRegime ?? '—'}</span></div><div className="fx-commodity-head"><span>FX</span><span>Linked market</span><span>r</span><span>State</span><span>Moves first</span><span>Momentum</span></div>{(fxWorkspace?.links ?? []).map((link) => <div className="fx-commodity-row" key={`${link.currency}-${link.market}`}><b>{link.currency}</b><span>{link.market}</span><strong>{Number.isFinite(link.correlation60d) ? `${link.correlation60d > 0 ? '+' : ''}${link.correlation60d}` : '—'}</strong><i className={link.state === 'Aligned' ? 'positive' : link.state === 'Inverse' ? 'caution' : 'neutral'}>{link.state}</i><em className={link.leadLag?.leader ? 'lead-flag' : 'lead-flag lead-flat'} title={link.leadLag ? `Peak correlation ${link.leadLag.corrAtBest.toFixed(2)} at a lag of ${link.leadLag.bestLagBars} sessions versus ${Number.isFinite(link.leadLag.synchronousCorr) ? link.leadLag.synchronousCorr.toFixed(2) : '—'} synchronous` : 'Needs at least 40 aligned sessions'}>{link.leadLag ? link.leadLag.read : 'Pending'}</em><small>{Number.isFinite(link.currencyMomentum20d) && Number.isFinite(link.marketMomentum20d) ? `${link.currencyMomentum20d > 0 ? '+' : ''}${link.currencyMomentum20d}% / ${link.marketMomentum20d > 0 ? '+' : ''}${link.marketMomentum20d}%` : '—'}</small></div>)}{!(fxWorkspace?.links ?? []).length && <div className="calculation-empty">Currency and commodity histories are required before links can publish.</div>}</article>
       <article className={`fx-rotation-panel panel ${(fxWorkspace?.rotationSignals ?? []).some((signal) => signal.status !== 'Unavailable') ? '' : 'preview-section'}`}><StatusKicker label="FX ROTATION SIGNALS" published={Boolean((fxWorkspace?.rotationSignals ?? []).length)} /><h3>20-session momentum handoffs {fxWorkspace?.riskRegime ? `· ${fxWorkspace.riskRegime}` : ''}</h3>{(fxWorkspace?.rotationSignals ?? []).map((signal) => <div className="fx-rotation-row" key={signal.signal}><div><b>{signal.signal}</b><small>{signal.detail}{Number.isFinite(signal.left) && Number.isFinite(signal.right) ? ` · ${signal.left > 0 ? '+' : ''}${signal.left}% vs ${signal.right > 0 ? '+' : ''}${signal.right}%` : ''}</small></div><span className={signal.status === 'Confirmed' ? fxWorkspace?.riskRegime === 'Risk-off' ? 'riskoff' : 'riskon' : signal.status === 'Diverged' ? 'neutral' : 'neutral'}>{signal.status}</span></div>)}<p>Confirmation compares 20-session momenta by sign; divergences flag potential rotations in risk appetite. Lead/lag timing for each commodity link is published in the panel above, scanned over daily closes; intraday handoffs still require intraday histories.</p></article>
@@ -3653,7 +3675,7 @@ function CryptoDashboard({ data }) {
     </section>
     <DataDisclosure data={data} message="Trend, MVRV-Z, short-term-holder cost basis, funding, open interest, stablecoins, and the DXY/BTC relationship are versioned calculations. Spot ETF flows remain unavailable without a licensed source." />
 
-    <VerdictBanner verdict={btc?.verdict} />
+    <VerdictBanner verdict={btc?.verdict} recordSection="crypto" />
 
     <section className="macro-section-heading cycle-phase-heading"><div><p className="section-kicker">CYCLE PHASE · {cyclePhase?.status?.toUpperCase() ?? 'UNAVAILABLE'}</p><h2>{cyclePhase?.leading ? cyclePhase.leading.name : cyclePhase?.status && cyclePhase.status !== 'unavailable' ? 'No phase is clearly ahead' : 'Awaiting cycle legs'}</h2></div>{cyclePhase?.leading ? <span className="data-pill">{cyclePhase.leading.score}/100{Number.isFinite(cyclePhase.leading.margin) ? ` · ${cyclePhase.leading.margin} clear` : ''}</span> : null}</section>
     <section className={`screener-panel panel ${cyclePhase?.status && cyclePhase.status !== 'unavailable' ? '' : 'preview-section'}`}>
