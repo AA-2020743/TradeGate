@@ -1136,6 +1136,10 @@ function SignalRecordsPanel({ records }) {
       </div>
       {record?.read ? <p className="dca-read">{record.read}</p> : null}
       <TrackRecordTable key={active?.key ?? 'pooled'} record={record} current={active?.regime ?? null} title={active ? `${active.name.toUpperCase()} \u00b7 NOW ${String(active.regime ?? '').toUpperCase()}${Number.isFinite(active.score) ? ` (${active.score})` : ''}` : 'POOLED ACROSS ASSETS'} stateLabel="Regime" assumption="the score assumes" />
+      {!active && records?.pooled?.components ? <>
+        <ComponentRecordsTable components={records.pooled.components} spreadLabel="High minus low, held out" />
+        {records.pooled.componentNote ? <p className="model-footnote">{records.pooled.componentNote}</p> : null}
+      </> : null}
     </> : <div className="equity-empty">{records?.reason ?? 'Decade-long daily histories are required.'}</div>}
   </article>;
 }
@@ -1202,6 +1206,24 @@ const SCORECARD_VERDICT_LABELS = {
 const signedScore = (value) => (Number.isFinite(value) ? `${value > 0 ? '+' : ''}${value}` : '\u2014');
 
 const SCORECARD_TONE = { held: 'positive', 'held-recent': 'positive', faded: 'neutral', reversed: 'negative', 'no-order': 'neutral', untested: '', thin: '', unavailable: '' };
+
+/**
+ * Each input of a composite score ranked on its own, at the weight it carries:
+ * which part of the score, if any, its record comes from.
+ */
+function ComponentRecordsTable({ components, spreadLabel }) {
+  if (!(components ?? []).some((component) => component.summary)) return null;
+  return <div className="scorecard-table component-records" role="table" aria-label="Each input of the score ranked on its own">
+    <div className="scorecard-row scorecard-head" role="row"><span role="columnheader">Input, ranked alone</span><span role="columnheader">Weight</span><span role="columnheader">Before</span><span role="columnheader">Held out</span><span role="columnheader">{spreadLabel}</span></div>
+    {components.map((component) => <div className="scorecard-row" role="row" key={component.key}>
+      <span role="cell"><b>{component.label}</b><small className={SCORECARD_TONE[component.summary?.verdict] ?? ''}>{component.summary ? SCORECARD_VERDICT_LABELS[component.summary.verdict] : component.record?.reason ?? 'not replayed'}</small></span>
+      <span role="cell">{Number.isFinite(component.weight) ? `${component.weight}%` : '\u2014'}</span>
+      <span role="cell">{signedScore(component.summary?.developmentOrdering)}</span>
+      <span role="cell">{signedScore(component.summary?.heldOutOrdering)}</span>
+      <span role="cell">{Number.isFinite(component.summary?.heldOutSpread) ? `${component.summary.heldOutSpread > 0 ? '+' : ''}${component.summary.heldOutSpread} pts over ${component.summary.days}d` : '\u2014'}</span>
+    </div>)}
+  </div>;
+}
 
 function ScorecardPanel() {
   const { status: loadStatus, data: card, error } = useLazyResource('/api/analytics/scorecard');
@@ -2851,16 +2873,7 @@ function ScreenerTrackRecordPanel() {
     {published ? <>
       <p className="dca-read">{record.read}</p>
       <TrackRecordTable record={record} title="BY SCORE FIFTH, AGAINST SPY" stateLabel="Fifth" assumption="the score assumes" unit="months" />
-      {(record.components ?? []).some((component) => component.summary) ? <div className="scorecard-table screener-components" role="table" aria-label="Each input of the score ranked on its own">
-        <div className="scorecard-row scorecard-head" role="row"><span role="columnheader">Input, ranked alone</span><span role="columnheader">Weight</span><span role="columnheader">Before</span><span role="columnheader">Held out</span><span role="columnheader">Top minus bottom, held out</span></div>
-        {record.components.map((component) => <div className="scorecard-row" role="row" key={component.key}>
-          <span role="cell"><b>{component.label}</b><small className={SCORECARD_TONE[component.summary?.verdict] ?? ''}>{component.summary ? SCORECARD_VERDICT_LABELS[component.summary.verdict] : component.record?.reason ?? 'not replayed'}</small></span>
-          <span role="cell">{component.weight}%</span>
-          <span role="cell">{signedScore(component.summary?.developmentOrdering)}</span>
-          <span role="cell">{signedScore(component.summary?.heldOutOrdering)}</span>
-          <span role="cell">{Number.isFinite(component.summary?.heldOutSpread) ? `${component.summary.heldOutSpread > 0 ? '+' : ''}${component.summary.heldOutSpread} pts over ${component.summary.days}d` : '\u2014'}</span>
-        </div>)}
-      </div> : null}
+      <ComponentRecordsTable components={record.components} spreadLabel="Top minus bottom, held out" />
       <p className="model-footnote">{record.methodology} {record.limits}</p>
     </> : <div className="equity-empty">{record?.reason ?? (loadStatus === 'loading' ? 'The first replay after a restart takes a few seconds; it is cached for a day.' : `The track record could not be loaded: ${error}`)}</div>}
   </article>;

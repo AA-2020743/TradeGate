@@ -25,7 +25,7 @@
 
 import { calculateScreenerScores } from './analytics.js';
 import { evaluateTrackRecord } from './trackRecord.js';
-import { verdictFor } from './scorecard.js';
+import { describeComponents, verdictFor } from './scorecard.js';
 
 export const SCREENER_TRACK_RECORD_VERSION = 'screener-track-record-v1';
 export const SCREENER_FIFTHS = [
@@ -160,7 +160,7 @@ export function calculateScreenerTrackRecord({ histories, benchmark, stepSession
     replayDates: dates.length,
     readHorizonDays: horizons.at(-1).days,
     components,
-    read: `${describeScreenerRecord(record)}${describeComponents(components, horizons.at(-1).days)}`,
+    read: `${describeScreenerRecord(record)}${describeComponents(components, horizons.at(-1).days, { unit: 'months' })}`,
     limits: 'The universe is today’s index membership, so stocks that left the index - often after falling - are missing from every past date: every fifth’s return is flattered, and the spread between the top and bottom fifths is the cleaner reading. Returns are against SPY, before costs, and equal-weighted within each fifth. A month apart, the 90-day windows overlap, which the effective sample size accounts for.',
     methodology: `${record.methodology} Every member is scored with the screener’s own formula on closes available that day (20-session momentum 45%, distance from the 200-day average 35%, calm 20%, each a cross-sectional rank), split into fifths, and each fifth’s equal-weighted return over the horizon is measured in excess of SPY over the same sessions. One observation per fifth per date.`,
   };
@@ -168,27 +168,6 @@ export function calculateScreenerTrackRecord({ histories, benchmark, stepSession
 
 function signed(value) {
   return `${value > 0 ? '+' : ''}${value}%`;
-}
-
-const COMPONENT_PHRASES = {
-  held: 'ranked as assumed both before and since the cutoff',
-  'held-recent': 'ranked as assumed only since the cutoff',
-  faded: 'ranked as assumed before the cutoff and only loosely since',
-  reversed: 'ran against its assumed order since the cutoff',
-  'no-order': 'showed no reliable order',
-  untested: 'has too few independent months after the cutoff',
-  thin: 'has too few independent months to rank',
-  unavailable: 'could not be replayed',
-};
-
-/** Which of the score's inputs carries it: each input's own verdict at the read horizon. */
-export function describeComponents(components, days) {
-  const phrases = components.map((component) => {
-    const horizon = component.record?.horizons?.find((entry) => entry.days === days);
-    const verdict = component.record?.status === 'calculated' && horizon ? verdictFor(horizon.development.ordering, horizon.heldOut.ordering) : 'unavailable';
-    return `${component.label.charAt(0).toLowerCase()}${component.label.slice(1)} ${COMPONENT_PHRASES[verdict]}`;
-  });
-  return phrases.length ? ` Ranked on its own over ${days} days, ${phrases.slice(0, -1).join('; ')}; and ${phrases.at(-1)}.` : '';
 }
 
 function describeScreenerRecord(record) {

@@ -47,6 +47,37 @@ export function verdictFor(development, heldOut) {
   return 'no-order';
 }
 
+const COMPONENT_PHRASES = {
+  held: () => 'ranked as assumed both before and since the cutoff',
+  'held-recent': () => 'ranked as assumed only since the cutoff',
+  faded: () => 'ranked as assumed before the cutoff and only loosely since',
+  reversed: () => 'ran against its assumed order since the cutoff',
+  'no-order': () => 'showed no reliable order',
+  untested: (unit) => `has too few independent ${unit} after the cutoff`,
+  thin: (unit) => `has too few independent ${unit} to rank`,
+  unavailable: () => 'could not be replayed',
+};
+
+/**
+ * Which of a score's inputs carries it: each input's own verdict at the read
+ * horizon, as a sentence to follow the score's own read.
+ *
+ * @param {Array<{ label: string, record?: object }>} components
+ * @param {number} days
+ * @param {{ unit?: string }} [options]  What one observation is, for the thin cases.
+ */
+export function describeComponents(components, days, { unit = 'observations' } = {}) {
+  const phrases = components.map((component) => {
+    const horizon = component.record?.horizons?.find((entry) => entry.days === days);
+    const verdict = component.record?.status === 'calculated' && horizon ? verdictFor(horizon.development.ordering, horizon.heldOut.ordering) : 'unavailable';
+    // Mid-sentence, "Momentum" reads "momentum"; an acronym such as RSI stays as it is.
+    const label = /^[A-Z][a-z]/.test(component.label) ? `${component.label.charAt(0).toLowerCase()}${component.label.slice(1)}` : component.label;
+    return `${label} ${COMPONENT_PHRASES[verdict](unit)}`;
+  });
+  if (!phrases.length) return '';
+  return phrases.length > 1 ? ` Ranked on its own over ${days} days, ${phrases.slice(0, -1).join('; ')}; and ${phrases.at(-1)}.` : ` Ranked on its own over ${days} days, ${phrases[0]}.`;
+}
+
 /**
  * @param {object} record  An evaluateTrackRecord result (status, holdoutFrom, horizons).
  * @param {{ preferredDays?: number }} [options]

@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { calculateTechnicalSnapshot } from './analytics.js';
-import { describeTechnicalRecord, technicalTrackRecord } from './technicalTrackRecord.js';
+import { TECHNICAL_COMPONENTS, componentBand, describeTechnicalComponents, ownHistoryBands, describeTechnicalRecord, pooledComponentRecords, technicalTrackRecord } from './technicalTrackRecord.js';
 
 function series(count, valueAt) {
   const out = [];
@@ -62,4 +62,80 @@ test('a short history refuses', () => {
   const record = technicalTrackRecord({ points: cycle.slice(0, 300) });
   assert.equal(record.status, 'unavailable');
   assert.match(record.reason, /500 daily closes/);
+});
+
+test('components are banded with the regime\'s own cutoffs', () => {
+  assert.equal(componentBand(65), 'high');
+  assert.equal(componentBand(64), 'middle');
+  assert.equal(componentBand(36), 'middle');
+  assert.equal(componentBand(35), 'low');
+  assert.equal(componentBand(null), null);
+  assert.equal(componentBand(Number.NaN), null);
+});
+
+test('the component list matches the score\'s own weights', () => {
+  // technical-v1 blends trend 40%, momentum 35%, RSI 20% and volatility 5%;
+  // a component left out would leave part of the score unexplained.
+  const snapshot = calculateTechnicalSnapshot(cycle.slice(0, 500).map((point) => ({ timestamp: `${point.date}T00:00:00.000Z`, value: point.value })));
+  for (const component of TECHNICAL_COMPONENTS) assert.ok(Number.isFinite(snapshot.components[component.key]), component.key);
+  assert.equal(TECHNICAL_COMPONENTS.reduce((total, component) => total + component.weight, 0), 100);
+});
+
+test('each component is replayed on the regime\'s weeks, the own-history ones after a year of them', () => {
+  const record = technicalTrackRecord({ points: cycle });
+  for (const component of TECHNICAL_COMPONENTS) {
+    const list = record.componentObservations[component.key];
+    const expected = component.banding === 'fixed' ? record.observations : record.observations.slice(52);
+    assert.deepEqual(list.map((observation) => observation.date), expected.map((observation) => observation.date), component.key);
+    assert.ok(list.every((observation) => ['high', 'middle', 'low'].includes(observation.label)), component.key);
+    // Same weeks, same forward returns: only the label differs.
+    assert.deepEqual(list.map((observation) => observation.returns), expected.map((observation) => observation.returns), component.key);
+  }
+});
+
+test('own-history bands use only earlier readings', () => {
+  const readings = Array.from({ length: 200 }, (_, index) => 50 + (30 * Math.sin(index / 9)) + (index % 7));
+  const full = ownHistoryBands(readings, 52);
+  const cut = ownHistoryBands(readings.slice(0, 120), 52);
+  assert.deepEqual(full.slice(0, 120), cut);
+  assert.ok(full.slice(0, 52).every((band) => band === null));
+  assert.ok(full.slice(52).every((band) => ['high', 'middle', 'low'].includes(band)));
+});
+
+test('own-history bands split ties evenly rather than pushing them to one end', () => {
+  // A component pinned at 100 for half its history: a new 100 sits mid-pack
+  // among the earlier 100s, so it is not automatically "high".
+  const pinned = [...Array.from({ length: 30 }, () => 100), ...Array.from({ length: 30 }, (_, index) => index)];
+  assert.equal(ownHistoryBands([...pinned, 100], 52).at(-1), 'high');
+  const allPinned = Array.from({ length: 60 }, () => 100);
+  assert.equal(ownHistoryBands([...allPinned, 100], 52).at(-1), 'middle');
+  assert.equal(ownHistoryBands([1, 2, 3, 4, 5, 6], 3).slice(3).join(','), 'high,high,high');
+  assert.equal(ownHistoryBands([6, 5, 4, 3, 2, 1], 3).slice(3).join(','), 'low,low,low');
+});
+
+test('pooled component records summarize each component in the score\'s order', () => {
+  const record = technicalTrackRecord({ points: cycle });
+  const components = pooledComponentRecords(record.componentObservations, { days: 90 });
+  assert.deepEqual(components.map((component) => component.key), TECHNICAL_COMPONENTS.map((component) => component.key));
+  for (const component of components) {
+    assert.equal(component.record.status, 'calculated', component.key);
+    assert.equal(component.summary.days, 90);
+    assert.ok(['held', 'held-recent', 'faded', 'reversed', 'no-order', 'untested', 'thin'].includes(component.summary.verdict), component.summary.verdict);
+  }
+  // On a cyclical series the trend legs lead; trend alignment ranks as the
+  // score assumes before the cutoff.
+  const trend = components.find((component) => component.key === 'trend');
+  assert.ok(trend.summary.developmentOrdering > 0, String(trend.summary.developmentOrdering));
+  const read = describeTechnicalComponents(components, 90);
+  assert.match(read, /^Ranked on its own over 90 days, trend alignment /);
+  assert.match(read, /; RSI /);
+  assert.match(read, /; and volatility quality [^;]+\.$/);
+  assert.doesNotMatch(read, /undefined|NaN|null/);
+});
+
+test('a component with no observations reports itself unavailable, not as a verdict', () => {
+  const components = pooledComponentRecords({}, { days: 90 });
+  assert.equal(components.length, TECHNICAL_COMPONENTS.length);
+  assert.ok(components.every((component) => component.summary === null && component.record.status === 'unavailable'));
+  assert.match(describeTechnicalComponents(components, 90), /could not be replayed\.$/);
 });
