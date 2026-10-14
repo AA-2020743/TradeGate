@@ -307,6 +307,124 @@ export function deriveDarkTheme(css) {
   return blocks.length ? `/* Derived dark-theme overrides (src/darkTheme.js) */\n${blocks.join('\n')}\n` : '';
 }
 
+// --- light theme: the same bar for the light page -------------------------
+//
+// The light rules were written by eye, and a sweep found 141 text colours
+// under 4.5:1 on the light panels - footnotes at 2.5:1, section labels and
+// pills near 3:1. Editing them in place would also move every dark colour
+// derived from them above, so this adds light-only overrides instead: each
+// text colour below the bar, darkened with its hue kept until it reads on
+// the darker light surfaces. Three things keep it from doing harm:
+//
+//   - every override is wrapped in :where(), so it carries exactly the
+//     specificity of the rule it came from and wins only over that rule (by
+//     coming later), never over a more specific rule written on purpose;
+//   - its selector names data-theme, so the dark derivation skips it and the
+//     dark theme is byte-for-byte what it was;
+//   - text inside a surface that is dark on the light page (the sidebar, the
+//     dark callout panels) is excluded, since that text is light on purpose.
+
+// The darker of the light page's raised surfaces - pills and tinted chips.
+export const LIGHT_RAISED_SURFACE = '#eef0ea';
+export const LIGHT_TEXT_CONTRAST = 4.6;
+// Body text muted with opacity 0.55-0.6 fell to 3.6-4.4:1 on the light
+// panels. The floor matches the dark theme's: at 0.8 body text reads at about
+// 8:1, which leaves room for a coloured figure inside a muted row, where the
+// colour and the opacity come from different rules.
+export const LIGHT_MIN_OPACITY = DARK_MIN_OPACITY;
+const LIGHT_SELECTOR = ":where(html:not([data-theme='dark']))";
+
+function lowerUntil(hsl, alpha, target, surface) {
+  let candidate = { ...hsl };
+  for (let step = 0; step < 100 && contrastRatio(over(fromHsl(candidate, alpha), surface), surface) < target; step += 1) {
+    candidate = { ...candidate, l: Math.max(0, candidate.l - 0.01) };
+  }
+  return candidate;
+}
+
+/** A light-theme text colour, darkened with its hue kept until it reads at the bar on `surface`. */
+export function lightTextColor(color, { surface = parseColor(LIGHT_RAISED_SURFACE), target = LIGHT_TEXT_CONTRAST } = {}) {
+  if (contrastRatio(over(color, surface), surface) >= target) return color;
+  return fromHsl(lowerUntil(toHsl(color), color.a ?? 1, target, surface), color.a ?? 1);
+}
+
+function firstColor(value) {
+  const token = value.match(COLOR_TOKEN)?.[0];
+  return token ? parseColor(token) : null;
+}
+
+function isThemeNeutral(selector) {
+  return !selector.includes('data-theme') && !SKIPPED_SELECTORS.has(selector) && !selector.startsWith('html') && !selector.startsWith(':root');
+}
+
+/** Selectors painted dark on the light page: their text is light on purpose. */
+export function lightPageDarkSurfaces(rules) {
+  const surfaces = new Set();
+  for (const rule of rules) {
+    const background = rule.declarations.find((declaration) => declaration.property === 'background' || declaration.property === 'background-color');
+    const color = background ? firstColor(background.value) : null;
+    if (!color || (color.a ?? 1) < 0.6 || luminance(color) >= 0.2) continue;
+    // A translucent fixed layer is a backdrop under a dialog, not a surface
+    // text sits on: the dialog above it is a light panel of its own.
+    const fixed = rule.declarations.some((declaration) => declaration.property === 'position' && declaration.value === 'fixed');
+    if (rule.declarations.some((declaration) => declaration.property === 'backdrop-filter') || (fixed && (color.a ?? 1) < 1)) continue;
+    for (const selector of rule.selectors) if (isThemeNeutral(selector) && !selector.includes('::')) surfaces.add(selector);
+  }
+  return [...surfaces];
+}
+
+/** Light-only overrides lifting every text colour below the bar, as CSS. */
+export function deriveLightContrast(css) {
+  const rules = parseRules(css);
+  const darkSurfaces = lightPageDarkSurfaces(rules);
+  // One :not per surface rather than a list: a comma inside the selector
+  // would be split by any comma-splitting reader of this stylesheet, the dark
+  // derivation's included. :where() keeps each one at zero specificity.
+  const guard = darkSurfaces.map((surface) => `:not(:where(${surface}) *)`).join('');
+  const byContext = new Map();
+  for (const rule of rules) {
+    const background = rule.declarations.find((declaration) => declaration.property === 'background' || declaration.property === 'background-color');
+    const own = background ? firstColor(background.value) : null;
+    // Text on its own dark background is light on purpose.
+    if (own && (own.a ?? 1) >= 0.6 && luminance(own) < 0.2) continue;
+    // Read against the rule's own light background when it has one, else
+    // against the darker of the page's raised surfaces.
+    const surface = own && (own.a ?? 1) >= 0.6 && luminance(own) < luminance(parseColor(LIGHT_RAISED_SURFACE)) ? own : parseColor(LIGHT_RAISED_SURFACE);
+    // Opacity between the decorative (0.3 or less) and the floor is raised to
+    // the floor, as the dark derivation does; a colour in the same rule is
+    // judged at the opacity it will actually be drawn with.
+    const opacityDeclaration = rule.declarations.find((declaration) => declaration.property === 'opacity');
+    const opacity = opacityDeclaration ? Number(opacityDeclaration.value) : 1;
+    const floored = Number.isFinite(opacity) && opacity > 0.3 && opacity < LIGHT_MIN_OPACITY;
+    const drawnAt = Number.isFinite(opacity) ? Math.max(opacity, floored ? LIGHT_MIN_OPACITY : opacity) : 1;
+    const declarations = rule.declarations.flatMap((declaration) => {
+      if (declaration.property === 'opacity') return floored ? [`opacity: ${LIGHT_MIN_OPACITY}`] : [];
+      if (declaration.property !== 'color') return [];
+      const color = parseColor(declaration.value);
+      if (!color) return [];
+      const drawn = { ...color, a: (color.a ?? 1) * drawnAt };
+      const lifted = lightTextColor(drawn, { surface });
+      if (formatColor(lifted) === formatColor(drawn)) return [];
+      return [`color: ${formatColor({ ...lifted, a: color.a ?? 1 })}`];
+    });
+    if (!declarations.length) continue;
+    for (const selector of rule.selectors) {
+      // Disabled controls are exempt from the contrast bar.
+      if (!isThemeNeutral(selector) || selector.includes(':disabled')) continue;
+      const pseudo = selector.indexOf('::');
+      const scoped = pseudo === -1 ? `${selector}${guard}` : `${selector.slice(0, pseudo)}${guard}${selector.slice(pseudo)}`;
+      const list = byContext.get(rule.context) ?? [];
+      list.push(`${LIGHT_SELECTOR} ${scoped} { ${declarations.join('; ')}; }`);
+      byContext.set(rule.context, list);
+    }
+  }
+  const blocks = [];
+  for (const [context, lines] of byContext) {
+    blocks.push(context ? `${context} {\n${lines.map((line) => `  ${line}`).join('\n')}\n}` : lines.join('\n'));
+  }
+  return blocks.length ? `/* Derived light-theme contrast (src/darkTheme.js) */\n${blocks.join('\n')}\n` : '';
+}
+
 /** Vite plugin: appends the derived overrides to the stylesheet at build and dev time. */
 export function darkThemePlugin({ match = /\/src\/styles\.css$/ } = {}) {
   return {
@@ -314,7 +432,7 @@ export function darkThemePlugin({ match = /\/src\/styles\.css$/ } = {}) {
     enforce: 'pre',
     transform(code, id) {
       if (!match.test(id.split('?')[0])) return null;
-      return { code: `${code}\n${deriveDarkTheme(code)}`, map: null };
+      return { code: `${code}\n${deriveDarkTheme(code)}\n${deriveLightContrast(code)}`, map: null };
     },
   };
 }

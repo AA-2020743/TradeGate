@@ -1273,7 +1273,7 @@ function ScorecardPanel() {
         </div>)}
       </div>
       <p className="model-footnote">{card.methodology} {card.limits}</p>
-    </> : <div className="equity-empty">{card?.reason ?? (loadStatus === 'loading' ? 'The first load after a restart replays several histories and can take most of a minute; each is cached afterwards.' : `The scorecard could not be loaded: ${error}`)}</div>}
+    </> : <div className="equity-empty">{card?.reason ?? (loadStatus === 'loading' ? 'The first load after a restart replays several histories and can take most of a minute; each is cached afterwards.' : `The scorecard could not be loaded: ${error ?? 'the server answered without a result'}`)}</div>}
   </article>;
 }
 
@@ -1357,7 +1357,7 @@ function DailyChangesPanel() {
       </div>
       {published ? <span className="data-pill">{data.storedSnapshots} daily {data.storedSnapshots === 1 ? "snapshot" : "snapshots"} kept</span> : null}
     </div>
-    {published ? <SnapshotDiffView diff={data} /> : <div className="equity-empty">{data?.reason ?? (loadStatus === 'loading' ? 'Taking a snapshot of every model takes a few seconds.' : `The comparison could not be loaded: ${error}`)}</div>}
+    {published ? <SnapshotDiffView diff={data} /> : <div className="equity-empty">{data?.reason ?? (loadStatus === 'loading' ? 'Taking a snapshot of every model takes a few seconds.' : `The comparison could not be loaded: ${error ?? 'the server answered without a result'}`)}</div>}
   </article>;
 }
 
@@ -1587,7 +1587,7 @@ function GoldRealYieldPanel() {
         <div className="valuation-bucket gold-yield-row current" role="row"><span role="cell">Held out, {model.heldOutFrom} on</span><span role="cell">±{model.heldOut.meanAbsoluteGapPercent}%</span><span role="cell">{changes?.heldOut?.correlation ?? '\u2014'}</span><span role="cell">{Number.isFinite(changes?.heldOut?.betaPercentPerPoint) ? `${changes.heldOut.betaPercentPerPoint}%` : '\u2014'}</span></div>
       </div>
       <p className="model-footnote">{model.methodology} {model.limits}</p>
-    </> : <div className="equity-empty">{model?.reason ?? (loadStatus === 'loading' ? 'Two long daily histories; cached for twelve hours.' : `The gold model could not be loaded: ${error}`)}</div>}
+    </> : <div className="equity-empty">{model?.reason ?? (loadStatus === 'loading' ? 'Two long daily histories; cached for twelve hours.' : `The gold model could not be loaded: ${error ?? 'the server answered without a result'}`)}</div>}
   </article>;
 }
 
@@ -1665,7 +1665,7 @@ function BitcoinCrossAssetPanel() {
         </div>
       </div>
       <p className="model-footnote">{model.methodology} {model.limits}</p>
-    </> : <div className="equity-empty">{model?.reason ?? (loadStatus === 'loading' ? 'Three ten-year daily histories; cached for six hours.' : `The bitcoin regime could not be loaded: ${error}`)}</div>}
+    </> : <div className="equity-empty">{model?.reason ?? (loadStatus === 'loading' ? 'Three ten-year daily histories; cached for six hours.' : `The bitcoin regime could not be loaded: ${error ?? 'the server answered without a result'}`)}</div>}
   </article>;
 }
 
@@ -1727,7 +1727,7 @@ function DiversificationPanel() {
       <p className="dca-read">{model.read}</p>
       <DrawdownRecordTable record={record} current={model.stockBond.state} title="60/40 WORST FALL THAT FOLLOWED, BY STOCK-BOND REGIME" stateLabel="Regime" subject="a daily-rebalanced 60/40 portfolio" ordering="hedging weeks were followed by the shallowest falls and falling-together weeks by the deepest" unit="weeks" />
       <p className="model-footnote">{model.methodology} {model.limits}</p>
-    </> : <div className="equity-empty">{model?.reason ?? (loadStatus === 'loading' ? 'Six ten-year daily histories; cached for six hours.' : `The diversification regime could not be loaded: ${error}`)}</div>}
+    </> : <div className="equity-empty">{model?.reason ?? (loadStatus === 'loading' ? 'Six ten-year daily histories; cached for six hours.' : `The diversification regime could not be loaded: ${error ?? 'the server answered without a result'}`)}</div>}
   </article>;
 }
 
@@ -1766,7 +1766,7 @@ function FxCarryPanel() {
       </div>
       <TrackRecordTable record={model.record} title="WHAT FOLLOWED EACH CARRY GROUP, AGAINST THE DOLLAR" stateLabel="Group" assumption="carry assumes" unit="months" />
       <p className="model-footnote">{model.usRateSource ? `U.S. leg: ${model.usRateSource}. ` : ''}{model.rateSources?.length ? `Spliced legs: ${model.rateSources.join('; ')}. ` : ''}{model.methodology} {model.limits}</p>
-    </> : <div className="equity-empty">{model?.reason ?? (loadStatus === 'loading' ? 'Sixteen monthly FRED series and seven spot histories; cached for twelve hours.' : `The carry model could not be loaded: ${error}`)}</div>}
+    </> : <div className="equity-empty">{model?.reason ?? (loadStatus === 'loading' ? 'Sixteen monthly FRED series and seven spot histories; cached for twelve hours.' : `The carry model could not be loaded: ${error ?? 'the server answered without a result'}`)}</div>}
   </article>;
 }
 
@@ -1813,7 +1813,7 @@ function FxMomentumRecordPanel() {
     {published ? <>
       <p className="dca-read">{record.read}</p>
       <TrackRecordTable record={record.record} title="CURRENCY MOVE VS USD THAT FOLLOWED, BY 20-SESSION LABEL" stateLabel="Label" assumption="continuation assumes" unit="sessions" />
-    </> : <div className="equity-empty">{record?.reason ?? model?.reason ?? (loadStatus === 'loading' ? 'Shares the carry model’s spot histories; cached for twelve hours.' : `The outlook record could not be loaded: ${error}`)}</div>}
+    </> : <div className="equity-empty">{record?.reason ?? model?.reason ?? (loadStatus === 'loading' ? 'Shares the carry model’s spot histories; cached for twelve hours.' : `The outlook record could not be loaded: ${error ?? 'the server answered without a result'}`)}</div>}
   </article>;
 }
 
@@ -1835,7 +1835,7 @@ function BitcoinCycleRecordPanel({ livePhase }) {
       <p className="dca-read">{model.read}</p>
       <TrackRecordTable record={model.record} current={livePhase} title="BITCOIN RETURN THAT FOLLOWED, BY REPLAYED PHASE" stateLabel="Phase" assumption="the phase names imply" unit="weeks" />
       <p className="model-footnote">Ambiguous in {model.ambiguousShare}% of weeks, which are left out. {model.record.limits}</p>
-    </> : <div className="equity-empty">{model?.reason ?? (loadStatus === 'loading' ? 'Twelve years of closes and the on-chain series; cached for twelve hours.' : `The cycle record could not be loaded: ${error}`)}</div>}
+    </> : <div className="equity-empty">{model?.reason ?? (loadStatus === 'loading' ? 'Twelve years of closes and the on-chain series; cached for twelve hours.' : `The cycle record could not be loaded: ${error ?? 'the server answered without a result'}`)}</div>}
   </article>;
 }
 
@@ -1859,7 +1859,7 @@ function GoldSilverRecordPanel() {
       <p className="dca-read">{model.read}</p>
       <TrackRecordTable record={model.record} current={model.state} title="SILVER MINUS GOLD THAT FOLLOWED, BY RATIO LABEL" stateLabel="Label" assumption="mean reversion assumes" unit="sessions" />
       <p className="model-footnote">{model.methodology}</p>
-    </> : <div className="equity-empty">{model?.reason ?? (loadStatus === 'loading' ? 'Two histories since 2000; cached for twelve hours.' : `The ratio record could not be loaded: ${error}`)}</div>}
+    </> : <div className="equity-empty">{model?.reason ?? (loadStatus === 'loading' ? 'Two histories since 2000; cached for twelve hours.' : `The ratio record could not be loaded: ${error ?? 'the server answered without a result'}`)}</div>}
   </article>;
 }
 
@@ -1923,7 +1923,7 @@ function VixTermRecordPanel() {
       <TrackRecordTable record={model.returns} current={model.state} title="SPY RETURN THAT FOLLOWED, BY TERM-STRUCTURE STATE" stateLabel="State" assumption="a calm-first reading assumes" unit="sessions" />
       <DrawdownRecordTable record={model.drawdowns} current={model.state} title="SPY WORST FALL THAT FOLLOWED" stateLabel="State" subject="SPY" ordering="contango sessions were followed by the shallowest falls and backwardation by the deepest" unit="sessions" />
       <p className="model-footnote">{model.methodology}</p>
-    </> : <div className="equity-empty">{model?.reason ?? (loadStatus === 'loading' ? 'Three histories since 2007; cached for twelve hours.' : `The VIX record could not be loaded: ${error}`)}</div>}
+    </> : <div className="equity-empty">{model?.reason ?? (loadStatus === 'loading' ? 'Three histories since 2007; cached for twelve hours.' : `The VIX record could not be loaded: ${error ?? 'the server answered without a result'}`)}</div>}
   </article>;
 }
 
@@ -1982,7 +1982,7 @@ function RecessionProbabilityPanel() {
         </div>
       </div>
       <p className="model-footnote">{model.methodology} {model.limits}</p>
-    </> : <div className="equity-empty">{model?.reason ?? (loadStatus === 'loading' ? 'Three monthly FRED series; cached for twelve hours.' : `The recession model could not be loaded: ${error}`)}</div>}
+    </> : <div className="equity-empty">{model?.reason ?? (loadStatus === 'loading' ? 'Three monthly FRED series; cached for twelve hours.' : `The recession model could not be loaded: ${error ?? 'the server answered without a result'}`)}</div>}
   </article>;
 }
 
@@ -2918,7 +2918,7 @@ function AlertOutcomesPanel({ outcomes }) {
 
 function LazyAlertOutcomesPanel() {
   const { status, data, error } = useLazyResource('/api/analytics/alert-outcomes');
-  const outcomes = data ?? { status: 'unavailable', reason: status === 'loading' ? 'Loading alert outcomes\u2026' : `Alert outcomes could not be loaded: ${error}` };
+  const outcomes = data ?? { status: 'unavailable', reason: status === 'loading' ? 'Loading alert outcomes\u2026' : `Alert outcomes could not be loaded: ${error ?? 'the server answered without a result'}` };
   return <AlertOutcomesPanel outcomes={outcomes} />;
 }
 
@@ -2938,7 +2938,7 @@ function ScreenerTrackRecordPanel() {
       <TrackRecordTable record={record} title="BY SCORE FIFTH, AGAINST SPY" stateLabel="Fifth" assumption="the score assumes" unit="months" />
       <ComponentRecordsTable components={record.components} spreadLabel="Top minus bottom, held out" />
       <p className="model-footnote">{record.methodology} {record.limits}</p>
-    </> : <div className="equity-empty">{record?.reason ?? (loadStatus === 'loading' ? 'The first replay after a restart takes a few seconds; it is cached for a day.' : `The track record could not be loaded: ${error}`)}</div>}
+    </> : <div className="equity-empty">{record?.reason ?? (loadStatus === 'loading' ? 'The first replay after a restart takes a few seconds; it is cached for a day.' : `The track record could not be loaded: ${error ?? 'the server answered without a result'}`)}</div>}
   </article>;
 }
 
@@ -3492,7 +3492,7 @@ function LazyWatchlistRisk({ listName, query }) {
         <div><span>Move least alike</span>{risk.leastAlike.map((pair) => <p key={`${pair.left}-${pair.right}`}><b>{pair.left} · {pair.right}</b><em>{pair.correlation}</em></p>)}</div>
       </div> : null}
       <p className="model-footnote">{risk.methodology} {risk.limits}</p>
-    </> : <div className="equity-empty">{risk?.reason ?? (loadStatus === 'loading' ? 'Daily closes come from Yahoo\u2019s keyless endpoint and are cached for half an hour.' : `The portfolio reading could not be loaded: ${error}`)}</div>}
+    </> : <div className="equity-empty">{risk?.reason ?? (loadStatus === 'loading' ? 'Daily closes come from Yahoo\u2019s keyless endpoint and are cached for half an hour.' : `The portfolio reading could not be loaded: ${error ?? 'the server answered without a result'}`)}</div>}
   </article>;
 }
 
