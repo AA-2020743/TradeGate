@@ -1,5 +1,5 @@
 import { calculateTechnicalSnapshot } from './analytics.js';
-import { describeCurrentState, evaluateTrackRecord, forwardObservations, ownHistoryBands } from './trackRecord.js';
+import { describeCurrentState, evaluateTrackRecord, forwardFallObservations, forwardObservations, ownHistoryBands } from './trackRecord.js';
 import { componentRecords, describeComponents } from './scorecard.js';
 
 /**
@@ -83,15 +83,41 @@ export function technicalTrackRecord({ points, annualizationDays = 252 }) {
     return [component.key, forwardObservations({ dates, values, samples: samples.map((sample, at) => ({ index: sample.index, label: bands[at] })), horizons })];
   }));
   const record = evaluateTrackRecord({ observations, order: ORDER, horizons, stepDays: 7 });
+  // The same weeks followed by the worst fall inside each window: a state can
+  // mis-rank returns and still rank risk, and the two are reported apart.
+  const fallObservations = forwardFallObservations({ dates, values, samples, horizons });
+  const falls = evaluateTrackRecord({ observations: fallObservations, order: ORDER, horizons, stepDays: 7 });
   // Today's regime from the same window the history was scored with, so the
   // current state and its record are one measurement.
   const today = calculateTechnicalSnapshot(series.slice(-window), { annualizationDays });
-  return { ...record, observations, componentObservations, windowDays: WINDOW_DAYS, current: today ? { regime: today.regime, score: today.score } : null };
+  return { ...record, falls: falls.status === 'calculated' ? { ...falls, readHorizonDays: 90 } : falls, observations, componentObservations, fallObservations, windowDays: WINDOW_DAYS, current: today ? { regime: today.regime, score: today.score } : null };
 }
 
 /** What followed the regime the asset is in now; see describeCurrentState. */
 export function describeTechnicalRecord(record, name, regime) {
   return describeCurrentState(record, { name, state: regime, phrase: (state) => `weeks scored ${state}`, subject: 'regimes', best: 'Constructive', worst: 'Guarded' });
+}
+
+/**
+ * The worst-fall record in one sentence: whether Constructive weeks were
+ * followed by shallower falls than Guarded ones, in the held-out block when
+ * both have evidence there.
+ */
+export function describeTechnicalFalls(falls, days = 90) {
+  if (falls?.status !== 'calculated') return '';
+  const horizon = falls.horizons.find((entry) => entry.days === days);
+  if (!horizon) return '';
+  const cell = (key, block) => horizon.states.find((state) => state.key === key)?.[block].stats.median;
+  const block = ['Constructive', 'Guarded'].every((key) => Number.isFinite(cell(key, 'heldOut'))) ? 'heldOut' : 'development';
+  const shallow = cell('Constructive', block);
+  const deep = cell('Guarded', block);
+  if (!Number.isFinite(shallow) || !Number.isFinite(deep)) return '';
+  const signed = (value) => `${value > 0 ? '+' : ''}${value}%`;
+  const ordering = horizon[block].ordering;
+  const verdict = ordering >= 0.6 ? 'so the states ranked the falls that followed in the order their names imply'
+    : ordering <= -0.2 ? 'so Constructive weeks were followed by the deeper falls - the states did not rank risk either'
+      : 'with no consistent order between the states';
+  return `Measured by the worst fall within ${days} days ${block === 'heldOut' ? `since ${falls.holdoutFrom}` : `before ${falls.holdoutFrom}`}, Constructive weeks saw a median ${signed(shallow)} and Guarded weeks ${signed(deep)}, ${verdict}.`;
 }
 
 /**

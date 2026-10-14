@@ -1159,6 +1159,7 @@ function SignalRecordsPanel({ records }) {
       </div>
       {record?.read ? <p className="dca-read">{record.read}</p> : null}
       <TrackRecordTable key={active?.key ?? 'pooled'} record={record} current={active?.regime ?? null} title={active ? `${active.name.toUpperCase()} \u00b7 NOW ${String(active.regime ?? '').toUpperCase()}${Number.isFinite(active.score) ? ` (${active.score})` : ''}` : 'POOLED ACROSS ASSETS'} stateLabel="Regime" assumption="the score assumes" />
+      <DrawdownRecordTable key={`falls-${active?.key ?? 'pooled'}`} record={record?.falls?.status === 'calculated' ? { ...record.falls, methodology: '', limits: '' } : record?.falls} current={active?.regime ?? null} title={active ? `${active.name.toUpperCase()} \u00b7 WORST FALL THAT FOLLOWED, BY REGIME` : 'WORST FALL THAT FOLLOWED, POOLED, BY REGIME'} stateLabel="Regime" subject={active ? active.name : 'each asset'} ordering="Constructive weeks were followed by the shallowest falls and Guarded weeks by the deepest" unit="weeks" />
       {!active && records?.pooled?.components ? <>
         <ComponentRecordsTable components={records.pooled.components} spreadLabel="High minus low, held out" />
         {records.pooled.componentNote ? <p className="model-footnote">{records.pooled.componentNote}</p> : null}

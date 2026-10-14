@@ -56,6 +56,32 @@ export function forwardObservations({ dates, values, samples, horizons, asset = 
   });
 }
 
+/**
+ * The same samples as forwardObservations, each followed by the deepest fall
+ * from any peak inside each horizon instead of the return to its end: 0 when
+ * the price only rose, -12 for a 12% drop at some point in the window.
+ */
+export function forwardFallObservations({ dates, values, samples, horizons, asset = null }) {
+  return (samples ?? []).flatMap(({ index, label }) => {
+    const start = values[index];
+    if (!(start > 0) || label === null || label === undefined) return [];
+    const returns = {};
+    for (const horizon of horizons) {
+      const end = index + horizon.sessions;
+      if (!(values[end] > 0)) { returns[horizon.days] = null; continue; }
+      let peak = start;
+      let worst = 0;
+      for (let at = index + 1; at <= end; at += 1) {
+        if (!(values[at] > 0)) continue;
+        peak = Math.max(peak, values[at]);
+        worst = Math.min(worst, (values[at] / peak) - 1);
+      }
+      returns[horizon.days] = worst * 100;
+    }
+    return [{ date: dates[index], label, asset, returns }];
+  });
+}
+
 function summarize(list, horizonDays, stepDays) {
   const returns = list.filter(Number.isFinite);
   const n = returns.length;

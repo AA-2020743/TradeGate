@@ -24,7 +24,7 @@ import { BITCOIN_CYCLE_RECORD_VERSION, calculateBitcoinCycleRecord } from './bit
 import { VERDICT_RECORD_VERSION, VERDICT_REPLAYS, replayVerdicts } from './verdictTrackRecord.js';
 import { readLargestTextEntry } from './zip.js';
 import { combineFundingVenues, okxPositioningRows } from './derivativesVenues.js';
-import { TECHNICAL_REGIMES, describeTechnicalComponents, describeTechnicalRecord, pooledComponentRecords, technicalTrackRecord } from './technicalTrackRecord.js';
+import { TECHNICAL_REGIMES, describeTechnicalComponents, describeTechnicalFalls, describeTechnicalRecord, pooledComponentRecords, technicalTrackRecord } from './technicalTrackRecord.js';
 import { evaluateTrackRecord } from './trackRecord.js';
 import { crossCheckSeries, dataQualityFor, gateOnDataQuality, summarizeCrossChecks } from './priceCrossCheck.js';
 import { resolveVintage, screenVintage } from './vintage.js';
@@ -2284,6 +2284,7 @@ export async function getSignalTrackRecords() {
     const settled = await Promise.allSettled(ACCUMULATION_SYMBOLS.map((asset) => getYahooHistory(asset.symbol, '10y')));
     const errors = [];
     const pooledObservations = [];
+    const pooledFallObservations = [];
     const pooledComponentObservations = {};
     const assets = ACCUMULATION_SYMBOLS.map((asset, index) => {
       const result = settled[index];
@@ -2293,9 +2294,10 @@ export async function getSignalTrackRecords() {
       }
       const points = result.value.map((point) => ({ date: String(point.timestamp).slice(0, 10), value: point.value }));
       const annualizationDays = asset.key === 'bitcoin' ? 365 : 252;
-      const { observations, componentObservations, ...record } = technicalTrackRecord({ points, annualizationDays });
+      const { observations, componentObservations, fallObservations, ...record } = technicalTrackRecord({ points, annualizationDays });
       if (record.status !== 'calculated') return { key: asset.key, name: asset.name, klass: asset.klass, ...record };
       pooledObservations.push(...observations.map((observation) => ({ ...observation, asset: asset.key })));
+      pooledFallObservations.push(...(fallObservations ?? []).map((observation) => ({ ...observation, asset: asset.key })));
       for (const [key, list] of Object.entries(componentObservations ?? {})) {
         pooledComponentObservations[key] = [...(pooledComponentObservations[key] ?? []), ...list.map((observation) => ({ ...observation, asset: asset.key }))];
       }
@@ -2323,6 +2325,11 @@ export async function getSignalTrackRecords() {
         ? `Pooled across ${pooledAssets.size} assets, the median 90-day return in the held-out block since ${pooled.holdoutFrom} was ${legs.length > 1 ? `${legs.slice(0, -1).join(', ')} and ${legs.at(-1)}` : legs[0]}.${Number.isFinite(horizon.heldOut.ordering) ? ` Regime ordering in that block scored ${horizon.heldOut.ordering > 0 ? '+' : ''}${horizon.heldOut.ordering}, where +1 is exactly the order the score assumes.` : ''} This describes what followed, not what will.`
         : `Pooled across ${pooledAssets.size} assets, the held-out block since ${pooled.holdoutFrom} holds too few independent 90-day windows per regime to report.`;
       pooled.limits = `${pooled.limits} The pooled assets move together - the S&P and the Nasdaq most of all - so the effective sample overstates the independent evidence.`;
+      // The same weeks against the worst fall that followed, pooled the same way.
+      const falls = evaluateTrackRecord({ observations: pooledFallObservations, order: TECHNICAL_REGIMES, horizons: [{ days: 30 }, { days: 90 }, { days: 180 }], stepDays: 7 });
+      pooled.falls = falls.status === 'calculated' ? { ...falls, readHorizonDays: 90 } : falls;
+      const fallRead = describeTechnicalFalls(pooled.falls, 90);
+      if (fallRead) pooled.read = `${pooled.read} ${fallRead}`;
       // Which of the score's components carries - or reverses - the record.
       pooled.components = pooledComponentRecords(pooledComponentObservations, { days: 90 });
       const componentRead = describeTechnicalComponents(pooled.components, 90);

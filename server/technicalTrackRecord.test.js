@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { calculateTechnicalSnapshot } from './analytics.js';
-import { TECHNICAL_COMPONENTS, componentBand, describeTechnicalComponents, ownHistoryBands, describeTechnicalRecord, pooledComponentRecords, technicalTrackRecord } from './technicalTrackRecord.js';
+import { TECHNICAL_COMPONENTS, componentBand, describeTechnicalComponents, describeTechnicalFalls, ownHistoryBands, describeTechnicalRecord, pooledComponentRecords, technicalTrackRecord } from './technicalTrackRecord.js';
 
 function series(count, valueAt) {
   const out = [];
@@ -138,4 +138,17 @@ test('a component with no observations reports itself unavailable, not as a verd
   assert.equal(components.length, TECHNICAL_COMPONENTS.length);
   assert.ok(components.every((component) => component.summary === null && component.record.status === 'unavailable'));
   assert.match(describeTechnicalComponents(components, 90), /could not be replayed\.$/);
+});
+
+test('the same weekly regimes are followed by their worst falls as well as their returns', () => {
+  const record = technicalTrackRecord({ points: cycle });
+  assert.equal(record.falls.status, 'calculated');
+  assert.equal(record.falls.readHorizonDays, 90);
+  // Same weeks, same labels; only what follows differs, and a fall is never positive.
+  assert.deepEqual(record.fallObservations.map((observation) => [observation.date, observation.label]), record.observations.map((observation) => [observation.date, observation.label]));
+  assert.ok(record.fallObservations.every((observation) => Object.values(observation.returns).every((value) => value === null || value <= 0)));
+  const read = describeTechnicalFalls(record.falls, 90);
+  assert.match(read, /^Measured by the worst fall within 90 days (since|before) \d{4}-\d{2}-\d{2}, Constructive weeks saw a median /);
+  assert.doesNotMatch(read, /undefined|NaN|null/);
+  assert.equal(describeTechnicalFalls({ status: 'unavailable' }), '');
 });

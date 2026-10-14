@@ -118,3 +118,17 @@ test('an ordering short of 0.8 is described as mostly as assumed, not as assumed
   assert.match(describeCurrentState(record(0.6), options).text, /ranked mostly as assumed, with A ahead of E/);
   assert.match(describeCurrentState(record(0.9), options).text, /ranked as assumed, A followed by the best returns/);
 });
+
+test('forward fall observations take the deepest drop from any peak inside each window', async () => {
+  const { forwardFallObservations } = await import('./trackRecord.js');
+  const values = [100, 120, 90, 130, 50, 60];
+  const dates = values.map((_, index) => `2020-01-0${index + 1}`);
+  const [observation] = forwardFallObservations({ dates, values, samples: [{ index: 0, label: 'a' }], horizons: [{ days: 3, sessions: 3 }, { days: 5, sessions: 5 }, { days: 9, sessions: 9 }] });
+  // Within three sessions: 100, 120, 90, 130 - the drop from 120 to 90 is 25%.
+  assert.equal(Math.round(observation.returns[3]), -25);
+  // Within five: the fall from 130 to 50.
+  assert.equal(Math.round(observation.returns[5]), -62);
+  // Past the end of the history there is no window to measure.
+  assert.equal(observation.returns[9], null);
+  assert.deepEqual(forwardFallObservations({ dates, values, samples: [{ index: 0, label: null }], horizons: [{ days: 3, sessions: 3 }] }), []);
+});
