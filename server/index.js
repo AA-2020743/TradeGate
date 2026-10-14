@@ -347,13 +347,13 @@ const SCORECARD_SOURCES = [
   { key: 'goldSilver', name: 'Gold/silver ratio extremes', page: 'Metals', assumption: 'A high ratio followed by silver catching up the most, a low one by the least (mean reversion)', measure: 'Silver minus gold', load: () => getGoldSilverRecord(), pick: (payload) => payload.record },
   { key: 'vixReturns', name: 'VIX term structure, returns', page: 'Equities', assumption: 'Contango followed by the best SPY returns, backwardation by the worst', measure: 'Forward return', load: () => getVixTermRecord(), pick: (payload) => payload.returns },
   { key: 'vixDrawdowns', name: 'VIX term structure, worst falls', page: 'Equities', assumption: 'Contango followed by the shallowest SPY falls, backwardation by the deepest', measure: 'Worst fall', load: () => getVixTermRecord(), pick: (payload) => payload.drawdowns },
-  { key: 'goldVerdict', name: 'Gold verdict, replayed', page: 'Metals', assumption: 'Constructive calls followed by the best gold returns, Guarded by the worst', measure: 'Forward return', load: () => getVerdictTrackRecords(), pick: (payload) => payload.records?.metals?.record ?? payload.records?.metals, components: (payload) => payload.records?.metals?.legs },
-  { key: 'dollarVerdict', name: 'Dollar verdict, replayed', page: 'Forex', assumption: 'Firm-dollar calls followed by the broad dollar’s strongest moves, soft-dollar calls by its weakest', measure: 'Broad dollar move', load: () => getVerdictTrackRecords(), pick: (payload) => payload.records?.fx?.record ?? payload.records?.fx, components: (payload) => payload.records?.fx?.legs },
+  { key: 'goldVerdict', name: 'Gold composite, replayed', page: 'Metals', assumption: 'Readings of 65 or more followed by the best gold returns, 35 or less by the worst', measure: 'Forward return', load: () => getVerdictTrackRecords(), pick: (payload) => payload.records?.metals?.record ?? payload.records?.metals, components: (payload) => payload.records?.metals?.legs },
+  { key: 'dollarVerdict', name: 'Dollar composite, replayed', page: 'Forex', assumption: 'Readings of 65 or more followed by the broad dollar’s strongest moves, 35 or less by its weakest', measure: 'Broad dollar move', load: () => getVerdictTrackRecords(), pick: (payload) => payload.records?.fx?.record ?? payload.records?.fx, components: (payload) => payload.records?.fx?.legs },
   { key: 'bitcoinVerdict', name: 'Bitcoin verdict, replayed without funding and stablecoins', page: 'Crypto', assumption: 'Constructive calls followed by the best bitcoin returns, Guarded by the worst', measure: 'Forward return', load: () => getVerdictTrackRecords(), pick: (payload) => payload.records?.crypto?.record ?? payload.records?.crypto, components: (payload) => payload.records?.crypto?.legs },
   // The same calls against the worst fall that followed: a call that mis-ranks
   // returns can still rank risk, and the two are reported apart.
-  { key: 'goldVerdictFalls', name: 'Gold verdict, worst falls', page: 'Metals', assumption: 'Constructive calls followed by the shallowest gold falls, Guarded by the deepest', measure: 'Worst fall', load: () => getVerdictTrackRecords(), pick: (payload) => payload.records?.metals?.falls ?? payload.records?.metals },
-  { key: 'dollarVerdictFalls', name: 'Dollar verdict, worst falls', page: 'Forex', assumption: 'Firm-dollar calls followed by the shallowest dollar falls, soft-dollar calls by the deepest', measure: 'Worst fall', load: () => getVerdictTrackRecords(), pick: (payload) => payload.records?.fx?.falls ?? payload.records?.fx },
+  { key: 'goldVerdictFalls', name: 'Gold composite, worst falls', page: 'Metals', assumption: 'Readings of 65 or more followed by the shallowest gold falls, 35 or less by the deepest', measure: 'Worst fall', load: () => getVerdictTrackRecords(), pick: (payload) => payload.records?.metals?.falls ?? payload.records?.metals },
+  { key: 'dollarVerdictFalls', name: 'Dollar composite, worst falls', page: 'Forex', assumption: 'Readings of 65 or more followed by the shallowest dollar falls, 35 or less by the deepest', measure: 'Worst fall', load: () => getVerdictTrackRecords(), pick: (payload) => payload.records?.fx?.falls ?? payload.records?.fx },
   { key: 'bitcoinVerdictFalls', name: 'Bitcoin verdict, worst falls', page: 'Crypto', assumption: 'Constructive calls followed by the shallowest bitcoin falls, Guarded by the deepest', measure: 'Worst fall', load: () => getVerdictTrackRecords(), pick: (payload) => payload.records?.crypto?.falls ?? payload.records?.crypto },
 ];
 const SCORECARD_LOADER_TIMEOUT_MS = 45_000;
@@ -914,6 +914,15 @@ if (existsSync(distDirectory)) {
   app.get('/{*path}', (_request, response) => response.sendFile(distIndexFile, { headers: { 'Cache-Control': 'no-cache' } }));
 }
 
+const NETWORK_ERROR_CODES = new Set(['ENOTFOUND', 'EAI_AGAIN', 'ECONNREFUSED', 'ECONNRESET', 'ETIMEDOUT', 'EHOSTUNREACH', 'ENETUNREACH', 'EPIPE', 'CERT_HAS_EXPIRED', 'UNABLE_TO_VERIFY_LEAF_SIGNATURE']);
+
+function isNetworkFailure(error) {
+  if (!(error instanceof TypeError) || error.message !== 'fetch failed') return false;
+  const cause = error.cause;
+  // undici's own errors carry UND_ERR_* codes (connect timeout, socket closed).
+  return !cause || NETWORK_ERROR_CODES.has(cause.code) || String(cause.code ?? '').startsWith('UND_ERR') || /ENOTFOUND|ECONN|ETIMEDOUT|socket|connect/i.test(cause.message ?? '');
+}
+
 /**
  * Classifies a failure before answering.
  *
@@ -937,6 +946,13 @@ function classifyRequestError(error) {
   // for the wrong thing, not a provider being down.
   if (/^Unsupported /.test(error?.message ?? '')) {
     return { status: 404, body: { error: error.message, kind: 'not-supported' } };
+  }
+  // Node's fetch reports every network failure - an unresolvable host, a
+  // refused or reset connection, a timeout - as TypeError("fetch failed")
+  // with the cause attached. That is a provider out of reach, not a fault in
+  // this server, and must not fall into the programming-fault branch below.
+  if (isNetworkFailure(error)) {
+    return { status: 502, body: { error: 'Unable to fetch data from an upstream provider.', kind: 'upstream' } };
   }
   // A programming fault must not be dressed as a provider outage.
   if (error instanceof TypeError || error instanceof ReferenceError || error instanceof RangeError) {

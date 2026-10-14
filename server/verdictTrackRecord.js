@@ -206,11 +206,14 @@ export function usdBreadthAsOf(closesByAsset, date) {
  */
 export const VERDICT_REPLAYS = {
   metals: {
-    name: 'Gold verdict',
+    // Shown as a state since its replay ranked neither returns nor falls; the
+    // record tests the composite's bands, which are what the call was.
+    name: 'Gold composite',
     asset: 'gold',
     assetLabel: 'gold',
-    verdictLabel: 'gold verdict',
-    order: [{ key: 'Constructive', label: 'Constructive' }, { key: 'Neutral', label: 'Neutral' }, { key: 'Guarded', label: 'Guarded' }],
+    verdictLabel: 'gold composite',
+    presentation: 'state',
+    order: [{ key: 'Constructive', label: '65 or more' }, { key: 'Neutral', label: '36 to 64' }, { key: 'Guarded', label: '35 or less' }],
     verdictAt: (legs, closesByAsset, date) => buildMetalsVerdict({
       // The metals panel scores a year of front-month closes.
       goldTechnical: calculateTechnicalSnapshot(asTimestamps(closesAsOf(closesByAsset.gold, date, 365)), { annualizationDays: 252 }),
@@ -235,14 +238,15 @@ export const VERDICT_REPLAYS = {
     omitted: ['Perpetual funding', 'Stablecoin supply'],
   },
   fx: {
-    name: 'Dollar verdict',
+    name: 'Dollar composite',
     // Judged by the broad trade-weighted dollar the dollar model reads.
     asset: 'dollar',
     assetLabel: 'the broad dollar',
-    verdictLabel: 'dollar verdict',
+    verdictLabel: 'dollar composite',
+    presentation: 'state',
     // An index moves; it does not return anything to a holder.
     measureLabel: 'move',
-    order: [{ key: 'Firm dollar', label: 'Firm dollar' }, { key: 'Rangebound dollar', label: 'Rangebound dollar' }, { key: 'Soft dollar', label: 'Soft dollar' }],
+    order: [{ key: 'Firm dollar', label: '65 or more' }, { key: 'Rangebound dollar', label: '36 to 64' }, { key: 'Soft dollar', label: '35 or less' }],
     verdictAt: (legs, closesByAsset, date) => buildFxVerdict({
       usdStrength: legs.usdStrength,
       usdBreadth: usdBreadthAsOf(closesByAsset, date),
@@ -275,7 +279,7 @@ export function calculateVerdictRecord({ key, samples, closes }) {
   }));
   const minimum = 2 * LEG_HISTORY_MINIMUM;
   if (observations.length < minimum) {
-    return { version, key, name: replay.name, status: 'unavailable', reason: `The verdict could be replayed on ${observations.length} dates; two years of fortnightly readings (${minimum}) are needed.` };
+    return { version, key, name: replay.name, status: 'unavailable', reason: `The ${replay.verdictLabel} could be replayed on ${observations.length} dates; two years of fortnightly readings (${minimum}) are needed.` };
   }
   const record = evaluateTrackRecord({ observations, order: replay.order, horizons: HORIZON_DAYS.map((days) => ({ days })), stepDays: STEP_DAYS });
   if (record.status !== 'calculated') return { version, key, name: replay.name, ...record };
@@ -314,7 +318,8 @@ export function calculateVerdictRecord({ key, samples, closes }) {
     readings: samples.length,
     stepDays: STEP_DAYS,
     timeInCall: replay.order.map((state) => ({ key: state.key, label: state.label, readings: counts[state.key], sharePercent: Math.round((counts[state.key] / samples.length) * 1000) / 10 })),
-    current: { call: samples.at(-1).call, score: samples.at(-1).score, date: samples.at(-1).date },
+    presentation: replay.presentation ?? 'call',
+    current: { call: samples.at(-1).call, label: replay.order.find((state) => state.key === samples.at(-1).call)?.label ?? samples.at(-1).call, score: samples.at(-1).score, date: samples.at(-1).date },
     omitted: replay.omitted,
     record: { ...record, readHorizonDays: readDays },
     falls,
@@ -348,6 +353,26 @@ function readHorizonFor(record, order) {
   return usable?.days ?? ranked?.days ?? READ_DAYS;
 }
 
+/**
+ * How a section's readings are named in prose: a call section's dates were
+ * "called Constructive"; a state section's composite "read 65 or more", and
+ * its bands are not said to be assumed by anything.
+ */
+function wordsFor(replay) {
+  const state = replay.presentation === 'state';
+  const label = (key) => replay.order.find((entry) => entry.key === key)?.label ?? key;
+  return {
+    state,
+    dates: (key) => (state ? `dates the ${replay.verdictLabel} read ${label(key)}` : `dates the ${replay.verdictLabel} called ${key}`),
+    datesShort: (key) => (state ? `dates reading ${label(key)}` : `${key} dates`),
+    groups: state ? 'the composite’s bands' : 'the calls',
+    assumed: state ? 'in order' : 'in the order the verdict assumes',
+    against: state ? 'against their order' : 'against the order the verdict assumes',
+    implies: state ? 'as a call would imply' : 'as the call implies',
+    contrary: state ? 'against what a call would imply' : 'against what the call implies',
+  };
+}
+
 function describeVerdictRecord(result, replay) {
   const days = result.record.readHorizonDays;
   const horizon = result.record.horizons.find((entry) => entry.days === days);
@@ -359,26 +384,31 @@ function describeVerdictRecord(result, replay) {
   const high = cell(best, block);
   const low = cell(worst, block);
   const all = horizon[block].all.median;
+  const words = wordsFor(replay);
   if (!Number.isFinite(high) || !Number.isFinite(low)) {
-    return `Replayed every two weeks from ${result.from}, the ${replay.verdictLabel} has spent too few independent readings in both ${best} and ${worst} to compare what followed them.`;
+    return `Replayed every two weeks from ${result.from}, the ${replay.verdictLabel} has too few independent ${words.datesShort(best)} and ${words.datesShort(worst)} to compare what followed them.`;
   }
   const ordering = horizon[block].ordering;
-  const order = !Number.isFinite(ordering) ? '' : ordering >= 0.6 ? `; the calls ranked in the order the verdict assumes (${ordering > 0 ? '+' : ''}${ordering})` : ordering <= -0.2 ? `; the calls ranked against the order the verdict assumes (${ordering})` : `; the calls were only loosely in order (${ordering > 0 ? '+' : ''}${ordering})`;
-  return `${when}, dates the ${replay.verdictLabel} called ${best} were followed by a median ${signed(high)} for ${replay.assetLabel} over ${days} days and dates it called ${worst} by ${signed(low)}, against ${signed(all)} for every date${order}. This describes what followed, not what will.`;
+  const signedOrdering = `${ordering > 0 ? '+' : ''}${ordering}`;
+  const order = !Number.isFinite(ordering) ? '' : ordering >= 0.6 ? `; ${words.groups} ranked ${words.assumed} (${signedOrdering})` : ordering <= -0.2 ? `; ${words.groups} ranked ${words.against} (${ordering})` : `; ${words.groups} were only loosely in order (${signedOrdering})`;
+  return `${when}, ${words.dates(best)} were followed by a median ${signed(high)} for ${replay.assetLabel} over ${days} days and ${words.dates(worst)} by ${signed(low)}, against ${signed(all)} for every date${order}. This describes what followed, not what will.`;
 }
 
 const yieldToEventLoop = () => new Promise((resolve) => { setImmediate(resolve); });
 
-const BANNER_PHRASES = {
-  held: 'the calls ranked as the verdict assumes, before and after the cutoff',
-  'held-recent': 'the calls ranked as the verdict assumes only after the cutoff',
-  faded: 'the calls ranked as assumed before the cutoff and only loosely since',
-  reversed: 'the calls ran against the verdict’s order after the cutoff',
-  'no-order': 'the calls showed no reliable order',
-  untested: 'too few readings after the cutoff to judge',
-  thin: 'too few readings to judge',
-  unavailable: 'no record',
-};
+function bannerPhrase(verdict, replay) {
+  const { groups, assumed, against } = wordsFor(replay);
+  return {
+    held: `${groups} ranked ${assumed}, before and after the cutoff`,
+    'held-recent': `${groups} ranked ${assumed} only after the cutoff`,
+    faded: `${groups} ranked ${assumed} before the cutoff and only loosely since`,
+    reversed: `${groups} ran ${against} after the cutoff`,
+    'no-order': `${groups} showed no reliable order`,
+    untested: 'too few readings after the cutoff to judge',
+    thin: 'too few readings to judge',
+    unavailable: 'no record',
+  }[verdict];
+}
 
 /**
  * One line for the verdict banner: how the call's own replay has done on
@@ -395,14 +425,15 @@ export function summarizeForBanner(result, replay) {
   // description of conditions if they did not.
   const ranksRisk = ['held', 'held-recent'].includes(falls.verdict);
   const caution = returns.verdict !== 'reversed' ? null
-    : ranksRisk ? 'It has ranked the falls that followed, not the returns: read it as a reading of risk, not a forecast.'
-      : 'Read it as a description of conditions, not a forecast.';
+    : replay.presentation === 'state' ? 'That is why this section describes conditions instead of making a call.'
+      : ranksRisk ? 'It has ranked the falls that followed, not the returns: read it as a reading of risk, not a forecast.'
+        : 'Read it as a description of conditions, not a forecast.';
   return {
     returns: pick(returns),
     falls: pick(falls),
     caution,
     holdoutFrom: result.record.holdoutFrom,
-    text: `Replayed every two weeks since ${result.from}${replay.omitted.length ? ` (without ${replay.omitted.join(' and ').toLowerCase()})` : ''}: on ${subject}’s ${returns.horizonDays ?? READ_DAYS}-day ${replay.measureLabel ?? 'return'}, ${BANNER_PHRASES[returns.verdict]}; on its worst ${falls.horizonDays ?? READ_DAYS}-day fall, ${BANNER_PHRASES[falls.verdict]}. The cutoff is ${result.record.holdoutFrom}.`,
+    text: `Replayed every two weeks since ${result.from}${replay.omitted.length ? ` (without ${replay.omitted.join(' and ').toLowerCase()})` : ''}: on ${subject}’s ${returns.horizonDays ?? READ_DAYS}-day ${replay.measureLabel ?? 'return'}, ${bannerPhrase(returns.verdict, replay)}; on its worst ${falls.horizonDays ?? READ_DAYS}-day fall, ${bannerPhrase(falls.verdict, replay)}. The cutoff is ${result.record.holdoutFrom}.`,
   };
 }
 
@@ -421,10 +452,11 @@ function describeFalls(result, replay) {
   if (!Number.isFinite(shallow) || !Number.isFinite(deep)) return '';
   const ordering = horizon[block].ordering;
   const when = block === 'heldOut' ? 'in the held-out block' : `before ${falls.holdoutFrom}`;
-  const verdict = ordering >= 0.6 ? `so ${best} dates were followed by the shallower falls, as the call implies`
-    : ordering <= -0.2 ? `so ${best} dates were followed by the deeper falls, against what the call implies`
-      : 'with no consistent order between the calls';
-  return ` Measured by the worst fall within ${days} days ${when}, ${best} dates saw a median ${signed(shallow)} and ${worst} dates ${signed(deep)}, ${verdict}.`;
+  const words = wordsFor(replay);
+  const verdict = ordering >= 0.6 ? `so ${words.datesShort(best)} were followed by the shallower falls, ${words.implies}`
+    : ordering <= -0.2 ? `so ${words.datesShort(best)} were followed by the deeper falls, ${words.contrary}`
+      : `with no consistent order between ${words.groups}`;
+  return ` Measured by the worst fall within ${days} days ${when}, ${words.datesShort(best)} saw a median ${signed(shallow)} and ${words.datesShort(worst)} ${signed(deep)}, ${verdict}.`;
 }
 
 /**

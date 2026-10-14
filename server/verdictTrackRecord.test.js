@@ -193,7 +193,12 @@ test('the replayed verdicts are scored on the dates their inputs allow', { timeo
   // The dollar verdict's three legs, at the FX builder's weights.
   assert.deepEqual(records.fx.legs.map((leg) => [leg.key, leg.weight]).sort(), [['breadth', 30], ['rateDivergence', 25], ['strength', 45]]);
   assert.deepEqual(records.fx.record.horizons[0].states.map((state) => state.key), ['Firm dollar', 'Rangebound dollar', 'Soft dollar']);
-  assert.match(records.fx.read, /dollar verdict called Firm dollar|dollar verdict has spent/);
+  // The gold and dollar sections show a state, so their records speak of the composite's bands.
+  assert.match(records.fx.read, /dates the dollar composite read 65 or more|dollar composite has too few/);
+  assert.doesNotMatch(records.fx.read, /called|the verdict assumes/);
+  assert.equal(records.fx.presentation, 'state');
+  assert.equal(records.crypto.presentation, 'call');
+  assert.match(records.crypto.read, /called Constructive|bitcoin verdict has too few/);
   // The gold verdict's legs are the three the live builder reads, at their live weights.
   assert.deepEqual(records.metals.legs.map((leg) => [leg.key, leg.weight]), [['technicals', 50], ['dollar', 30], ['globalLiquidity', 20]]);
 });
@@ -206,16 +211,22 @@ test('too few replayable dates refuses rather than reporting a thin record', () 
   assert.equal(calculateVerdictRecord({ key: 'nope', samples, closes: gold }).status, 'unavailable');
 });
 
-test('a call that reversed on returns is labelled by what it did rank', () => {
+test('a reversed record is explained in the terms of how the section presents itself', () => {
   const recordWith = (heldOut, development = heldOut) => ({ status: 'calculated', holdoutFrom: '2024-01-16', readHorizonDays: 90, horizons: [{ days: 90, development: { ordering: development, all: { effective: 30 } }, heldOut: { ordering: heldOut, all: { effective: 12 } }, states: [] }] });
   const base = { from: '2017-08-22' };
-  const risk = summarizeForBanner({ ...base, record: recordWith(-1, -0.33), falls: recordWith(1) }, VERDICT_REPLAYS.metals);
+  // A call section that still ranked the falls is a risk reading.
+  const risk = summarizeForBanner({ ...base, record: recordWith(-1, -0.33), falls: recordWith(1) }, VERDICT_REPLAYS.crypto);
   assert.equal(risk.returns.verdict, 'reversed');
   assert.match(risk.caution, /reading of risk/);
-  assert.match(risk.text, /on gold’s 90-day return, the calls ran against the verdict’s order after the cutoff; on its worst 90-day fall, the calls ranked as the verdict assumes, before and after the cutoff/);
-  const neither = summarizeForBanner({ ...base, record: recordWith(-1), falls: recordWith(-1) }, VERDICT_REPLAYS.fx);
+  assert.match(risk.text, /on bitcoin’s 90-day return, the calls ran against the order the verdict assumes after the cutoff; on its worst 90-day fall, the calls ranked in the order the verdict assumes, before and after the cutoff/);
+  const neither = summarizeForBanner({ ...base, record: recordWith(-1), falls: recordWith(-1) }, VERDICT_REPLAYS.crypto);
   assert.match(neither.caution, /description of conditions/);
-  assert.match(neither.text, /the broad dollar’s 90-day move/);
+  // A state section says why it is one, and never speaks of calls.
+  const gold = summarizeForBanner({ ...base, record: recordWith(-1, -0.33), falls: recordWith(-1) }, VERDICT_REPLAYS.metals);
+  assert.match(gold.caution, /describes conditions instead of making a call/);
+  assert.match(gold.text, /on gold’s 90-day return, the composite’s bands ran against their order after the cutoff/);
+  assert.doesNotMatch(gold.text, /the calls|verdict assumes/);
+  assert.match(summarizeForBanner({ ...base, record: recordWith(-1), falls: recordWith(-1) }, VERDICT_REPLAYS.fx).text, /the broad dollar’s 90-day move/);
   assert.equal(summarizeForBanner({ ...base, record: recordWith(1), falls: recordWith(1) }, VERDICT_REPLAYS.crypto).caution, null);
   assert.match(summarizeForBanner({ ...base, record: recordWith(1), falls: recordWith(1) }, VERDICT_REPLAYS.crypto).text, /\(without perpetual funding and stablecoin supply\)/);
 });

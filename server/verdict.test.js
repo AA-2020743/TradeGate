@@ -239,3 +239,37 @@ test('the metals verdict inverts the dollar and does not double-count real yield
   assert.deepEqual(keys.sort(), ['dollar', 'globalLiquidity', 'technicals']);
   assert.ok(!keys.includes('realYield'));
 });
+
+test('the gold and dollar sections describe their readings instead of making a call', async () => {
+  const { buildMetalsVerdict, buildFxVerdict, buildCryptoVerdict } = await import('./verdict.js');
+  const gold = buildMetalsVerdict({ goldTechnical: { score: 30, regime: 'Guarded' }, usdStrength: { score: 62, regime: 'Firm' }, globalLiquidity: { score: 45, regime: 'Neutral' } });
+  assert.equal(gold.presentation, 'state');
+  assert.equal(gold.headline, 'Gold trending down, a firm dollar, global liquidity flat.');
+  // The band is still computed - the record is built from it - but nothing presents it.
+  assert.equal(gold.call, 'Guarded');
+  assert.doesNotMatch(`${gold.headline} ${gold.read} ${gold.confidenceReason}`, /Guarded|Constructive|headwind|call sits/);
+  assert.equal(gold.margin, null);
+  assert.equal(gold.meaning, 'state');
+  // Grouped by side of the composite's midpoint, not by a call they support.
+  assert.deepEqual(gold.columns, ["Above 50 on the composite's scale", "Below 50 on the composite's scale"]);
+  assert.equal(gold.supporting.length, 0);
+  assert.deepEqual(gold.opposing.map((reading) => reading.key).sort(), ['dollar', 'globalLiquidity', 'technicals']);
+  assert.match(gold.read, /shown as a state, not a call/);
+
+  const dollar = buildFxVerdict({ usdStrength: { status: 'calculated', score: 66, regime: 'Firm' }, usdBreadth: { total: 6, strong20d: 5, pct20d: 83 }, rateDivergence: { status: 'calculated', score: 60, state: 'US yield advantage steady' } });
+  assert.equal(dollar.headline, 'Broad dollar model firm, the dollar up against 5 of 6 majors over 20 sessions, US yield advantage steady.');
+  assert.equal(dollar.call, 'Firm dollar');
+  assert.equal(dollar.supporting.length, 3);
+
+  // Bitcoin's replayed calls held up, so it keeps its call.
+  const bitcoin = buildCryptoVerdict({ bitcoin: { technicals: { status: 'calculated', score: 70, stance: 'Strong' } }, globalLiquidity: { status: 'calculated', score: 60, regime: 'Expansion' }, usdStrength: { status: 'calculated', score: 40, regime: 'Soft' } });
+  assert.equal(bitcoin.presentation, undefined);
+  assert.match(bitcoin.headline, /^(Constructive|Neutral|Guarded): /);
+});
+
+test('a state headline leaves out a reading that did not report', async () => {
+  const { buildMetalsVerdict } = await import('./verdict.js');
+  const gold = buildMetalsVerdict({ goldTechnical: { score: 70, regime: 'Constructive' }, usdStrength: { score: 40, regime: 'Soft' }, globalLiquidity: null });
+  // Two of three inputs is below the three-reading minimum: no state either.
+  assert.equal(gold.status, 'unavailable');
+});

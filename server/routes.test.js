@@ -191,6 +191,13 @@ test('an upstream failure is still reported as one', async () => {
   const { classifyRequestError } = await import('./index.js');
   assert.equal(classifyRequestError(new Error('fetch failed')).status, 502);
   assert.equal(classifyRequestError(new Error('fetch failed')).body.kind, 'upstream');
+  // What Node's fetch actually throws when a provider's host does not resolve
+  // or refuses the connection: a TypeError, with the network error as cause.
+  const networkFailure = (code, message) => Object.assign(new TypeError('fetch failed'), { cause: Object.assign(new Error(message), { code }) });
+  for (const failure of [networkFailure('ENOTFOUND', 'getaddrinfo ENOTFOUND api.coingecko.com'), networkFailure('ECONNREFUSED', 'connect ECONNREFUSED 127.0.0.1:443'), networkFailure('UND_ERR_CONNECT_TIMEOUT', 'Connect Timeout Error')]) {
+    assert.equal(classifyRequestError(failure).status, 502, failure.cause.code);
+    assert.equal(classifyRequestError(failure).body.kind, 'upstream');
+  }
   // A fault in the server is not an outage at a provider, and saying so sends
   // whoever is debugging to look in the wrong place.
   assert.equal(classifyRequestError(new TypeError('x is not a function')).status, 500);

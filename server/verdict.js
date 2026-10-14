@@ -74,6 +74,12 @@ export function buildVerdict({
   minimumSignals = 3,
   neutral = 50,
   meaning = { high: 'supportive', low: 'restrictive' },
+  // 'call' names a band - Constructive, Guarded - which reads as a direction.
+  // 'state' says what each reading shows instead, for a section whose
+  // replayed calls have not ranked what followed them; the band is still
+  // computed, because the record that justifies the choice is built from it.
+  presentation = 'call',
+  stateNote = null,
 } = {}) {
   const scored = signals.filter((signal) => Number.isFinite(signal?.score));
   const totalWeight = signals.reduce((total, signal) => total + (signal?.weight ?? 1), 0);
@@ -161,10 +167,10 @@ export function buildVerdict({
 
   const limits = [];
   if (coverage < 0.75) limits.push(`only ${Math.round(coverage * 100)}% of the evidence reported`);
-  if (dissentWeight >= 0.2) limits.push(`${Math.round(dissentWeight * 100)}% of the weight argues the other way`);
+  if (dissentWeight >= 0.2) limits.push(`${Math.round(dissentWeight * 100)}% of the weight ${presentation === 'state' ? 'leans' : 'argues'} the other way`);
   if (agreement < 60) limits.push(`the readings are split ${agreement}/${100 - agreement}`);
   if (spread >= 45) limits.push(`they span ${spread} points`);
-  if (margin && margin.points <= 3) limits.push(`the call sits ${margin.points} ${margin.points === 1 ? 'point' : 'points'} from ${margin.becomes}`);
+  if (presentation !== 'state' && margin && margin.points <= 3) limits.push(`the call sits ${margin.points} ${margin.points === 1 ? 'point' : 'points'} from ${margin.becomes}`);
   if (stalest && stalest.ageDays >= 30) limits.push(`${stalest.name} is ${stalest.ageDays} days old`);
   const confidence = limits.length === 0 ? 'high' : limits.length === 1 ? 'moderate' : 'low';
   // "A, and B, and C" reads as a stammer; one "and", before the last item.
@@ -179,7 +185,7 @@ export function buildVerdict({
     ? ` against ${opposing.slice(0, 2).map((signal) => midSentence(signal.name)).join(' and ')}`
     : ', with nothing arguing the other way';
 
-  return {
+  const base = {
     version,
     title,
     status: coverage >= 0.75 && !missing.length ? 'calculated' : 'provisional',
@@ -204,6 +210,31 @@ export function buildVerdict({
     missing,
     read: `${call} at ${score}/100${decisive ? `, ${meaning[callLean] ?? 'balanced'} on this scale` : `, only ${Math.abs(score - neutral)} ${Math.abs(score - neutral) === 1 ? 'point' : 'points'} off neutral`}. ${supporting.length ? `${supporting[0].name} is the strongest contributor at ${supporting[0].score}${supporting[0].detail ? ` (${supporting[0].detail})` : ''}.` : ''}${opposing.length ? ` ${opposing[0].name} argues the other way at ${opposing[0].score}${opposing[0].detail ? ` (${opposing[0].detail})` : ''}.` : ' No reading argues the other way.'}${margin ? ` ${withArticle(margin.points).replace(/^a/, 'A').replace(/^an/, 'An')}-point move ${margin.direction} would make this ${margin.becomes}.` : ''}${missing.length ? ` ${missing.length} input${missing.length === 1 ? '' : 's'} did not report: ${missing.map((entry) => entry.name).join(', ')}.` : ''}`,
     methodology: 'The score is a weighted average renormalised by the weight that actually reported, so a missing input cannot pull the verdict toward its own absence. Contributions are ranked by distance from neutral times weight - how much a reading is moving the verdict, not how extreme it is on its own. Confidence is the weakest link rather than an average: thin coverage, split readings, a wide spread, a call near its boundary, or a stale input each hold it back, and the reasons are listed. Readings pointing against the call are always published.',
+  };
+  if (presentation !== 'state') return base;
+
+  // The headline is what the readings say, in the order the section lists
+  // them; the composite stays as a number, and the readings are grouped by
+  // which side of neutral they sit on rather than by a call they support.
+  const phrases = scored.map((signal) => signal.state).filter((phrase) => typeof phrase === 'string' && phrase);
+  const described = phrases.length ? `${phrases[0].charAt(0).toUpperCase()}${phrases[0].slice(1)}${phrases.length > 1 ? `, ${phrases.slice(1).join(', ')}` : ''}` : 'No reading describes itself';
+  const strip = ({ pull, ...rest }) => rest;
+  return {
+    ...base,
+    presentation: 'state',
+    meaning: 'state',
+    headline: `${described}.`,
+    margin: null,
+    // Named by the composite's own scale: an inverted input (the dollar for
+    // gold) sits below the midpoint when the dollar itself is firm.
+    columns: [`Above ${neutral} on the composite's scale`, `Below ${neutral} on the composite's scale`],
+    supporting: byPull.filter((signal) => signal.lean === 'high').map(strip),
+    opposing: byPull.filter((signal) => signal.lean === 'low').map(strip),
+    confidenceReason: limits.length
+      ? `Held back because ${listed}.`
+      : `The readings that reported broadly agree${missing.length ? `, though ${missing.length} input${missing.length === 1 ? '' : 's'} did not report` : ''}.`,
+    read: `${described}. Together they make ${score}/100 on this section's composite.${stateNote ? ` ${stateNote}` : ''}${missing.length ? ` ${missing.length} input${missing.length === 1 ? '' : 's'} did not report: ${missing.map((entry) => entry.name).join(', ')}.` : ''}`,
+    methodology: 'The composite is a weighted average renormalised by the weight that actually reported, so a missing input cannot pull it toward its own absence. It is shown as a state - what each reading says - rather than as a call, because its replayed bands have not ranked what followed them; the bands are still computed so that record stays up to date. Confidence is the weakest link: thin coverage, split readings, a wide spread or a stale input each hold it back, and the reasons are listed.',
   };
 }
 
@@ -291,6 +322,22 @@ export function buildCryptoVerdict({ bitcoin, globalLiquidity, usdStrength } = {
   });
 }
 
+/** "a firm dollar", from the dollar model's own regime word. */
+function dollarPhrase(regime) {
+  return regime ? `a ${String(regime).toLowerCase()} dollar` : null;
+}
+
+/** What the global liquidity model's regime says, as a phrase. */
+function liquidityPhrase(regime) {
+  return { Expansion: 'global liquidity expanding', Contraction: 'global liquidity contracting', Neutral: 'global liquidity flat' }[regime] ?? null;
+}
+
+/** Where a technical score sits, without the direction a call would imply. */
+function trendPhrase(asset, score) {
+  if (!Number.isFinite(score)) return null;
+  return score >= 65 ? `${asset} trending up` : score <= 35 ? `${asset} trending down` : `${asset}'s trend mixed`;
+}
+
 /**
  * The FX section's conclusion, on a "firm dollar" axis.
  *
@@ -321,6 +368,7 @@ export function buildFxVerdict({ usdStrength, usdBreadth, rateDivergence } = {})
         score: Number.isFinite(strength?.score) ? strength.score : null,
         weight: 0.45,
         detail: strength?.regime ?? null,
+        state: strength?.regime ? `broad dollar model ${String(strength.regime).toLowerCase()}` : null,
         reason: usdStrength?.reason ?? 'The broad-dollar model did not publish',
       },
       {
@@ -331,6 +379,7 @@ export function buildFxVerdict({ usdStrength, usdBreadth, rateDivergence } = {})
         score: Number.isFinite(usdBreadth?.pct20d) ? usdBreadth.pct20d : null,
         weight: 0.3,
         detail: usdBreadth ? `${usdBreadth.strong20d} of ${usdBreadth.total} crosses over 20 sessions` : null,
+        state: usdBreadth ? `the dollar up against ${usdBreadth.strong20d} of ${usdBreadth.total} majors over 20 sessions` : null,
         reason: 'No FX cross published 20-session momentum',
       },
       {
@@ -339,10 +388,16 @@ export function buildFxVerdict({ usdStrength, usdBreadth, rateDivergence } = {})
         score: Number.isFinite(divergence?.score) ? divergence.score : null,
         weight: 0.25,
         detail: divergence?.state ?? null,
+        state: divergence?.state ?? null,
         reason: rateDivergence?.reason ?? 'No foreign long rate published a usable spread',
       },
     ],
     meaning: { high: 'a firm dollar', low: 'a soft dollar' },
+    // Replayed, firm-dollar readings were followed by the dollar falling and
+    // soft ones by it rising - the 20-session moves it is built on have
+    // tended to reverse - so the section describes the dollar, not where it goes.
+    presentation: 'state',
+    stateNote: 'This is shown as a state, not a call: replayed every two weeks, high readings of this composite have not been followed by a firmer dollar - the moves it is built on have tended to reverse within a month. Its record is further down this page.',
   });
 }
 
@@ -371,6 +426,7 @@ export function buildMetalsVerdict({ goldTechnical, usdStrength, globalLiquidity
         score: Number.isFinite(goldTechnical?.score) ? goldTechnical.score : null,
         weight: 0.5,
         detail: goldTechnical?.regime ?? null,
+        state: trendPhrase('gold', goldTechnical?.score),
         reason: 'No usable gold futures close history',
       },
       {
@@ -381,6 +437,7 @@ export function buildMetalsVerdict({ goldTechnical, usdStrength, globalLiquidity
         score: dollarScore === null ? null : 100 - dollarScore,
         weight: 0.3,
         detail: usdStrength?.regime ? `${usdStrength.regime} dollar` : null,
+        state: dollarScore === null ? null : dollarPhrase(usdStrength?.regime),
         reason: 'The broad-dollar model did not publish',
       },
       {
@@ -389,10 +446,16 @@ export function buildMetalsVerdict({ goldTechnical, usdStrength, globalLiquidity
         score: liquidityScore,
         weight: 0.2,
         detail: globalLiquidity?.regime ?? null,
+        state: liquidityScore === null ? null : liquidityPhrase(globalLiquidity?.regime),
         reason: 'The global liquidity model did not publish',
       },
     ],
     meaning: { high: 'constructive for gold', low: 'a headwind for gold' },
+    // Replayed, high readings of this composite were followed by weaker gold
+    // returns and deeper falls than low ones, so the section describes
+    // conditions rather than calling a direction.
+    presentation: 'state',
+    stateNote: 'This is shown as a state, not a call: replayed every two weeks, high readings of this composite have not been followed by better gold returns or shallower falls. Its record is further down this page.',
   });
 }
 

@@ -173,9 +173,9 @@ export const MODEL_REGISTRY = [
   },
   {
     id: 'fx-verdict-v1',
-    name: 'Dollar verdict',
+    name: 'Dollar conditions',
     page: 'Forex',
-    measures: 'The broad-dollar model (45%), cross-rate breadth - the share of six majors the dollar gained on over 20 sessions (30%) - and the US yield advantage (25%) synthesized into a firm, rangebound or soft dollar call. Speculative positioning is left out because a crowded long is support today and fragility tomorrow.',
+    measures: 'The broad-dollar model (45%), cross-rate breadth - the share of six majors the dollar gained on over 20 sessions (30%) - and the US yield advantage (25%), combined into a composite shown as a state - what each reading says - rather than a firm, rangebound or soft dollar call: replayed, high readings were followed by the dollar falling, not rising. Speculative positioning is left out because a crowded long is support today and fragility tomorrow.',
     inputs: ['Dollar strength model', 'Yahoo FX crosses', 'Rate divergence (FRED and OECD long rates)'],
     failureModes: [
       'Breadth counts six crosses, so one currency moving alone changes it by 17 points.',
@@ -185,9 +185,9 @@ export const MODEL_REGISTRY = [
   },
   {
     id: 'metals-verdict-v1',
-    name: 'Metals verdict',
+    name: 'Gold conditions',
     page: 'Metals',
-    measures: 'Gold technicals (50%), the dollar model inverted (30%) and the global liquidity impulse (20%) synthesized into a call. Real yields enter through the dollar model rather than twice, and positioning is left out because a crowded long is support today and fragility tomorrow.',
+    measures: 'Gold technicals (50%), the dollar model inverted (30%) and the global liquidity impulse (20%), combined into a composite shown as a state - what each reading says - rather than a call: replayed, high readings were followed by weaker gold returns and deeper falls, not better ones. Real yields enter through the dollar model rather than twice, and positioning is left out because a crowded long is support today and fragility tomorrow.',
     inputs: ['Gold futures technicals', 'Dollar strength model', 'Global liquidity model'],
     failureModes: ['Needs all three inputs: it refuses when fewer than three report, which a late BoJ release used to cause.'],
     trackRecord: 'verdict-record-v1',

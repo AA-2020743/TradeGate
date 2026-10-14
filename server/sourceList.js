@@ -174,16 +174,16 @@ export const SOURCES = [
     load: getVerdictTrackRecords,
     figure: (payload) => {
       const parts = ['metals', 'crypto', 'fx'].map((key) => payload.records?.[key]).filter((record) => record?.status === 'calculated')
-        .map((record) => `${record.name}: ${record.readings} replays from ${record.from}, now ${record.current.call}`);
+        .map((record) => `${record.name}: ${record.readings} replays from ${record.from}, now ${record.presentation === 'state' ? `reading ${record.current.label}` : record.current.call}`);
       return parts.length ? parts.join('; ') : null;
     },
     // Daily FRED series capped at 2,500 observations start the gold replay in
     // 2016; full CSV histories start it in 2007. Bitcoin's technicals need four
     // years of closes, so its replay starts in 2018.
     plausible: (payload) => [
-      { label: 'gold verdict replays', value: payload.records?.metals?.readings, min: 150, max: 560 },
+      { label: 'gold composite replays', value: payload.records?.metals?.readings, min: 150, max: 560 },
       { label: 'bitcoin verdict replays', value: payload.records?.crypto?.readings, min: 100, max: 260 },
-      { label: 'dollar verdict replays', value: payload.records?.fx?.readings, min: 150, max: 280 },
+      { label: 'dollar composite replays', value: payload.records?.fx?.readings, min: 150, max: 280 },
     ],
   },
   {

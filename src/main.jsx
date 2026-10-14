@@ -647,7 +647,7 @@ function VerdictBanner({ verdict, recordSection = null }) {
         <h2>{verdict.headline}</h2>
       </div>
       <div className="verdict-score">
-        <b>{verdict.score}</b><small>/100</small>
+        <b>{verdict.score}</b><small>/100{verdict.presentation === 'state' ? ' composite' : ''}</small>
         <span className={`verdict-confidence verdict-confidence-${verdict.confidence}`}>{verdict.confidence} confidence</span>
       </div>
     </div>
@@ -659,18 +659,18 @@ function VerdictBanner({ verdict, recordSection = null }) {
 
     <div className="verdict-columns">
       <div>
-        <h4>What carries it</h4>
+        <h4>{verdict.columns?.[0] ?? 'What carries it'}</h4>
         {verdict.supporting.length ? verdict.supporting.slice(0, 4).map((item) => <div className="verdict-row" key={item.key}>
           <span><b>{item.name}</b>{item.detail ? <small>{item.detail}</small> : null}</span>
           <strong className={leanTone(item.score)}>{item.score}</strong>
-        </div>) : <p className="verdict-none">Nothing is pushing in this direction.</p>}
+        </div>) : <p className="verdict-none">{verdict.presentation === 'state' ? 'No reading sits here.' : 'Nothing is pushing in this direction.'}</p>}
       </div>
       <div>
-        <h4>What argues against it</h4>
+        <h4>{verdict.columns?.[1] ?? 'What argues against it'}</h4>
         {verdict.opposing.length ? verdict.opposing.slice(0, 4).map((item) => <div className="verdict-row" key={item.key}>
           <span><b>{item.name}</b>{item.detail ? <small>{item.detail}</small> : null}</span>
           <strong className={leanTone(item.score)}>{item.score}</strong>
-        </div>) : <p className="verdict-none">Nothing argues the other way.</p>}
+        </div>) : <p className="verdict-none">{verdict.presentation === 'state' ? 'No reading sits here.' : 'Nothing argues the other way.'}</p>}
       </div>
     </div>
 
@@ -1872,25 +1872,31 @@ function VerdictRecordPanel({ section, liveCall = null }) {
   const model = payload?.records?.[section] ?? null;
   const published = model?.status === 'calculated';
   const asset = { metals: 'gold', crypto: 'bitcoin', fx: 'dollar' }[section] ?? section;
+  // The gold and dollar sections present their composite as a state, so their
+  // record speaks of the composite's bands; bitcoin's keeps its calls.
+  const state = model?.presentation ? model.presentation === 'state' : section !== 'crypto';
+  const noun = state ? 'composite' : 'verdict';
+  const by = state ? 'BY COMPOSITE BAND' : 'BY REPLAYED CALL';
+  const states = model?.record?.horizons?.[0]?.states ?? [];
   return <article className={`panel verdict-record-panel ${published ? '' : 'preview-section'}`}>
     <div className="panel-title">
       <div>
-        <StatusKicker label={`${asset.toUpperCase()} VERDICT · TRACK RECORD`} published={published} />
-        <h3>{published ? `Has the ${asset} verdict meant anything?` : loadStatus === 'loading' ? 'Replaying the verdict on every second week of its inputs\u2026' : 'Awaiting the macro series and price history'}</h3>
+        <StatusKicker label={`${asset.toUpperCase()} ${noun.toUpperCase()} \u00b7 TRACK RECORD`} published={published} />
+        <h3>{published ? `Has the ${asset} ${noun} meant anything?` : loadStatus === 'loading' ? `Replaying the ${noun} on every second week of its inputs\u2026` : 'Awaiting the macro series and price history'}</h3>
       </div>
       {published ? <span className="data-pill">{model.readings} replays from {model.from}</span> : null}
     </div>
     {published ? <>
       <div className="portfolio-stats">
-        {model.timeInCall.map((entry) => <div key={entry.key}><span>{entry.label}</span><b>{entry.sharePercent}%</b><small>of replayed dates{entry.key === (liveCall ?? model.current.call) ? ' \u00b7 live call' : ''}</small></div>)}
+        {model.timeInCall.map((entry) => <div key={entry.key}><span>{state ? `Composite ${entry.label}` : entry.label}</span><b>{entry.sharePercent}%</b><small>of replayed dates{entry.key === (liveCall ?? model.current.call) ? (state ? ' \u00b7 where it is now' : ' \u00b7 live call') : ''}</small></div>)}
       </div>
       <p className="dca-read">{model.read}</p>
-      {model.omitted?.length ? <p className="treasury-note">Replayed without {model.omitted.join(' and ').toLowerCase()}, which have no long history; the live verdict reads them.</p> : null}
-      <TrackRecordTable record={model.record} current={liveCall ?? model.current.call} title={section === 'fx' ? 'BROAD DOLLAR MOVE THAT FOLLOWED, BY REPLAYED CALL' : `${asset.toUpperCase()} RETURN THAT FOLLOWED, BY REPLAYED CALL`} stateLabel="Call" assumption="the verdict assumes" unit="dates" />
-      <DrawdownRecordTable record={model.falls?.status === 'calculated' ? { ...model.falls, methodology: '', limits: '' } : model.falls} current={liveCall ?? model.current.call} title={`WORST ${section === 'fx' ? 'BROAD DOLLAR' : asset.toUpperCase()} FALL THAT FOLLOWED, BY REPLAYED CALL`} stateLabel="Call" subject={section === 'fx' ? 'the broad dollar' : asset} ordering={`${model.record.horizons[0].states[0].label} dates were followed by the shallowest falls and ${model.record.horizons[0].states.at(-1).label} dates by the deepest`} unit="dates" />
+      {model.omitted?.length ? <p className="treasury-note">Replayed without {model.omitted.join(' and ').toLowerCase()}, which have no long history; the live {noun} reads them.</p> : null}
+      <TrackRecordTable record={model.record} current={liveCall ?? model.current.call} title={section === 'fx' ? `BROAD DOLLAR MOVE THAT FOLLOWED, ${by}` : `${asset.toUpperCase()} RETURN THAT FOLLOWED, ${by}`} stateLabel={state ? 'Composite' : 'Call'} assumption={state ? 'a call would assume' : 'the verdict assumes'} unit="dates" />
+      <DrawdownRecordTable record={model.falls?.status === 'calculated' ? { ...model.falls, methodology: '', limits: '' } : model.falls} current={liveCall ?? model.current.call} title={`WORST ${section === 'fx' ? 'BROAD DOLLAR' : asset.toUpperCase()} FALL THAT FOLLOWED, ${by}`} stateLabel={state ? 'Composite' : 'Call'} subject={section === 'fx' ? 'the broad dollar' : asset} ordering={state ? `dates reading ${states[0]?.label} were followed by the shallowest falls and dates reading ${states.at(-1)?.label} by the deepest` : `${states[0]?.label} dates were followed by the shallowest falls and ${states.at(-1)?.label} dates by the deepest`} unit="dates" />
       <ComponentRecordsTable components={model.legs} spreadLabel="Top minus bottom third, held out" />
       <p className="model-footnote">{model.legNote} {model.methodology} {model.limits}</p>
-    </> : <div className="equity-empty">{model?.reason ?? payload?.reason ?? (loadStatus === 'loading' ? 'The first replay after a restart takes several seconds; it is cached for a day.' : `The verdict record could not be loaded: ${error ?? 'no record for this section'}`)}</div>}
+    </> : <div className="equity-empty">{model?.reason ?? payload?.reason ?? (loadStatus === 'loading' ? 'The first replay after a restart takes several seconds; it is cached for a day.' : `The ${noun} record could not be loaded: ${error ?? 'no record for this section'}`)}</div>}
   </article>;
 }
 
