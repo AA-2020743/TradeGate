@@ -492,3 +492,30 @@ test('a leg with a short history does not cut the regime replay to its span', ()
   assert.ok(model.trackRecord.observations > 450, `${model.trackRecord.observations}`);
   assert.match(model.methodology, /Any two of the three legs are enough/);
 });
+
+test('the regime replay is followed by worst falls as well as returns', () => {
+  const count = 1400;
+  // Calm first half rising steadily, stressed second half sliding: stress
+  // weeks should be followed by the deeper falls.
+  const conditions = series('financialConditions', (index) => (index < 700 ? -0.6 : 0.9), { count });
+  const spread = series('highYieldSpread', (index) => (index < 700 ? 3.1 : 7.5), { count });
+  const vix = series('vix', (index) => (index < 700 ? 13 : 32), { count });
+  const benchmark = Array.from({ length: count }, (_, index) => ({ date: day(index), value: 100 + (index < 700 ? index * 0.05 : 35 - ((index - 700) * 0.02)) + (Math.sin(index / 3) * 0.4) }));
+  const model = calculateRegimeTransitions([conditions, spread, vix], benchmark);
+  assert.equal(model.fallRecord.status, 'calculated');
+  assert.equal(model.fallRecord.readHorizonDays, 90);
+  assert.deepEqual(model.fallRecord.horizons.map((horizon) => horizon.days), model.trackRecord.horizons.map((horizon) => horizon.days));
+  for (const horizon of model.fallRecord.horizons) {
+    for (const state of horizon.states) {
+      const median = state.development.stats.median;
+      assert.ok(!Number.isFinite(median) || median <= 0, `${state.key} at ${horizon.days}d: ${median}`);
+    }
+  }
+  const at90 = model.fallRecord.horizons.find((horizon) => horizon.days === 90);
+  const expansion = at90.states.find((state) => state.key === 'Expansion / risk-on')?.development.stats.median;
+  const contraction = at90.states.find((state) => state.key === 'Contraction / risk-off')?.development.stats.median;
+  if (Number.isFinite(expansion) && Number.isFinite(contraction)) assert.ok(contraction < expansion, `${contraction} vs ${expansion}`);
+  assert.match(model.fallRecord.limits, /hindsight, not a backtest/);
+  // Without a benchmark there is nothing to measure.
+  assert.equal(calculateRegimeTransitions([conditions, spread, vix], []).fallRecord.status, 'unavailable');
+});

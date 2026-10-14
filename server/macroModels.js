@@ -586,6 +586,18 @@ export function calculateRegimeTransitions(seriesList, benchmarkPoints, { stepDa
     const to = benchmark[index + sessions];
     return from && to && from.value > 0 ? round(((to.value / from.value) - 1) * 100, 2) : null;
   };
+  // The deepest fall from any peak inside the same window: 0 when it only rose.
+  const worstFall = (date, sessions) => {
+    const index = benchmark.findIndex((point) => point.date >= date);
+    if (index < 0 || !benchmark[index + sessions] || !(benchmark[index].value > 0)) return null;
+    let peak = benchmark[index].value;
+    let worst = 0;
+    for (let at = index + 1; at <= index + sessions; at += 1) {
+      peak = Math.max(peak, benchmark[at].value);
+      worst = Math.min(worst, (benchmark[at].value / peak) - 1);
+    }
+    return round(worst * 100, 2);
+  };
 
   const samples = [];
   for (let time = new Date(start).getTime(); time <= new Date(end).getTime(); time += stepDays * DAY_MS) {
@@ -637,6 +649,16 @@ export function calculateRegimeTransitions(seriesList, benchmarkPoints, { stepDa
       stepDays,
     })
     : { status: 'unavailable', reason: 'A benchmark history is needed to measure what followed each regime.' };
+  // The same weeks against SPY's worst fall inside each window: a regime can
+  // mis-rank returns and still rank risk, and the two are reported apart.
+  const fallRecord = benchmark.length
+    ? evaluateTrackRecord({
+      observations: samples.map((sample) => ({ date: sample.date, label: sample.regime, returns: Object.fromEntries(horizons.map((horizon) => [horizon.days, worstFall(sample.date, horizon.sessions)])) })),
+      order: REGIME_BANDS.map((band) => ({ key: band.name, label: band.name })),
+      horizons,
+      stepDays,
+    })
+    : { status: 'unavailable', reason: 'A benchmark history is needed to measure what followed each regime.' };
 
   const current = samples.at(-1);
   const currentRun = (() => {
@@ -676,6 +698,9 @@ export function calculateRegimeTransitions(seriesList, benchmarkPoints, { stepDa
         };
       })()
       : trackRecord,
+    fallRecord: fallRecord.status === 'calculated'
+      ? { ...fallRecord, benchmark: 'SPY', readHorizonDays: 90, limits: `${fallRecord.limits}${pointInTime ? '' : ' Scored on the current vintage of the inputs: hindsight, not a backtest.'}` }
+      : fallRecord,
     dwellDays: Object.fromEntries(Object.entries(dwell).map(([regime, lengths]) => [regime, { episodes: lengths.length, medianDays: Math.round(mean(lengths)) }])),
     read: `${transitions.length} regime ${transitions.length === 1 ? 'change' : 'changes'} across ${samples.length} recomputed readings since ${samples[0].date}. The tape has been in ${current.regime} for ${currentRun} days${typicalDwell ? `, against a ${typicalDwell}-day average for that regime in this history` : ''}.`,
     methodology: `The score is recomputed every ${stepDays} days from financial conditions, high-yield spreads and volatility using the same weights and clamps the live regime applies to them, then bucketed into the same bands. Any two of the three legs are enough, so weeks before the high-yield spread’s history begins are scored from the other two, reweighted. ${pointInTime ? `Point-in-time observations are used for ${Object.keys(pointInTimeByKey).join(', ')}: each score sees only values that had actually been published by that date, which makes those legs a genuine backtest rather than hindsight.` : 'This is a hindsight study rather than a backtest: the series carry their current vintage, so a revised observation is used at a date when its revision did not exist. A FRED API key would unlock the point-in-time vintages that fix this.'} Forward returns are the benchmark's move over the following sessions from the transition date, and are omitted where the history does not extend far enough.`,

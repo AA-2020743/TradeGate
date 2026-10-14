@@ -446,6 +446,29 @@ export function liquidityImpulseRecord(liquidity, asset, { changeDays = 91, maxG
   };
   const impulses = [];
   const observations = [];
+  const fallObservations = [];
+  const sortedAsset = [...asset].sort((left, right) => left.date.localeCompare(right.date));
+  const assetDates = sortedAsset.map((point) => point.date);
+  // Closes strictly after `from` through `to`, found by binary search.
+  const firstAfter = (date) => {
+    let low = 0;
+    let high = assetDates.length;
+    while (low < high) {
+      const middle = (low + high) >> 1;
+      if (assetDates[middle] <= date) low = middle + 1;
+      else high = middle;
+    }
+    return low;
+  };
+  const worstFallBetween = (from, to) => {
+    let peak = from.value;
+    let worst = 0;
+    for (let at = firstAfter(from.date); at < assetDates.length && assetDates[at] <= to.date; at += 1) {
+      peak = Math.max(peak, sortedAsset[at].value);
+      worst = Math.min(worst, (sortedAsset[at].value / peak) - 1);
+    }
+    return worst * 100;
+  };
   for (const point of liquidity) {
     const priorTarget = new Date(new Date(point.date).getTime() - (changeDays * DAY_MS)).toISOString().slice(0, 10);
     const prior = latestAtOrBefore(liquidity, priorTarget);
@@ -457,17 +480,20 @@ export function liquidityImpulseRecord(liquidity, asset, { changeDays = 91, maxG
     const label = ranked > 200 / 3 ? 'strong' : ranked <= 100 / 3 ? 'weak' : 'middle';
     const from = assetAt(point.date);
     if (!from || from.value <= 0) continue;
-    const returns = Object.fromEntries(horizons.map((horizon) => {
-      const to = assetAt(new Date(new Date(point.date).getTime() + (horizon.days * DAY_MS)).toISOString().slice(0, 10));
-      return [horizon.days, to && to.date > from.date ? ((to.value / from.value) - 1) * 100 : null];
-    }));
+    const ends = horizons.map((horizon) => [horizon.days, assetAt(new Date(new Date(point.date).getTime() + (horizon.days * DAY_MS)).toISOString().slice(0, 10))]);
+    const returns = Object.fromEntries(ends.map(([days, to]) => [days, to && to.date > from.date ? ((to.value / from.value) - 1) * 100 : null]));
     observations.push({ date: point.date, label, returns });
+    // The same impulse followed by the asset's worst fall inside the window.
+    fallObservations.push({ date: point.date, label, returns: Object.fromEntries(ends.map(([days, to]) => [days, to && to.date > from.date ? worstFallBetween(from, to) : null])) });
   }
-  const record = evaluateTrackRecord({ observations, order: LIQUIDITY_IMPULSE_STATES, horizons, stepDays: Math.max(1, Math.round(medianSpacingDays(liquidity) ?? 7)) });
+  const stepDays = Math.max(1, Math.round(medianSpacingDays(liquidity) ?? 7));
+  const record = evaluateTrackRecord({ observations, order: LIQUIDITY_IMPULSE_STATES, horizons, stepDays });
   if (record.status !== 'calculated') return { version: 'liquidity-impulse-record-v1', ...record };
+  const falls = evaluateTrackRecord({ observations: fallObservations, order: LIQUIDITY_IMPULSE_STATES, horizons, stepDays });
   return {
     version: 'liquidity-impulse-record-v1',
     ...record,
+    falls: falls.status === 'calculated' ? { ...falls, readHorizonDays: 90 } : falls,
     readHorizonDays: 90,
     limits: `Descriptive, not predictive. Each impulse is ranked only against the ones before it, after the first ${MINIMUM_PRIOR_IMPULSES}. The liquidity series carries its current vintage, and one decade of it spans a single long cycle of balance-sheet expansion and runoff.`,
   };

@@ -303,6 +303,13 @@ test('the liquidity impulse record ranks each impulse only against earlier ones 
   const horizon = record.horizons.find((entry) => entry.days === 30);
   assert.ok(horizon.development.ordering >= 0.6, `${horizon.development.ordering}`);
   assert.ok(record.from > date(51 * 7), 'the first year only seeds the ranking');
+  // The same impulses followed by the asset's worst fall: never positive, and
+  // shallower after the strongest impulses, when the asset only falls in the
+  // shrinking phases.
+  assert.equal(record.falls.status, 'calculated');
+  const falls = record.falls.horizons.find((entry) => entry.days === 30);
+  assert.ok(falls.states.every((state) => !Number.isFinite(state.development.stats.median) || state.development.stats.median <= 0));
+  assert.ok(falls.development.ordering >= 0.6, `${falls.development.ordering}`);
   const short = liquidityImpulseRecord(liquidity.slice(0, 60), asset);
   assert.equal(short.status, 'unavailable');
 });

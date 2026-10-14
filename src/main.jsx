@@ -2598,6 +2598,7 @@ function RegimeHistoryPanel({ history }) {
       {recent.length ? null : <div className="equity-empty">No regime change inside the recomputed window.</div>}
       {history.trackRecord?.read ? <p className="dca-read">{history.trackRecord.read}</p> : null}
       <TrackRecordTable record={history.trackRecord} current={history.current?.regime} title={`WHAT FOLLOWED EACH REGIME \u00b7 ${history.trackRecord?.benchmark ?? 'SPY'}`} stateLabel="Regime" assumption="the regime model assumes" />
+      <DrawdownRecordTable record={history.fallRecord?.status === 'calculated' ? { ...history.fallRecord, methodology: '', limits: '' } : history.fallRecord} current={history.current?.regime} title={`WORST FALL THAT FOLLOWED EACH REGIME \u00b7 ${history.fallRecord?.benchmark ?? 'SPY'}`} stateLabel="Regime" subject="SPY" ordering="Expansion weeks were followed by the shallowest falls and Contraction weeks by the deepest" unit="weeks" />
     </> : <div className="equity-empty">{history?.reason ?? 'At least two overlapping macro histories are required.'}</div>}
     <p className="model-footnote">{published ? `${history.read} ${history.reason ?? ''}` : ''} {history?.methodology ?? ''}</p>
   </article>;
@@ -2696,6 +2697,7 @@ function LiquidityPayoffPanel({ payoff }) {
     </> : <div className="equity-empty">{payoff?.reason ?? 'A liquidity history and a long asset history are both required.'}</div>}
     <p className="model-footnote">{published ? payoff.read : ''} {payoff?.methodology ?? ''}</p>
     {payoff?.record ? <TrackRecordTable record={payoff.record} title="POINT IN TIME: WHAT FOLLOWED EACH IMPULSE THIRD, RANKED ONLY AGAINST EARLIER WEEKS" stateLabel="Impulse" assumption="liquidity leading assumes" unit="weeks" /> : null}
+    {payoff?.record?.falls ? <DrawdownRecordTable record={payoff.record.falls.status === 'calculated' ? { ...payoff.record.falls, methodology: '', limits: '' } : payoff.record.falls} title="POINT IN TIME: WORST FALL THAT FOLLOWED EACH IMPULSE THIRD" stateLabel="Impulse" subject="the S&P 500" ordering="the strongest impulses were followed by the shallowest falls and the weakest by the deepest" unit="weeks" /> : null}
   </article>;
 }
 
