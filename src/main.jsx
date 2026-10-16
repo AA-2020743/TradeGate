@@ -201,25 +201,48 @@ function LiquidityHistoryChart({ history, range, onRangeChange, expanded = false
   </div>;
 }
 
-function useDialogClose(onClose) {
+function useDialogClose(onClose, dialogRef = null) {
+  // Held in a ref so the effect runs once: callers pass inline closers, and a
+  // re-run on every parent render (each poll) would hand focus back to the
+  // opener behind an open dialog.
+  const closeRef = React.useRef(onClose);
+  closeRef.current = onClose;
+  // Read during the first render: by the time an effect runs, the dialog's
+  // autofocused close button already holds focus.
+  const openerRef = React.useRef(undefined);
+  if (openerRef.current === undefined) openerRef.current = typeof document === 'undefined' ? null : document.activeElement;
   React.useEffect(() => {
-    const closeOnEscape = (event) => {
-      if (event.key === 'Escape') onClose();
+    // Focus returns to whatever opened the dialog, and Tab stays inside it:
+    // without this, Tab walked into the page behind the backdrop.
+    const opener = openerRef.current;
+    const onKeyDown = (event) => {
+      if (event.key === 'Escape') { closeRef.current(); return; }
+      const dialog = dialogRef?.current;
+      if (event.key !== 'Tab' || !dialog) return;
+      const focusable = [...dialog.querySelectorAll('button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])')].filter((node) => !node.disabled && node.offsetParent !== null);
+      if (!focusable.length) return;
+      const first = focusable[0];
+      const last = focusable.at(-1);
+      if (!dialog.contains(document.activeElement)) { event.preventDefault(); first.focus(); }
+      else if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last.focus(); }
+      else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus(); }
     };
-    document.addEventListener('keydown', closeOnEscape);
+    document.addEventListener('keydown', onKeyDown);
     const previousOverflow = document.body.style.overflow;
     document.body.style.overflow = 'hidden';
     return () => {
-      document.removeEventListener('keydown', closeOnEscape);
+      document.removeEventListener('keydown', onKeyDown);
       document.body.style.overflow = previousOverflow;
+      if (opener && typeof opener.focus === 'function' && document.contains(opener)) opener.focus();
     };
-  }, [onClose]);
+  }, [dialogRef]);
 }
 
 function InfoDialog({ id, kicker, title, description, closeLabel, onClose, children }) {
-  useDialogClose(onClose);
+  const dialogRef = React.useRef(null);
+  useDialogClose(onClose, dialogRef);
   return <div className="liquidity-dialog-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}>
-    <section className="liquidity-dialog info-dialog panel" role="dialog" aria-modal="true" aria-labelledby={`${id}-title`}>
+    <section ref={dialogRef} className="liquidity-dialog info-dialog panel" role="dialog" aria-modal="true" aria-labelledby={`${id}-title`}>
       <header><div><p className="section-kicker">{kicker}</p><h2 id={`${id}-title`}>{title}</h2>{description ? <p>{description}</p> : null}</div><button className="liquidity-dialog-close" onClick={onClose} aria-label={closeLabel} autoFocus>×</button></header>
       {children}
     </section>
@@ -278,9 +301,10 @@ function SourceLagsDialog({ series, onClose }) {
 
 function LiquidityChartDialog({ history, title, description, label, onClose }) {
   const [range, setRange] = React.useState('All');
-  useDialogClose(onClose);
+  const dialogRef = React.useRef(null);
+  useDialogClose(onClose, dialogRef);
   return <div className="liquidity-dialog-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}>
-    <section className="liquidity-dialog panel" role="dialog" aria-modal="true" aria-labelledby="liquidity-dialog-title">
+    <section ref={dialogRef} className="liquidity-dialog panel" role="dialog" aria-modal="true" aria-labelledby="liquidity-dialog-title">
       <header><div><p className="section-kicker">HISTORICAL MODEL INSPECTOR</p><h2 id="liquidity-dialog-title">{title}</h2><p>{description}</p></div><button className="liquidity-dialog-close" onClick={onClose} aria-label="Close liquidity chart">×</button></header>
       <LiquidityHistoryChart history={history} range={range} onRangeChange={setRange} expanded label={label} />
     </section>
