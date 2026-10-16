@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { changeOverSpan, formatPercent, formatSpanLabel, formatTimestamp, formatUsd } from './liveData.js';
+import { changeOverSpan, formatPercent, formatSpanLabel, formatTimestamp, formatUsd, loadProgressively } from './liveData.js';
 
 test('an unreadable provider timestamp is reported, not thrown', () => {
   // Intl.DateTimeFormat raises RangeError on an invalid date; one malformed
@@ -94,4 +94,49 @@ test('a span reports in the unit that describes it', () => {
   assert.equal(formatSpanLabel(88), '13W');
   assert.equal(formatSpanLabel(10), '10D');
   assert.equal(formatSpanLabel(0), '');
+});
+
+test('fast answers are drawn before a slow one finishes', async () => {
+  let releaseSlow;
+  const slow = new Promise((resolve) => { releaseSlow = resolve; });
+  const updates = [];
+  const request = (path) => (path === '/slow' ? slow : path === '/broken' ? Promise.reject(new Error('down')) : Promise.resolve({ path }));
+  const done = loadProgressively({
+    requests: [['health', '/health'], ['markets', '/markets'], ['broken', '/broken'], ['screener', '/slow']],
+    coreKeys: ['health', 'markets'],
+    request,
+    flushMs: 5,
+    onUpdate: (update) => updates.push(update),
+    derive: (core) => ({ status: core.health.status === 'fulfilled' && core.markets.status === 'fulfilled' ? 'live' : 'partial' }),
+  });
+  await new Promise((resolve) => { setTimeout(resolve, 30); });
+  // Everything but the slow request has been delivered, with the status.
+  const early = Object.assign({}, ...updates);
+  assert.deepEqual(early.health, { path: '/health' });
+  assert.equal(early.status, 'live');
+  assert.equal(early.broken, null);
+  assert.equal('screener' in early, false);
+  let finished = false;
+  done.then(() => { finished = true; });
+  await new Promise((resolve) => { setTimeout(resolve, 10); });
+  assert.equal(finished, false, 'the batch is not finished while one request is outstanding');
+  releaseSlow({ rows: [] });
+  const results = await done;
+  assert.deepEqual(Object.assign({}, ...updates).screener, { rows: [] });
+  assert.equal(results.length, 4);
+});
+
+test('nothing is delivered after the page has gone', async () => {
+  let active = true;
+  const updates = [];
+  const done = loadProgressively({
+    requests: [['health', '/health']],
+    request: () => new Promise((resolve) => { setTimeout(() => resolve({}), 5); }),
+    flushMs: 5,
+    isActive: () => active,
+    onUpdate: (update) => updates.push(update),
+  });
+  active = false;
+  await done;
+  assert.equal(updates.length, 0);
 });

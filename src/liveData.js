@@ -22,6 +22,83 @@ async function requestJson(path) {
   return response.json();
 }
 
+const PLATFORM_REQUESTS = [
+  ['health', '/api/health'],
+  ['markets', '/api/markets/snapshot'],
+  ['liquidity', '/api/macro/liquidity'],
+  ['dxyBtc', '/api/analytics/dxy-btc'],
+  ['regimeCorrelations', '/api/analytics/regime-correlations'],
+  ['positioning', '/api/analytics/positioning'],
+  ['heatmap', '/api/analytics/heatmap'],
+  ['metals', '/api/analytics/metals'],
+  ['fx', '/api/analytics/fx'],
+  ['hardMoney', '/api/analytics/hard-money'],
+  ['accumulation', '/api/analytics/accumulation'],
+  ['cryptoOptions', '/api/analytics/crypto-options'],
+  ['treasury', '/api/macro/treasury'],
+  ['factors', '/api/analytics/factors'],
+  ['signalRecords', '/api/analytics/signal-records'],
+  ['crossCheck', '/api/analytics/price-crosscheck'],
+  ['models', '/api/models'],
+  ['sentiment', '/api/analytics/sentiment'],
+  ['bitcoin', '/api/analytics/bitcoin'],
+  ['equityRisk', '/api/analytics/equity-risk'],
+  ['news', '/api/news/wire'],
+  ['screener', '/api/analytics/screener'],
+  ['alerts', '/api/alerts'],
+  ['indexValuation', '/api/analytics/index-valuation'],
+];
+const PLATFORM_CORE_KEYS = ['health', 'markets', 'liquidity', 'dxyBtc'];
+
+/**
+ * Runs a batch of requests and hands each answer over as it arrives.
+ *
+ * The page used to wait for every request in its batch before drawing any
+ * of them, so on a cold server the Overview sat empty until the screener's
+ * five-hundred-symbol read and the valuation workbook had finished, though
+ * it shows neither. Answers arriving close together are delivered in one
+ * update; the derived state (the platform status) is computed as soon as the
+ * core requests have settled; and the promise still resolves only when all
+ * have, so a poller never starts one batch on top of another. A failed
+ * request delivers null, as the all-at-once version did.
+ */
+export async function loadProgressively({ requests, coreKeys = [], request = requestJson, onUpdate, derive = () => ({}), flushMs = 60, isActive = () => true }) {
+  const pending = {};
+  let timer = null;
+  const flush = () => {
+    timer = null;
+    const keys = Object.keys(pending);
+    if (!keys.length || !isActive()) return;
+    const update = {};
+    for (const key of keys) {
+      update[key] = pending[key];
+      delete pending[key];
+    }
+    onUpdate(update);
+  };
+  const queue = (key, value) => {
+    pending[key] = value;
+    if (timer === null) timer = setTimeout(flush, flushMs);
+  };
+  const keys = requests.map(([key]) => key);
+  const settled = requests.map(([key, path]) => Promise.resolve()
+    .then(() => request(path))
+    .then(
+      (value) => { queue(key, value); return { status: 'fulfilled', value }; },
+      (reason) => { queue(key, null); return { status: 'rejected', reason }; },
+    ));
+  const core = await Promise.all(coreKeys.map((key) => settled[keys.indexOf(key)]));
+  if (isActive()) {
+    for (const [key, value] of Object.entries(derive(Object.fromEntries(coreKeys.map((key, index) => [key, core[index]]))))) queue(key, value);
+  }
+  const all = await Promise.all(settled);
+  if (timer !== null) {
+    clearTimeout(timer);
+    flush();
+  }
+  return all;
+}
+
 export function usePlatformData() {
   const [state, setState] = useState({
     status: 'loading',
@@ -56,98 +133,23 @@ export function usePlatformData() {
   useEffect(() => {
     let active = true;
 
-    const load = async () => {
-      const [health, markets, liquidity, dxyBtc, regimeCorrelations, positioning, heatmap, metals, fx, hardMoney, accumulation, cryptoOptions, treasury, factors, signalRecords, crossCheck, models, sentiment, bitcoin, equityRisk, news, screener, alerts, indexValuation] = await Promise.allSettled([
-        requestJson('/api/health'),
-        requestJson('/api/markets/snapshot'),
-        requestJson('/api/macro/liquidity'),
-        requestJson('/api/analytics/dxy-btc'),
-        requestJson('/api/analytics/regime-correlations'),
-        requestJson('/api/analytics/positioning'),
-        requestJson('/api/analytics/heatmap'),
-        requestJson('/api/analytics/metals'),
-        requestJson('/api/analytics/fx'),
-        requestJson('/api/analytics/hard-money'),
-        requestJson('/api/analytics/accumulation'),
-        requestJson('/api/analytics/crypto-options'),
-        requestJson('/api/macro/treasury'),
-        requestJson('/api/analytics/factors'),
-        requestJson('/api/analytics/signal-records'),
-        requestJson('/api/analytics/price-crosscheck'),
-        requestJson('/api/models'),
-        requestJson('/api/analytics/sentiment'),
-        requestJson('/api/analytics/bitcoin'),
-        requestJson('/api/analytics/equity-risk'),
-        requestJson('/api/news/wire'),
-        requestJson('/api/analytics/screener'),
-        requestJson('/api/alerts'),
-        requestJson('/api/analytics/index-valuation'),
-      ]);
-      if (!active) return;
-
-      const healthData = health.status === 'fulfilled' ? health.value : null;
-      const marketData = markets.status === 'fulfilled' ? markets.value : null;
-      const liquidityData = liquidity.status === 'fulfilled' ? liquidity.value : null;
-      const dxyBtcData = dxyBtc.status === 'fulfilled' ? dxyBtc.value : null;
-      const regimeCorrelationsData = regimeCorrelations.status === 'fulfilled' ? regimeCorrelations.value : null;
-      const positioningData = positioning.status === 'fulfilled' ? positioning.value : null;
-      const heatmapData = heatmap.status === 'fulfilled' ? heatmap.value : null;
-      const metalsData = metals.status === 'fulfilled' ? metals.value : null;
-      const fxData = fx.status === 'fulfilled' ? fx.value : null;
-      const hardMoneyData = hardMoney.status === 'fulfilled' ? hardMoney.value : null;
-      const accumulationData = accumulation.status === 'fulfilled' ? accumulation.value : null;
-      const cryptoOptionsData = cryptoOptions.status === 'fulfilled' ? cryptoOptions.value : null;
-      const treasuryData = treasury.status === 'fulfilled' ? treasury.value : null;
-      const factorsData = factors.status === 'fulfilled' ? factors.value : null;
-      const signalRecordsData = signalRecords.status === 'fulfilled' ? signalRecords.value : null;
-      const indexValuationData = indexValuation.status === 'fulfilled' ? indexValuation.value : null;
-      const crossCheckData = crossCheck.status === 'fulfilled' ? crossCheck.value : null;
-      const modelsData = models.status === 'fulfilled' ? models.value : null;
-      const sentimentData = sentiment.status === 'fulfilled' ? sentiment.value : null;
-      const bitcoinData = bitcoin.status === 'fulfilled' ? bitcoin.value : null;
-      const equityRiskData = equityRisk.status === 'fulfilled' ? equityRisk.value : null;
-      const newsData = news.status === 'fulfilled' ? news.value : null;
-      const screenerData = screener.status === 'fulfilled' ? screener.value : null;
-      const alertsData = alerts.status === 'fulfilled' ? alerts.value : null;
-      const coreRequests = { health, markets, liquidity, dxyBtc };
-      const platform = derivePlatformStatus({
-        health: healthData,
-        markets: marketData,
-        liquidity: liquidityData,
-        failedRequests: Object.entries(coreRequests).filter(([, result]) => result.status === 'rejected').map(([name]) => name),
-        blockedSources: healthData?.blockedSources ?? [],
-      });
-
-      setState({
-        status: platform.status,
-        platform,
-        health: healthData,
-        markets: marketData,
-        liquidity: liquidityData,
-        dxyBtc: dxyBtcData,
-        regimeCorrelations: regimeCorrelationsData,
-        positioning: positioningData,
-        heatmap: heatmapData,
-        metals: metalsData,
-        fx: fxData,
-        hardMoney: hardMoneyData,
-        accumulation: accumulationData,
-        cryptoOptions: cryptoOptionsData,
-        treasury: treasuryData,
-        factors: factorsData,
-        signalRecords: signalRecordsData,
-        indexValuation: indexValuationData,
-        crossCheck: crossCheckData,
-        models: modelsData,
-        sentiment: sentimentData,
-        bitcoin: bitcoinData,
-        equityRisk: equityRiskData,
-        news: newsData,
-        screener: screenerData,
-        alerts: alertsData,
-        error: platform.error,
-      });
-    };
+    const load = () => loadProgressively({
+      requests: PLATFORM_REQUESTS,
+      coreKeys: PLATFORM_CORE_KEYS,
+      isActive: () => active,
+      onUpdate: (update) => setState((current) => ({ ...current, ...update })),
+      derive: (core) => {
+        const valueOf = (result) => (result.status === 'fulfilled' ? result.value : null);
+        const platform = derivePlatformStatus({
+          health: valueOf(core.health),
+          markets: valueOf(core.markets),
+          liquidity: valueOf(core.liquidity),
+          failedRequests: PLATFORM_CORE_KEYS.filter((key) => core[key].status === 'rejected'),
+          blockedSources: valueOf(core.health)?.blockedSources ?? [],
+        });
+        return { status: platform.status, platform, error: platform.error };
+      },
+    });
 
     const poller = createPoller({ load, intervalMs: 60_000 });
     poller.start();
