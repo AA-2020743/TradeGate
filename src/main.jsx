@@ -1262,6 +1262,18 @@ function ScorecardPanel() {
     </div>
     {published ? <>
       <p className="dca-read">{card.read}</p>
+      {card.pairs?.length ? <>
+        <p className="dca-read"><b>Returns or risk?</b> {card.pairsRead}</p>
+        <div className="scorecard-table scorecard-pairs" role="table" aria-label="States tested on both the return and the worst fall that followed">
+          <div className="scorecard-row scorecard-head" role="row"><span role="columnheader">State</span><span role="columnheader">Return that followed</span><span role="columnheader">Worst fall that followed</span><span role="columnheader">What it ranks</span></div>
+          {card.pairs.map((pair) => <div className="scorecard-row" role="row" key={pair.name}>
+            <span role="cell"><b>{pair.name}</b><small>{pair.page}</small></span>
+            <span role="cell" data-label="Return" className={SCORECARD_TONE[pair.returns.verdict]}>{pair.returns.verdictLabel}</span>
+            <span role="cell" data-label="Worst fall" className={SCORECARD_TONE[pair.falls.verdict]}>{pair.falls.verdictLabel}</span>
+            <span role="cell"><b>{pair.readingLabel}</b>{pair.recentOnly ? <small>after its cutoff only</small> : null}</span>
+          </div>)}
+        </div>
+      </> : null}
       <div className="scorecard-table" role="table" aria-label="Track records and their held-out verdicts">
         <div className="scorecard-row scorecard-head" role="row"><span role="columnheader">Model</span><span role="columnheader">What it assumes</span><span role="columnheader">Before</span><span role="columnheader">Held out</span><span role="columnheader">Verdict</span></div>
         {card.rows.map((row) => <div className="scorecard-row" role="row" key={row.key}>

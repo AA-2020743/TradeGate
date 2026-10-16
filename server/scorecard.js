@@ -144,6 +144,64 @@ export function scoreTrackRecord(record, { preferredDays = record?.readHorizonDa
   };
 }
 
+// A state "ranks" an outcome when its held-out block ran in the assumed
+// order: in both blocks, or at least after the cutoff (marked as recent).
+const RANKED = new Set(['held', 'held-recent']);
+const UNJUDGED = new Set(['untested', 'thin', 'unavailable']);
+
+export const PAIR_READINGS = {
+  both: 'Ranks the returns and the falls',
+  'risk-only': 'Ranks the falls, not the returns',
+  'returns-only': 'Ranks the returns, not the falls',
+  neither: 'Ranks neither',
+  unjudged: 'Not yet judged on both',
+};
+
+/**
+ * Each state tested on both what followed and how deep the falls were,
+ * classified by which of the two its held-out block ranked. A label that
+ * mis-ranks returns can still rank risk, and that is a claim the page can
+ * make for it; one that ranks neither can only describe.
+ */
+export function pairReturnsWithFalls(entries, rows) {
+  return entries.filter((entry) => entry.fallsOf).flatMap((entry) => {
+    const returns = rows.find((row) => row.key === entry.fallsOf);
+    const falls = rows.find((row) => row.key === entry.key);
+    if (!returns || !falls) return [];
+    const judged = !UNJUDGED.has(returns.verdict) && !UNJUDGED.has(falls.verdict);
+    const ranksReturns = RANKED.has(returns.verdict);
+    const ranksFalls = RANKED.has(falls.verdict);
+    const reading = !judged ? 'unjudged' : ranksReturns && ranksFalls ? 'both' : ranksFalls ? 'risk-only' : ranksReturns ? 'returns-only' : 'neither';
+    // Ranked only after the cutoff is weaker evidence than ranked throughout.
+    const recentOnly = (ranksReturns && returns.verdict === 'held-recent') || (ranksFalls && falls.verdict === 'held-recent');
+    return [{
+      name: entry.pairName ?? returns.name,
+      page: returns.page,
+      returns: { key: returns.key, verdict: returns.verdict, verdictLabel: returns.verdictLabel, heldOutOrdering: returns.heldOutOrdering ?? null },
+      falls: { key: falls.key, verdict: falls.verdict, verdictLabel: falls.verdictLabel, heldOutOrdering: falls.heldOutOrdering ?? null },
+      reading,
+      readingLabel: PAIR_READINGS[reading],
+      recentOnly,
+    }];
+  });
+}
+
+export function describePairs(pairs) {
+  if (!pairs.length) return null;
+  // Mid-sentence, "Gold composite" reads "gold composite"; VIX and US stay as they are.
+  const midSentence = (name) => (/^[A-Z][a-z]/.test(name) ? `${name.charAt(0).toLowerCase()}${name.slice(1)}` : name);
+  const named = (list) => list.map((pair) => `${midSentence(pair.name)}${pair.recentOnly ? ' (after its cutoff only)' : ''}`).join(', ');
+  const group = (reading) => pairs.filter((pair) => pair.reading === reading);
+  const parts = [
+    [group('risk-only'), 'ranked the falls that followed but not the returns'],
+    [group('both'), 'ranked both'],
+    [group('returns-only'), 'ranked the returns but not the falls'],
+    [group('neither'), 'ranked neither'],
+    [group('unjudged'), 'cannot be judged on both yet'],
+  ].filter(([list]) => list.length).map(([list, phrase]) => `${list.length} ${phrase} (${named(list)})`);
+  return `Of ${pairs.length} states tested on both the return and the worst fall that followed, ${parts.join('; ')}.`;
+}
+
 /**
  * @param {Array<{ key: string, name: string, page: string, assumption: string, measure: string, result: PromiseSettledResult<object>, pick: (payload: object) => object, components?: (payload: object) => object[] }>} entries
  */
@@ -172,6 +230,7 @@ export function buildScorecard(entries) {
     } : row;
   });
   const counts = Object.fromEntries(Object.keys(SCORECARD_VERDICTS).map((key) => [key, rows.filter((row) => row.verdict === key).length]));
+  const pairs = pairReturnsWithFalls(entries, rows);
   const judged = rows.filter((row) => !['untested', 'thin', 'unavailable'].includes(row.verdict));
   const describe = () => {
     if (!judged.length) return 'No track record has a held-out block large enough to judge yet.';
@@ -189,6 +248,8 @@ export function buildScorecard(entries) {
     rows,
     counts,
     read: describe(),
+    pairs,
+    pairsRead: describePairs(pairs),
     methodology: `Each row is the model’s own track record from the shared evaluator, at the horizon its panel reads (or the longest with a held-out score). Ordering runs from -1, the states exactly reversed, to +1, exactly the order the model assumes. Held up means ${HOLDS} or more in both the development block and the held-out newest 30%; ${REVERSED} or less in the held-out block means the order ran the other way.`,
     limits: 'An ordering score says whether the states ranked as assumed, not by how much; the panels give the medians. Held-out blocks are short by construction, and several records share assets and years, so their verdicts are not independent of one another.',
   };

@@ -723,6 +723,16 @@ html[data-theme='dark'] .heldout-band { fill: #222c25; }
   .scorecard-head > span:last-child { display: none; }
 }
 
+/* Each state tested on both returns and worst falls. */
+.scorecard-pairs { margin-bottom: 1rem; }
+.scorecard-pairs .scorecard-row { grid-template-columns: minmax(0, 1.1fr) minmax(0, 1fr) minmax(0, 1fr) minmax(0, 1fr); }
+@media (max-width: 760px) {
+  .scorecard-pairs .scorecard-row { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
+  .scorecard-pairs .scorecard-head { display: none; }
+  .scorecard-pairs .scorecard-row > span:first-child { grid-column: 1 / -1; }
+  .scorecard-pairs .scorecard-row > span[data-label]::before { content: attr(data-label); display: block; color: #5f6861; font: 500 0.66rem 'DM Mono', monospace; text-transform: uppercase; letter-spacing: 0.04em; margin-bottom: 2px; }
+}
+
 /* Bitcoin cycle phase track record (Crypto) */
 .cycle-record-panel { margin-top: 14px; }
 .verdict-record-panel { margin-top: 14px; }

@@ -182,6 +182,7 @@ export function servedLoader(baseUrl, endpoint, { fetchImpl = globalThis.fetch, 
 }
 
 const SCORECARD_MARKS = { held: 'HELD', 'held-recent': 'RCNT', faded: 'FADE', reversed: 'REV ', 'no-order': 'NONE', untested: 'THIN', thin: 'THIN', unavailable: 'N/A ' };
+const PAIR_MARKS = { both: 'BOTH', 'risk-only': 'RISK', 'returns-only': 'RETN', neither: 'NONE', unjudged: 'THIN' };
 
 /**
  * The track-record scorecard as report lines: the summary sentence, then one
@@ -199,6 +200,13 @@ export function formatScorecard(card) {
     lines.push(`${SCORECARD_MARKS[row.verdict] ?? '    '}  ${row.name}: ${row.verdictLabel.toLowerCase()} (${detail})`);
     for (const component of row.components ?? []) {
       lines.push(`        · ${component.label}${Number.isFinite(component.weight) ? ` (${component.weight}%)` : ''}: ${component.verdictLabel.toLowerCase()} (before ${score(component.developmentOrdering)}, held out ${score(component.heldOutOrdering)}, ${component.days} days)`);
+    }
+  }
+  // Each state tested on both: did it rank the returns, the falls, or neither?
+  if (card.pairsRead) {
+    lines.push('', `Returns or risk: ${card.pairsRead}`);
+    for (const pair of card.pairs ?? []) {
+      lines.push(`${PAIR_MARKS[pair.reading] ?? '    '}  ${pair.name}: returns ${pair.returns.verdictLabel.toLowerCase()}; worst falls ${pair.falls.verdictLabel.toLowerCase()}`);
     }
   }
   return lines;

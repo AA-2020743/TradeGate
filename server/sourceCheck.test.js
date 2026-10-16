@@ -190,3 +190,17 @@ test('each input of a composite record prints indented under its row', () => {
   assert.equal(lines[2], '        · Gold technicals (50%): ran against its assumed order since (before -1, held out -1, 90 days)');
   assert.equal(lines[3], '        · RSI: held-out block too thin to judge (before +1, held out n/a, 90 days)');
 });
+
+test('the scorecard ends with each paired state and what it ranked', () => {
+  const lines = formatScorecard({
+    status: 'calculated',
+    read: 'Of 2 track records, 2 have a held-out block large enough to judge.',
+    rows: [],
+    pairsRead: 'Of 1 state tested on both the return and the worst fall that followed, 1 ranked the falls that followed but not the returns (VIX term structure).',
+    pairs: [{ name: 'VIX term structure', reading: 'risk-only', returns: { verdictLabel: 'Ran against its assumed order since' }, falls: { verdictLabel: 'Held up out of sample' } }],
+  });
+  assert.equal(lines.at(-2), 'Returns or risk: Of 1 state tested on both the return and the worst fall that followed, 1 ranked the falls that followed but not the returns (VIX term structure).');
+  assert.equal(lines.at(-1), 'RISK  VIX term structure: returns ran against its assumed order since; worst falls held up out of sample');
+  // Without pairs, nothing is added.
+  assert.equal(formatScorecard({ status: 'calculated', read: 'x', rows: [] }).length, 1);
+});

@@ -71,3 +71,36 @@ test('an input too thin to rank at the preferred horizon is judged at the longes
   assert.equal(component.summary.days, 30);
   assert.equal(component.summary.verdict, 'held');
 });
+
+test('each state tested on both is classified by whether it ranked the returns, the falls, both or neither', async () => {
+  const { buildScorecard } = await import('./scorecard.js');
+  const entry = (key, horizons, extra = {}) => ({ key, name: key, page: 'P', assumption: 'x', measure: 'm', result: { status: 'fulfilled', value: record(horizons) }, pick: (payload) => payload, ...extra });
+  const card = buildScorecard([
+    entry('vix', [[90, -1, -1]]),
+    entry('vixFalls', [[90, 1, 1]], { fallsOf: 'vix', pairName: 'VIX term structure' }),
+    entry('tech', [[90, -1, -1]]),
+    entry('techFalls', [[90, 0.33, 1]], { fallsOf: 'tech', pairName: 'Technical regime' }),
+    entry('btc', [[30, 1, 1]]),
+    entry('btcFalls', [[30, 1, 1]], { fallsOf: 'btc', pairName: 'Bitcoin verdict' }),
+    entry('gold', [[90, -0.33, -1]]),
+    entry('goldFalls', [[90, -0.67, -1]], { fallsOf: 'gold', pairName: 'Gold composite' }),
+    entry('liq', [[30, 0.33, 0.33]]),
+    entry('liqFalls', [[30, 1, -0.33]], { fallsOf: 'liq', pairName: 'US liquidity impulse' }),
+    entry('macro', [[90, -1, null]]),
+    entry('macroFalls', [[90, 1, null]], { fallsOf: 'macro', pairName: 'Macro regime' }),
+  ]);
+  const reading = Object.fromEntries(card.pairs.map((pair) => [pair.name, pair.reading]));
+  assert.deepEqual(reading, {
+    'VIX term structure': 'risk-only',
+    'Technical regime': 'risk-only',
+    'Bitcoin verdict': 'both',
+    'Gold composite': 'neither',
+    'US liquidity impulse': 'neither',
+    'Macro regime': 'unjudged',
+  });
+  // Ranked only after the cutoff is said so.
+  assert.equal(card.pairs.find((pair) => pair.name === 'Technical regime').recentOnly, true);
+  assert.equal(card.pairsRead, 'Of 6 states tested on both the return and the worst fall that followed, 2 ranked the falls that followed but not the returns (VIX term structure, technical regime (after its cutoff only)); 1 ranked both (bitcoin verdict); 2 ranked neither (gold composite, US liquidity impulse); 1 cannot be judged on both yet (macro regime).');
+  // A card with no paired rows says nothing about pairs.
+  assert.equal(buildScorecard([entry('vix', [[90, 1, 1]])]).pairsRead, null);
+});
