@@ -55,7 +55,7 @@ test('a ticker with no closes says so rather than showing blanks', () => {
   const row = buildWatchlistRow({ symbol: 'ZZZZ', yearPoints: [], source: 'Yahoo Finance daily closes' });
   assert.equal(row.status, 'unavailable');
   assert.equal(row.model, null);
-  assert.match(row.reason, /No year of daily closes was returned for ZZZZ/);
+  assert.match(row.reason, /No daily closes were returned for ZZZZ/);
   // A provider failure is reported as the reason instead of blaming the ticker.
   assert.match(buildWatchlistRow({ symbol: 'MSFT', yearPoints: [], reason: 'Yahoo did not answer.' }).reason, /Yahoo did not answer/);
 });
@@ -74,4 +74,10 @@ test('a tracked symbol keeps the history and score the rest of the app shows', (
   assert.match(stale.reason, /too old/);
   const failed = trackedWatchlistRow({ symbol: 'NVDA', history: null, technical: null, reason: 'Twelve Data answered 429.' });
   assert.match(failed.reason, /429/);
+});
+
+test('a listing under a year old is still scored, from the closes it has', () => {
+  const row = buildWatchlistRow({ symbol: 'NEWCO', yearPoints: yearOfCloses({ sessions: 80 }), source: 'Yahoo Finance daily closes' });
+  assert.equal(row.status, 'calculated');
+  assert.ok(Number.isFinite(row.model.score));
 });

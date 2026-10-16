@@ -1081,7 +1081,7 @@ async function getSparkBatch(symbols, { range = '1y', interval = '1d' } = {}) {
  * symbol's later closes onto earlier days; pairing each close with its own
  * stamp keeps a gap a gap.
  */
-async function getSparkDatedBatch(symbols, range) {
+async function getSparkDatedBatch(symbols, range, minPoints = 210) {
   const url = `https://query1.finance.yahoo.com/v7/finance/spark?symbols=${encodeURIComponent(symbols.join(','))}&range=${range}&interval=1d`;
   const payload = await fetchJson(url, 0, 2, BROWSER_HEADERS);
   const out = new Map();
@@ -1093,19 +1093,19 @@ async function getSparkDatedBatch(symbols, range) {
       const value = asNumber(closes[index]);
       return Number.isFinite(stamp) && value !== null && value > 0 ? [{ date: new Date(stamp * 1000).toISOString().slice(0, 10), value }] : [];
     });
-    if (points.length >= 210) out.set(row.symbol, points);
+    if (points.length >= minPoints) out.set(row.symbol, points);
   }
   return out;
 }
 
-async function getSparkDatedHistories(symbols, range = '5y') {
+async function getSparkDatedHistories(symbols, range = '5y', { minPoints = 210 } = {}) {
   const normalized = [...new Set(symbols.map((symbol) => symbol.replace(/\./g, '-')))];
   const merged = new Map();
   let failures = 0;
   for (let index = 0; index < normalized.length; index += 80) {
     const wave = [];
     for (let offset = index; offset < Math.min(index + 80, normalized.length); offset += 20) wave.push(normalized.slice(offset, offset + 20));
-    const settled = await Promise.allSettled(wave.map((batch) => getSparkDatedBatch(batch, range)));
+    const settled = await Promise.allSettled(wave.map((batch) => getSparkDatedBatch(batch, range, minPoints)));
     for (const result of settled) {
       if (result.status === 'fulfilled') for (const [key, value] of result.value) merged.set(key, value);
       else failures += 1;
@@ -2071,7 +2071,9 @@ export async function getWatchlistRows(symbols) {
     let failure = null;
     try {
       closes = await withCache(`analytics:watchlist-rows:${key}`, 30 * 60_000, async () => {
-        const histories = await getSparkDatedHistories([...tickers.values()], '1y');
+        // A listing under a year old still gets a row; technical-v1 shrinks
+        // its trend score toward neutral by how many averages it can measure.
+        const histories = await getSparkDatedHistories([...tickers.values()], '1y', { minPoints: 30 });
         return { histories: Object.fromEntries(histories), failures: histories.failures ?? 0 };
       });
     } catch (error) {

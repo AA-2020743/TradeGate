@@ -70,7 +70,7 @@ function summarizeModel(model) {
 export function buildWatchlistRow({ symbol, yearPoints, source, reason = null }) {
   const series = toTimestamped(yearPoints);
   if (!series.length) {
-    return { symbol, status: 'unavailable', tracked: false, source: source ?? null, points: [], last: null, changePct: null, model: null, reason: reason ?? `No year of daily closes was returned for ${symbol}; check the ticker.` };
+    return { symbol, status: 'unavailable', tracked: false, source: source ?? null, points: [], last: null, changePct: null, model: null, reason: reason ?? `No daily closes were returned for ${symbol}; check the ticker.` };
   }
   const model = calculateTechnicalSnapshot(series, { annualizationDays: annualizationDaysFor(symbol) });
   const points = chartWindow(series);
