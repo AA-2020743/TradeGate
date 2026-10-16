@@ -547,7 +547,7 @@ function App() {
 
         <div className="dashboard">
           <WorkspaceErrorBoundary resetKey={activeNav}>
-          {activeNav === 'Macro' ? <MacroDashboard data={platformData} /> : activeNav === 'Forex' ? <ForexDashboard data={platformData} /> : activeNav === 'Crypto' ? <CryptoDashboard data={platformData} /> : activeNav === 'Markets' ? <MarketsDashboard data={platformData} onNavigate={navigateTo} /> : activeNav === 'Equities' ? <EquitiesDashboard platformData={platformData} /> : activeNav === 'Metals' ? <MetalsDashboard data={platformData} /> : activeNav === 'Screener' ? <ScreenerDashboard data={platformData} /> : activeNav === 'Watchlists' ? <WatchlistsDashboard data={platformData} store={watchlistStore} /> : <>
+          {activeNav === 'Macro' ? <MacroDashboard data={platformData} /> : activeNav === 'Forex' ? <ForexDashboard data={platformData} /> : activeNav === 'Crypto' ? <CryptoDashboard data={platformData} /> : activeNav === 'Markets' ? <MarketsDashboard data={platformData} onNavigate={navigateTo} /> : activeNav === 'Equities' ? <EquitiesDashboard platformData={platformData} /> : activeNav === 'Metals' ? <MetalsDashboard data={platformData} /> : activeNav === 'Screener' ? <ScreenerDashboard data={platformData} store={watchlistStore} onNavigate={navigateTo} /> : activeNav === 'Watchlists' ? <WatchlistsDashboard data={platformData} store={watchlistStore} /> : <>
           <section className="welcome-row">
             <div><p className="eyebrow">{new Intl.DateTimeFormat('en-US', { weekday: 'long', month: 'long', day: 'numeric' }).format(new Date()).toUpperCase()}</p><h1>{greeting}</h1><p className="intro">Here is your market pulse for today.</p></div>
             <div className={`market-status ${platformData.status}`}><span className="live-dot"></span><span>{platformData.status === 'live' ? 'Data feeds connected' : platformData.status === 'partial' ? 'Partial data coverage' : 'Data API unavailable'}</span><strong>{formatTimestamp(platformData.markets?.asOf)}</strong></div>
@@ -3328,8 +3328,20 @@ const SCREENER_PRESETS = {
   'broken-trends': { label: 'Broken trends', filter: (row) => Number.isFinite(row.trendQuality) && row.trendQuality < 0 && row.trendR2 >= 0.5, sort: (a, b) => (a.trendQuality ?? 9999) - (b.trendQuality ?? 9999) },
 };
 
-function ScreenerDashboard({ data }) {
+function ScreenerDashboard({ data, store, onNavigate }) {
   const [preset, setPreset] = React.useState('momentum-leaders');
+  const lists = store?.lists ?? {};
+  const firstList = Object.keys(lists)[0] ?? Object.keys(DEFAULT_WATCHLISTS)[0];
+  const listedIn = (symbol) => Object.keys(lists).find((name) => (lists[name] ?? []).includes(symbol)) ?? null;
+  const [watchNote, setWatchNote] = React.useState(null);
+  // A screened name can go straight onto a list; the star says it is on one.
+  const watchSymbol = (symbol) => {
+    if (listedIn(symbol)) { onNavigate?.('Watchlists'); return; }
+    const result = addSymbolToList(lists, firstList, symbol);
+    if (!result.ok) { setWatchNote(result.reason); return; }
+    setWatchNote(null);
+    store?.setLists(result.lists);
+  };
   const [search, setSearch] = React.useState('');
   const [sectorFilter, setSectorFilter] = React.useState('All');
   const [sort, setSort] = React.useState(null);
@@ -3379,12 +3391,13 @@ function ScreenerDashboard({ data }) {
       <div className="window-buttons">{Object.entries(SCREENER_PRESETS).map(([key, item]) => <button className={preset === key ? 'selected' : ''} key={key} onClick={() => selectPreset(key)}>{item.label}</button>)}</div>
       <input className="screener-search" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Filter by symbol…" aria-label="Filter by symbol" />
       {matched.length ? <button className="watch-button" onClick={exportCsv}>Export CSV ({matched.length})</button> : null}
+      {watchNote ? <small className="watchlist-add-error" role="status">{watchNote}</small> : null}
     </section>
     <section className={`screener-panel panel ${screener?.status === 'calculated' ? '' : 'preview-section'}`}>
       {screener?.status === 'calculated' ? <div className="screener-wrap">
         <div className="screener-head" role="row">{SCREENER_COLUMNS.map((column) => <button className={`screener-sort ${sort?.key === column.key ? 'sorted' : ''}`} role="columnheader" aria-sort={ariaSortFor(sort, column.key)} key={column.key} onClick={() => setSort((current) => nextSortState(current, column.key))} title={`Sort by ${column.label}`}>{column.label}<i>{sort?.key === column.key ? sort.direction === 'asc' ? '↑' : '↓' : ''}</i></button>)}</div>
         {filtered.map((row) => <div className="screener-row" key={row.symbol}>
-          <b>{row.symbol}</b>
+          <button className={`screener-symbol ${listedIn(row.symbol) ? 'listed' : ''}`} onClick={() => watchSymbol(row.symbol)} title={listedIn(row.symbol) ? `On ${listedIn(row.symbol)} · open Watchlists` : `Add ${row.symbol} to ${firstList}`} aria-label={listedIn(row.symbol) ? `${row.symbol}, on ${listedIn(row.symbol)}` : `Add ${row.symbol} to ${firstList}`}><i aria-hidden="true">{listedIn(row.symbol) ? '★' : '☆'}</i>{row.symbol}</button>
           <span>{formatUsd(row.last)}</span>
           <span className={row.mom20 >= 0 ? 'positive' : 'negative'}>{Number.isFinite(row.mom20) ? formatPercent(row.mom20) : '—'}</span>
           <span className={row.mom60 >= 0 ? 'positive' : 'negative'}>{Number.isFinite(row.mom60) ? formatPercent(row.mom60) : '—'}</span>
