@@ -266,6 +266,22 @@ describe('a cleared condition is recorded once and stops being live', async () =
   assert.equal(alerts.some((alert) => alert.key.endsWith(':resolved')), true);
 });
 
+describe('workspace alert anchors round-trip, so jitter after a restart is not re-raised', async () => {
+  await reset();
+  const { anchoredWorkspaceAlerts } = await import('./analytics.js');
+  const output = (mvrvZ, asOf) => ({ version: 'bitcoin-cycle-v1', status: 'calculated', asOf, valuation: { mvrvZ }, leverage: { annualizedPercent: 5 } });
+  // A run that flags a move stores its anchors with the output it persists.
+  const first = anchoredWorkspaceAlerts('bitcoin-cycle', output(1.1, '2026-04-02'), output(1.0, '2026-04-01'));
+  assert.equal(first.entries.length, 1);
+  await database.persistModelOutput('bitcoin-cycle', { ...output(1.1, '2026-04-02'), alertAnchors: first.anchors });
+  // The next run - after a restart, say - reads them back: a small move away
+  // from the flagged level is quiet, as it would be within one process.
+  const previous = (await database.getRecentModelOutputs('bitcoin-cycle', 1))[0]?.output;
+  assert.equal(previous?.alertAnchors?.mvrvZ, 1.1, 'the anchors must survive the round trip');
+  const second = anchoredWorkspaceAlerts('bitcoin-cycle', output(1.13, '2026-04-02'), previous);
+  assert.deepEqual(second.entries, []);
+});
+
 describe('watchlists replace wholesale rather than accumulating', async () => {
   await reset();
   await database.replaceWatchlists({ Core: ['SPY', 'QQQ'] }, 'tester');

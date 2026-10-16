@@ -164,3 +164,22 @@ test('the read names only kinds that clear chance, including ones reliably wrong
   assert.match(result.read, /\u201cCurve un-inverted\u201d at 0% over 20 independent is wrong more often than chance allows/);
   assert.match(result.read, /The other kind is within chance\./);
 });
+
+test('alert frequency ranks the busiest alerts of the window and counts their clears', async () => {
+  const { alertFrequency } = await import('./alertOutcomes.js');
+  const now = Date.parse('2026-10-15T12:00:00Z');
+  const at = (daysAgo) => new Date(now - (daysAgo * 86_400_000)).toISOString();
+  const alerts = [
+    { modelId: 'macro-alerts-v1', key: 'regime-borderline', detectedAt: at(1) },
+    { modelId: 'macro-alerts-v1', key: 'regime-borderline:resolved', detectedAt: at(2) },
+    { modelId: 'macro-alerts-v1', key: 'regime-borderline', detectedAt: at(3) },
+    { modelId: 'bitcoin-cycle', key: 'bitcoin-cycle:mvrvZ', detectedAt: at(1) },
+    { modelId: 'bitcoin-cycle', key: 'bitcoin-cycle:mvrvZ', detectedAt: at(20) },
+  ];
+  const frequency = alertFrequency(alerts, { now });
+  assert.equal(frequency.total, 4);
+  assert.equal(frequency.kinds, 2);
+  assert.deepEqual(frequency.top[0], { id: 'macro-alerts-v1:regime-borderline', modelId: 'macro-alerts-v1', key: 'regime-borderline', count: 3, cleared: 1 });
+  assert.equal(frequency.top[1].count, 1, 'the 20-day-old alert is outside the week');
+  assert.deepEqual(alertFrequency([], { now }), { days: 7, total: 0, kinds: 0, top: [] });
+});

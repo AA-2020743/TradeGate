@@ -2,7 +2,7 @@ import { config } from './config.js';
 import { onePointPerDay } from './dailySeries.js';
 import { deliverAlerts, pendingAfterDelivery, withPending } from './alertDelivery.js';
 import { observationTimestamp, runIngestionJob } from './ingestionRun.js';
-import { buildWorkspaceNarrative, calculateTechnicalSnapshot, isPublished } from './analytics.js';
+import { anchoredWorkspaceAlerts, calculateTechnicalSnapshot, isPublished } from './analytics.js';
 import {
   acquireIngestionLock,
   closeAbandonedIngestionRuns,
@@ -359,11 +359,13 @@ export async function ingestResearchWorkspaces() {
           continue;
         }
         const previousOutputs = await getRecentModelOutputs(workspace.modelId, 1);
-        await persistModelOutput(workspace.modelId, output, [{ provider: 'aggregated-workspace', asOf: output.asOf }], runId);
+        // Alerts are anchored to where each vital was last flagged, and the
+        // anchors travel with the stored output for the next run to read.
+        const { entries, anchors } = anchoredWorkspaceAlerts(workspace.modelId, output, previousOutputs[0]?.output ?? null);
+        await persistModelOutput(workspace.modelId, { ...output, alertAnchors: anchors }, [{ provider: 'aggregated-workspace', asOf: output.asOf }], runId);
         persisted.push(workspace.modelId);
-        const narrative = buildWorkspaceNarrative({ [workspace.modelId]: [{ output }, ...previousOutputs] });
-        if (narrative.status === 'updated' && narrative.entries.length) {
-          alertsRaised += await insertModelAlerts(workspace.modelId, narrative.entries, runId);
+        if (entries.length) {
+          alertsRaised += await insertModelAlerts(workspace.modelId, entries, runId);
         }
       } catch (error) {
         errors.push({ modelId: workspace.modelId, message: error.message });

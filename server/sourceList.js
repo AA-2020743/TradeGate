@@ -261,6 +261,15 @@ export const SOURCES = [
     name: 'Stored alerts (PostgreSQL) + outcomes',
     endpoint: '/api/analytics/alert-outcomes',
     load: getAlertOutcomes,
-    figure: (payload) => (Number.isFinite(payload.alerts) ? `${payload.alerts} alerts stored, ${payload.scoredAlerts ?? 0} scorable` : null),
+    figure: (payload) => {
+      if (!Number.isFinite(payload.alerts)) return null;
+      const frequency = payload.frequency;
+      // The busiest alerts of the week: one that raises and clears run after
+      // run is a threshold flapping, not news.
+      const busiest = frequency?.top?.length
+        ? `; last ${frequency.days} days ${frequency.total} in ${frequency.kinds} kinds, most often ${frequency.top.slice(0, 3).map((entry) => `${entry.key} ${entry.count}${entry.cleared ? ` (${entry.cleared} cleared)` : ''}`).join(', ')}`
+        : '';
+      return `${payload.alerts} alerts stored, ${payload.scoredAlerts ?? 0} scorable${busiest}`;
+    },
   },
 ];

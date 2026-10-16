@@ -553,3 +553,30 @@ test('the correlation matrix uses backfill only for weeks before a model’s fir
   assert.match(matrix({}, { databaseConfigured: true }).reason, /Readings accumulate with each ingestion run/);
   assert.match(matrix({}).reason, /only once PostgreSQL is configured/);
 });
+
+test('a live condition holds until it clears by a margin, so a reading on its threshold does not flap', () => {
+  const regime = (distance, borderline) => ({ macroRegime: { status: 'calculated', score: 58 + distance, proximity: { borderline, nearest: { regime: 'Constructive', distance } } } });
+  // Four points from the boundary: not borderline, so a fresh evaluation stays quiet.
+  const fresh = evaluateMacroAlerts(regime(4, false));
+  assert.equal(fresh.entries.some((entry) => entry.key === 'regime-borderline'), false);
+  // Already live at the last run, the same reading holds - no clear, no re-raise.
+  const held = evaluateMacroAlerts(regime(4, false), { previous: ['regime-borderline'] });
+  assert.equal(held.entries.find((entry) => entry.key === 'regime-borderline')?.isNew, false);
+  assert.equal(held.resolved.some((entry) => entry.key === 'regime-borderline'), false);
+  // Clear of the margin, it resolves.
+  const cleared = evaluateMacroAlerts(regime(6, false), { previous: ['regime-borderline'] });
+  assert.equal(cleared.resolved.some((entry) => entry.key === 'regime-borderline'), true);
+
+  // A term-premium move held below the 25bp entry still has text to show.
+  const premium = (bp) => ({ termPremium: { status: 'calculated', windows: [{ driver: 'term premium', premiumBasisPoints: bp, spanDays: 63 }] } });
+  assert.equal(evaluateMacroAlerts(premium(20)).entries.length, 0);
+  const heldPremium = evaluateMacroAlerts(premium(20), { previous: ['term-premium-repricing'] });
+  assert.match(heldPremium.entries[0].text, /\+20bp over 63 days/);
+  assert.equal(evaluateMacroAlerts(premium(15), { previous: ['term-premium-repricing'] }).entries.length, 0);
+
+  // Reserve scarcity enters at five sessions over the threshold and holds at three.
+  const reserves = (days) => ({ reserveScarcity: { status: 'calculated', state: 'Reserves adequate', spreadBasisPoints: 4, daysAboveThreshold: days, thresholdBasisPoints: 5 } });
+  assert.equal(evaluateMacroAlerts(reserves(3)).entries.length, 0);
+  assert.equal(evaluateMacroAlerts(reserves(3), { previous: ['reserves-tightening'] }).entries.length, 1);
+  assert.equal(evaluateMacroAlerts(reserves(2), { previous: ['reserves-tightening'] }).entries.length, 0);
+});

@@ -173,7 +173,29 @@ function effectiveCount(entryDays, horizon) {
 /**
  * @param {{ alerts: Array<{ modelId: string, key: string, text: string, detectedAt: string }>, histories: Map<string, Array>, horizons?: number[], recentLimit?: number }} input
  */
-export function scoreAlertOutcomes({ alerts = [], histories = new Map(), horizons = ALERT_HORIZONS, recentLimit = 25 } = {}) {
+/**
+ * Which alerts fire most, over the last `days`, and how many of those were
+ * clears. A feed where one alert raises and clears run after run is a
+ * threshold flapping, not news; this makes that visible.
+ */
+export function alertFrequency(alerts, { now = Date.now(), days = 7, limit = 5 } = {}) {
+  const since = now - (days * DAY_MS);
+  const counts = new Map();
+  for (const alert of alerts ?? []) {
+    const at = new Date(alert.detectedAt).getTime();
+    if (!Number.isFinite(at) || at < since) continue;
+    const cleared = String(alert.key ?? '').endsWith(':resolved');
+    const id = `${alert.modelId}:${String(alert.key ?? '').replace(/:resolved$/, '')}`;
+    const entry = counts.get(id) ?? { id, modelId: alert.modelId, key: String(alert.key ?? '').replace(/:resolved$/, ''), count: 0, cleared: 0 };
+    entry.count += 1;
+    if (cleared) entry.cleared += 1;
+    counts.set(id, entry);
+  }
+  const ranked = [...counts.values()].sort((left, right) => right.count - left.count || left.id.localeCompare(right.id));
+  return { days, total: ranked.reduce((sum, entry) => sum + entry.count, 0), kinds: ranked.length, top: ranked.slice(0, limit) };
+}
+
+export function scoreAlertOutcomes({ alerts = [], histories = new Map(), horizons = ALERT_HORIZONS, recentLimit = 25, now = Date.now() } = {}) {
   const prepared = new Map([...histories.entries()].map(([symbol, points]) => [symbol, prepareHistory(points)]));
   const benchmark = prepared.get(BENCHMARK) ?? [];
   const bases = new Map();
@@ -276,6 +298,7 @@ export function scoreAlertOutcomes({ alerts = [], histories = new Map(), horizon
     horizons,
     alerts: alerts.length,
     scoredAlerts: scored.length,
+    frequency: alertFrequency(alerts, { now }),
     unscored: [...unscored.entries()].map(([modelId, count]) => ({ modelId, count })),
     groups: summaries,
     recent,

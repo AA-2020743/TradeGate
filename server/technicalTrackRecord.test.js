@@ -152,3 +152,17 @@ test('the same weekly regimes are followed by their worst falls as well as their
   assert.doesNotMatch(read, /undefined|NaN|null/);
   assert.equal(describeTechnicalFalls({ status: 'unavailable' }), '');
 });
+
+test('the score the record replays on 420 days is the score the cards compute on a year of bars', () => {
+  // The cards score 365 daily bars (about 17 months of sessions), the record
+  // 420 calendar days (about 290 sessions). Every input reads at most the last
+  // 252 sessions, and the smoothed ones settle within about 100, so the two
+  // must agree exactly - otherwise the record would test a different score.
+  const points = cycle.map((point) => ({ timestamp: `${point.date}T00:00:00.000Z`, value: point.value }));
+  for (let end = 700; end <= points.length; end += 37) {
+    const record = calculateTechnicalSnapshot(points.slice(end - 290, end));
+    const card = calculateTechnicalSnapshot(points.slice(end - 365, end));
+    assert.equal(record.score, card.score, `at ${end}`);
+    assert.equal(record.regime, card.regime, `at ${end}`);
+  }
+});

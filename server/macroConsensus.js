@@ -427,6 +427,7 @@ const ALERT_RULES = [
     model: 'reserveScarcity',
     severity: 'high',
     test: (scarcity) => scarcity.state === 'Reserves scarce' || scarcity.daysAboveThreshold >= 5,
+    holds: (scarcity) => scarcity.state === 'Reserves scarce' || scarcity.daysAboveThreshold >= 3,
     text: (scarcity) => `${scarcity.state}: SOFR is ${scarcity.spreadBasisPoints}bp over the reserve rate, with ${scarcity.daysAboveThreshold} of the last 21 sessions at or above ${scarcity.thresholdBasisPoints}bp.`,
   },
   {
@@ -434,6 +435,7 @@ const ALERT_RULES = [
     model: 'liquidityCalendar',
     severity: 'high',
     test: (calendar) => Number.isFinite(calendar.monthsOfCushion) && calendar.monthsOfCushion <= 6,
+    holds: (calendar) => Number.isFinite(calendar.monthsOfCushion) && calendar.monthsOfCushion <= 7,
     text: (calendar) => `The reverse-repo facility has about ${calendar.monthsOfCushion} months of cushion left at the current drain, after which tightening reaches reserves undiluted.`,
   },
   {
@@ -448,6 +450,7 @@ const ALERT_RULES = [
     model: 'macroRegime',
     severity: 'medium',
     test: (regime) => regime.proximity?.borderline === true,
+    holds: (regime) => Number.isFinite(regime.proximity?.nearest?.distance) && regime.proximity.nearest.distance <= 5,
     text: (regime) => `The macro regime is ${regime.proximity.nearest.distance} ${regime.proximity.nearest.distance === 1 ? 'point' : 'points'} from ${regime.proximity.nearest.regime} at ${regime.score}/100 — one step from flipping.`,
   },
   {
@@ -462,8 +465,10 @@ const ALERT_RULES = [
     model: 'termPremium',
     severity: 'medium',
     test: (premium) => (premium.windows ?? []).some((entry) => entry.driver === 'term premium' && Math.abs(entry.premiumBasisPoints) >= 25),
+    holds: (premium) => (premium.windows ?? []).some((entry) => entry.driver === 'term premium' && Math.abs(entry.premiumBasisPoints) >= 18),
     text: (premium) => {
-      const entry = (premium.windows ?? []).find((window) => window.driver === 'term premium' && Math.abs(window.premiumBasisPoints) >= 25);
+      // The largest term-premium move, which a held condition may have below 25bp.
+      const entry = (premium.windows ?? []).filter((window) => window.driver === 'term premium').sort((left, right) => Math.abs(right.premiumBasisPoints) - Math.abs(left.premiumBasisPoints))[0];
       return `The term premium moved ${entry.premiumBasisPoints > 0 ? '+' : ''}${entry.premiumBasisPoints}bp over ${entry.spanDays} days and drove the 10-year, which is a duration-demand repricing rather than a change in the expected path.`;
     },
   },
@@ -472,6 +477,7 @@ const ALERT_RULES = [
     model: 'consensus',
     severity: 'medium',
     test: (consensus) => consensus.state === 'Models sharply divided',
+    holds: (consensus) => Number.isFinite(consensus.spread) && consensus.spread >= 50,
     text: (consensus) => `${consensus.read} The most divergent pair: ${consensus.contradictions[0]?.read ?? 'none published'}`,
   },
 ];
@@ -518,8 +524,13 @@ export function evaluateMacroAlerts(models = {}, { rules = ALERT_RULES, previous
       continue;
     }
     let fired = false;
+    let text = null;
     try {
-      fired = Boolean(rule.test(model));
+      // Hysteresis: a condition already live stays live until it clears by a
+      // margin (a rule's looser `holds` test), so a reading jittering on a
+      // threshold does not raise and clear an alert on every run.
+      fired = Boolean(rule.test(model) || (previousKeys.has(rule.key) && rule.holds?.(model)));
+      if (fired) text = rule.text(model);
     } catch {
       // A rule that throws on an unexpected shape is a rule that cannot be
       // trusted to have fired correctly, so it is skipped rather than assumed.
@@ -531,7 +542,7 @@ export function evaluateMacroAlerts(models = {}, { rules = ALERT_RULES, previous
       key: rule.key,
       severity: rule.severity,
       model: rule.model,
-      text: rule.text(model),
+      text,
       // New means it crossed into this state since the last evaluation. A
       // condition that could not be evaluated last time is treated as new when
       // it fires, because "was it live before" genuinely has no answer.

@@ -1755,6 +1755,54 @@ ${items.join('\n')}
 </feed>`;
 }
 
+/**
+ * The workspace alerts one ingestion run raises, anchored to where each vital
+ * was last flagged rather than to the previous run.
+ *
+ * Comparing consecutive runs made the feed a record of noise: research runs
+ * every six hours and on every restart, and day-to-day jitter crosses
+ * thresholds like 0.05 on MVRV Z or 3 on Fear & Greed run after run, while a
+ * slow drift that never moved a full threshold in one step was never flagged.
+ * Here a number is flagged when it has moved a full threshold from the value
+ * it was last flagged at, and a state when it has held a new value for two
+ * consecutive runs, so a reading jittering on a boundary stays quiet. The
+ * anchors are returned to be stored with the output, so the next run reads
+ * them back; with none stored yet, the previous run's values seed them.
+ */
+export function anchoredWorkspaceAlerts(modelId, latest, previous = null) {
+  const extract = WORKSPACE_VITALS[modelId];
+  if (!extract || !latest) return { entries: [], anchors: {} };
+  const anchors = { ...(previous?.alertAnchors ?? {}) };
+  const previousVitals = previous ? extract(previous) : [];
+  const entries = [];
+  for (const vital of extract(latest)) {
+    const before = previousVitals.find((candidate) => candidate.key === vital.key);
+    const key = `${modelId}:${vital.key}`;
+    if (vital.string !== undefined) {
+      const anchored = typeof anchors[vital.key] === 'string' ? anchors[vital.key] : before?.string;
+      if (anchored === undefined) { anchors[vital.key] = vital.string; continue; }
+      // A new state is announced once it has held for two runs in a row.
+      if (vital.string !== anchored && before?.string === vital.string) {
+        entries.push({ key, text: `${vital.label} shifted from ${anchored} to ${vital.string}.` });
+        anchors[vital.key] = vital.string;
+      } else {
+        anchors[vital.key] = anchored;
+      }
+    } else if (Number.isFinite(vital.value)) {
+      const anchored = Number.isFinite(anchors[vital.key]) ? anchors[vital.key] : before?.value;
+      if (!Number.isFinite(anchored)) { anchors[vital.key] = vital.value; continue; }
+      const delta = Math.round((vital.value - anchored) * 100) / 100;
+      if (Math.abs(delta) >= vital.threshold) {
+        entries.push({ key, text: `${vital.label} ${delta > 0 ? 'rose' : 'fell'} ${Math.abs(delta)} to ${vital.value}, from ${anchored} when it was last flagged.` });
+        anchors[vital.key] = vital.value;
+      } else {
+        anchors[vital.key] = anchored;
+      }
+    }
+  }
+  return { entries, anchors };
+}
+
 export function buildWorkspaceNarrative(outputsByKey = {}) {
   const entries = [];
   let hasPairs = false;

@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { buildAtomFeed, buildCoingeckoRequest, buildSocrataRequest, buildHeatmapRow, buildLiquidityNarrative, buildLiquidityTransmission, buildWorkspaceNarrative, calculateBitcoinCyclePhase, calculateChangeCorrelations, calculateCryptoRotation, calculateDollarScenarios, calculateDollarTransmissionRead, calculateLeadLag, calculateLiquidityRunway, calculatePositioningModel, calculateCrossMarketRelationship, calculateGlobalLiquidityModel, calculateHeatmapRisk, calculateMacroRegimeModel, calculateMacroRegimeProximity, classifyMacroRegimeByScore, calculateMetalsCostStructure, calculateOpenInterestQuadrant, calculateRsi, calculateScreenerScores, calculateSeriesLeadLag, calculateTechnicalSnapshot, calculateTrendQuality, classifyHeadlineSentiment, calculateUsdStrengthModel, calculateUsLiquidityModel, calculateLiquidityCyclePosition, escapeXml, isPublished, measureChangeOverDays, pearsonCorrelation } from './analytics.js';
+import { anchoredWorkspaceAlerts, buildAtomFeed, buildCoingeckoRequest, buildSocrataRequest, buildHeatmapRow, buildLiquidityNarrative, buildLiquidityTransmission, buildWorkspaceNarrative, calculateBitcoinCyclePhase, calculateChangeCorrelations, calculateCryptoRotation, calculateDollarScenarios, calculateDollarTransmissionRead, calculateLeadLag, calculateLiquidityRunway, calculatePositioningModel, calculateCrossMarketRelationship, calculateGlobalLiquidityModel, calculateHeatmapRisk, calculateMacroRegimeModel, calculateMacroRegimeProximity, classifyMacroRegimeByScore, calculateMetalsCostStructure, calculateOpenInterestQuadrant, calculateRsi, calculateScreenerScores, calculateSeriesLeadLag, calculateTechnicalSnapshot, calculateTrendQuality, classifyHeadlineSentiment, calculateUsdStrengthModel, calculateUsLiquidityModel, calculateLiquidityCyclePosition, escapeXml, isPublished, measureChangeOverDays, pearsonCorrelation } from './analytics.js';
 
 test('RSI reaches 100 for an uninterrupted advance', () => {
   const values = Array.from({ length: 30 }, (_, index) => 100 + index);
@@ -1932,4 +1932,46 @@ test('a market under price review still counts toward the risk read', () => {
   ]);
   assert.notEqual(model.status, 'unavailable');
   assert.equal(model.headline.symbol, 'QQQ');
+});
+
+test('workspace alerts are anchored to where a vital was last flagged, so jitter is quiet and drift is not', () => {
+  const run = (mvrvZ) => ({ valuation: { mvrvZ }, leverage: { annualizedPercent: 5 } });
+  // The first run has nothing stored but the previous output: it seeds the anchor.
+  let previous = run(1.0);
+  let state = anchoredWorkspaceAlerts('bitcoin-cycle', run(1.03), previous);
+  assert.deepEqual(state.entries, []);
+  assert.equal(state.anchors.mvrvZ, 1.0);
+  // Jitter around the anchor never fires, however many runs it lasts...
+  for (const value of [0.98, 1.04, 0.99, 1.02]) {
+    previous = { ...run(value), alertAnchors: state.anchors };
+    state = anchoredWorkspaceAlerts('bitcoin-cycle', run(value), previous);
+    assert.deepEqual(state.entries, [], `jitter at ${value}`);
+  }
+  // ...while a drift of 0.02 a run, never 0.05 in one step, fires once it adds up.
+  const fired = [];
+  for (const value of [1.03, 1.05, 1.07]) {
+    state = anchoredWorkspaceAlerts('bitcoin-cycle', run(value), { ...run(value - 0.02), alertAnchors: state.anchors });
+    fired.push(...state.entries);
+  }
+  assert.equal(fired.length, 1);
+  assert.match(fired[0].text, /MVRV Z-score rose 0\.05 to 1\.05, from 1 when it was last flagged\./);
+  assert.equal(state.anchors.mvrvZ, 1.05);
+});
+
+test('a workspace state is announced once it has held for two runs, so a flicker stays quiet', () => {
+  const run = (rating) => ({ fearGreed: { score: 50, rating } });
+  // Neutral is the anchor; one run of Greed and back is a flicker.
+  let state = anchoredWorkspaceAlerts('sentiment-snapshot', run('neutral'), run('neutral'));
+  state = anchoredWorkspaceAlerts('sentiment-snapshot', run('greed'), { ...run('neutral'), alertAnchors: state.anchors });
+  assert.deepEqual(state.entries, []);
+  state = anchoredWorkspaceAlerts('sentiment-snapshot', run('neutral'), { ...run('greed'), alertAnchors: state.anchors });
+  assert.deepEqual(state.entries, []);
+  // Greed for two runs in a row is a shift, named from the anchored state.
+  state = anchoredWorkspaceAlerts('sentiment-snapshot', run('greed'), { ...run('neutral'), alertAnchors: state.anchors });
+  assert.deepEqual(state.entries, []);
+  state = anchoredWorkspaceAlerts('sentiment-snapshot', run('greed'), { ...run('greed'), alertAnchors: state.anchors });
+  assert.deepEqual(state.entries.map((entry) => entry.text), ['Fear & Greed rating shifted from neutral to greed.']);
+  assert.equal(state.anchors.fearGreedRating, 'greed');
+  // An unknown workspace or a missing output raises nothing.
+  assert.deepEqual(anchoredWorkspaceAlerts('nope', run('greed'), null), { entries: [], anchors: {} });
 });
