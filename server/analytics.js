@@ -1738,18 +1738,31 @@ export function escapeXml(value) {
   return String(value).replace(/[&<>"']/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&apos;' }[char]));
 }
 
+/**
+ * An Atom date. Timestamps arrive as ISO strings from providers but as Date
+ * objects from Postgres, and a Date interpolated into the XML printed as
+ * "Fri Oct 16 2026 ... (Coordinated Universal Time)", which readers reject.
+ */
+function atomDate(value, fallback) {
+  const time = value instanceof Date ? value.getTime() : new Date(value ?? NaN).getTime();
+  return Number.isFinite(time) ? new Date(time).toISOString() : fallback;
+}
+
 export function buildAtomFeed(feed, entries) {
+  const feedUpdated = atomDate(feed.updated, new Date().toISOString());
   const items = entries.map((entry) => `  <entry>
     <title>${escapeXml(entry.title)}</title>
     <id>${escapeXml(entry.id)}</id>
-    <updated>${entry.updated}</updated>
+    <updated>${atomDate(entry.updated, feedUpdated)}</updated>
     <content type="text">${escapeXml(entry.content)}</content>
   </entry>`);
+  // A feed without an author is invalid Atom unless every entry carries one.
   return `<?xml version="1.0" encoding="utf-8"?>
 <feed xmlns="http://www.w3.org/2005/Atom">
   <title>${escapeXml(feed.title)}</title>
   <id>${escapeXml(feed.id)}</id>
-  <updated>${feed.updated}</updated>
+  <updated>${feedUpdated}</updated>
+  <author><name>${escapeXml(feed.author ?? 'TradeGate')}</name></author>
   <link href="${escapeXml(feed.link)}" rel="self"/>
 ${items.join('\n')}
 </feed>`;

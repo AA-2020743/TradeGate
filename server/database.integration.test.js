@@ -750,3 +750,24 @@ describe('a backfill vintage is stored once, and earlier duplicates are removed'
   assert.equal(kept.length, 1);
   assert.equal(kept[0].output.score, 52, 'the newest copy is kept');
 });
+
+describe('the alert feed dates stored alerts in RFC 3339', async () => {
+  // detected_at is TIMESTAMPTZ, so the driver returns Date objects; the feed's
+  // own <updated> interpolated one raw and printed Date.toString().
+  await reset();
+  await database.insertModelAlerts('macro-alerts-v1', [{ key: 'feed-check', text: 'Reserves fell below the scarcity line.' }]);
+  const { app } = await import('./index.js');
+  const server = app.listen(0, '127.0.0.1');
+  await new Promise((resolve) => { server.once('listening', resolve); });
+  try {
+    const response = await fetch(`http://127.0.0.1:${server.address().port}/api/alerts/feed`);
+    assert.equal(response.status, 200);
+    const xml = await response.text();
+    const dates = [...xml.matchAll(/<updated>([^<]*)<\/updated>/g)].map((match) => match[1]);
+    assert.equal(dates.length, 2);
+    for (const date of dates) assert.match(date, /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/);
+    assert.match(xml, /Reserves fell below the scarcity line\./);
+  } finally {
+    await new Promise((resolve) => { server.close(resolve); });
+  }
+});

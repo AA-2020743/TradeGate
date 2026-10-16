@@ -469,6 +469,23 @@ test('Atom feed builder escapes content and produces valid structure', () => {
   assert.ok(xml.includes('<title>Regime &lt;shift&gt;</title>'));
   assert.ok(xml.includes('<content type="text">US net-liquidity regime rose 2 to Expansion.</content>'));
 });
+test('Atom dates are RFC 3339 even when Postgres hands back Date objects', () => {
+  // model_alerts.detected_at is TIMESTAMPTZ, so the alert feed's newest
+  // timestamp arrives as a Date; interpolated raw it printed Date.toString().
+  const xml = buildAtomFeed(
+    { title: 'Alerts', id: 'urn:x', updated: new Date('2026-10-16T09:30:00Z'), link: '/api/alerts/feed' },
+    [
+      { title: 'a', id: 'urn:x:1', updated: new Date('2026-10-16T09:30:00Z'), content: 'a' },
+      { title: 'b', id: 'urn:x:2', updated: 'not a date', content: 'b' },
+    ],
+  );
+  const dates = [...xml.matchAll(/<updated>([^<]*)<\/updated>/g)].map((match) => match[1]);
+  assert.deepEqual(dates, ['2026-10-16T09:30:00.000Z', '2026-10-16T09:30:00.000Z', '2026-10-16T09:30:00.000Z']);
+  assert.equal(xml.includes('GMT'), false);
+  // Atom requires an author on the feed unless every entry carries one.
+  assert.match(xml, /<author><name>TradeGate<\/name><\/author>/);
+});
+
 test('COT positioning ranks net speculative exposure', () => {
   const history = Array.from({ length: 60 }, (_, index) => ({
     date: new Date(Date.UTC(2025, 0, 1 + (index * 7))).toISOString().slice(0, 10),
