@@ -3,7 +3,7 @@ import { createRoot } from 'react-dom/client';
 import './styles.css';
 import { changeOverSpan, formatPercent, formatSpanLabel, formatTimestamp, formatUsd, useEquityResearch, useLazyResource, useMarketHistory, usePlatformData, useTechnicalAnalytics } from './liveData.js';
 import { buildRoute, parseRoute } from './routing.js';
-import { MAX_LISTS, addSymbolToList, nextListName, normalizeWatchlists, reconcileWatchlists, sameWatchlists } from './watchlistRules.js';
+import { MAX_LISTS, addSymbolToList, nextListName, normalizeWatchlists, reconcileWatchlists, sameWatchlists, sanitizeSymbol } from './watchlistRules.js';
 import { SCREENER_COLUMNS, ariaSortFor, nextSortState, sortRows } from './screenerSort.js';
 import { compareSnapshots } from './snapshotDiff.js';
 
@@ -372,9 +372,34 @@ function App() {
     { label: 'Crypto research', detail: 'Bitcoin cycle and dollar tailwind', action: () => setActiveNav('Crypto') },
     { label: 'S&P 500 screener', detail: 'Calculated cross-sectional screens', action: () => setActiveNav('Screener') },
     { label: 'Watchlists', detail: 'Local lists with live signals', action: () => setActiveNav('Watchlists') },
+    { label: 'Model scorecard', detail: 'Which signals held up out of sample', action: () => navigateTo('Markets', 'model-scorecard') },
+    { label: 'Help', detail: 'Shortcuts, status labels and track records', action: () => setHelpOpen(true) },
+    { label: `Switch to ${theme === 'light' ? 'dark' : 'light'} mode`, detail: 'Theme', action: () => setTheme((current) => (current === 'light' ? 'dark' : 'light')) },
     ...watchlist.map((asset) => ({ label: asset.ticker, detail: asset.name, action: () => { setSelectedTicker(asset.ticker); setActiveNav('Overview'); } })),
   ];
-  const matchingCommands = commands.filter((command) => `${command.label} ${command.detail}`.toLowerCase().includes(searchQuery.toLowerCase()));
+  const filteredCommands = commands.filter((command) => `${command.label} ${command.detail}`.toLowerCase().includes(searchQuery.toLowerCase()));
+  // A query shaped like a ticker that names nothing above is offered to the
+  // watchlist, which scores any ticker; the search used to find nothing.
+  const typedTicker = /^[A-Za-z0-9.\-]{1,10}$/.test(searchQuery.trim()) ? sanitizeSymbol(searchQuery.trim()) : '';
+  const tickerCommand = (() => {
+    // Beside other matches it is offered only when typed in capitals, so a
+    // word like "score" finds the scorecard without also offering SCORE.
+    const typedInCapitals = searchQuery.trim() === searchQuery.trim().toUpperCase() && /[A-Z]/.test(searchQuery);
+    if (!typedTicker || (filteredCommands.length && !typedInCapitals) || filteredCommands.some((command) => command.label.toUpperCase() === typedTicker)) return null;
+    const listedIn = Object.keys(watchlistStore.lists).find((name) => (watchlistStore.lists[name] ?? []).includes(typedTicker));
+    if (listedIn) return { label: typedTicker, detail: `On ${listedIn} · open Watchlists`, action: () => setActiveNav('Watchlists') };
+    const target = Object.keys(watchlistStore.lists)[0] ?? Object.keys(DEFAULT_WATCHLISTS)[0];
+    return {
+      label: `Add ${typedTicker} to ${target}`,
+      detail: 'Watchlist',
+      action: () => {
+        const result = addSymbolToList(watchlistStore.lists, target, typedTicker);
+        if (result.ok) watchlistStore.setLists(result.lists);
+        setActiveNav('Watchlists');
+      },
+    };
+  })();
+  const matchingCommands = tickerCommand ? [...filteredCommands, tickerCommand] : filteredCommands;
 
   React.useEffect(() => {
     document.documentElement.dataset.theme = theme;
