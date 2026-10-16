@@ -19,7 +19,8 @@ import { getEquityDashboard, getSectorDashboard } from './equities.js';
 import { logger } from './log.js';
 import { startIngestionScheduler } from './ingestion.js';
 import { createRateLimiter } from './rateLimit.js';
-import { calculateDollarTransmission, getBitcoinCycleWorkspace, getBlockedSources, getCryptoGlobal, getDxyBitcoinRelationship, getEquityRiskAppetite, getEquityScreener, getEthereumRotation, getAccumulationSchedules, getAlertOutcomes, getCryptoOptionsWorkspace, getIndexValuation, getScreenerTrackRecord, getFactorReturns, getFxWorkspace, getHardMoneyValuation, getIntradayRotation, getLiquiditySnapshot, getMarketHeatmap, getMarketHistory, getMarketPositioning, getMarketSnapshot, getMetalsWorkspace, getNewsWire, getPriceCrossCheck, getProviderHealth, getRegimeCorrelations, getSentimentSnapshot, getSignalTrackRecords, getStablecoinLeadLag, getBitcoinCrossAsset, getBitcoinCycleRecord, getDiversificationRegime, getFxCarry, getGoldRealYield, getGoldSilverRecord, getRecessionProbability, getTechnicalSnapshot, getTreasuryFunding, getVerdictTrackRecords, getVixTermRecord, getWatchlistRisk, parseWatchlistSymbols } from './providers.js';
+import { calculateDollarTransmission, getBitcoinCycleWorkspace, getBlockedSources, getCryptoGlobal, getDxyBitcoinRelationship, getEquityRiskAppetite, getEquityScreener, getEthereumRotation, getAccumulationSchedules, getAlertOutcomes, getCryptoOptionsWorkspace, getIndexValuation, getScreenerTrackRecord, getFactorReturns, getFxWorkspace, getHardMoneyValuation, getIntradayRotation, getLiquiditySnapshot, getMarketHeatmap, getMarketHistory, getMarketPositioning, getMarketSnapshot, getMetalsWorkspace, getNewsWire, getPriceCrossCheck, getProviderHealth, getRegimeCorrelations, getSentimentSnapshot, getSignalTrackRecords, getStablecoinLeadLag, getBitcoinCrossAsset, getBitcoinCycleRecord, getDiversificationRegime, getFxCarry, getGoldRealYield, getGoldSilverRecord, getRecessionProbability, getTechnicalSnapshot, getTreasuryFunding, getVerdictTrackRecords, getVixTermRecord, getWatchlistRisk, getWatchlistRows, parseWatchlistSymbols } from './providers.js';
+import { parseWatchlistRowSymbols } from './watchlistRows.js';
 import { buildAtomFeed } from './analytics.js';
 import { authorizeWrite, contentSecurityPolicy, describeWriteProtection, securityHeaders } from './security.js';
 import { buildInfo } from './buildInfo.js';
@@ -450,6 +451,19 @@ app.get('/api/analytics/watchlist-risk', async (request, response, next) => {
   }
   try {
     response.json(await getWatchlistRisk(parsed.symbols));
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.get('/api/analytics/watchlist-rows', async (request, response, next) => {
+  const parsed = parseWatchlistRowSymbols(request.query.symbols);
+  if (!parsed.ok) {
+    response.status(400).json({ error: parsed.reason, kind: 'bad-request' });
+    return;
+  }
+  try {
+    response.json(await getWatchlistRows(parsed.symbols));
   } catch (error) {
     next(error);
   }

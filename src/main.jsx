@@ -488,7 +488,7 @@ function App() {
             <div className={`market-status ${platformData.status}`}><span className="live-dot"></span><span>{platformData.status === 'live' ? 'Data feeds connected' : platformData.status === 'partial' ? 'Partial data coverage' : 'Data API unavailable'}</span><strong>{formatTimestamp(platformData.markets?.asOf)}</strong></div>
           </section>
 
-          <DataDisclosure data={platformData} message="Live quotes and historical charts are provider-backed. Research scores and narrative signals remain model previews until their calculation pipelines are connected." />
+          <DataDisclosure data={platformData} message="Quotes and charts come from market data providers. The technical state, the day's changes and the wire's tone are calculated from them, and a panel marked Unavailable did not receive its inputs rather than showing an estimate." />
 
           <section className="market-strip">
             <div className="market-label"><span className="globe">◉</span><div><b>Live market proxies</b><small>{formatTimestamp(platformData.markets?.asOf)}</small></div></div>
@@ -3351,29 +3351,21 @@ function ScreenerDashboard({ data }) {
   </div>;
 }
 
-function WatchlistRow({ symbol, onRemove, onSnapshot }) {
-  const history = useMarketHistory(symbol, '3M');
-  const technical = useTechnicalAnalytics(symbol);
-  const points = history.data?.points ?? [];
+function WatchlistRow({ symbol, row, loading, error, onRemove }) {
+  const points = row?.points ?? [];
   const values = normalizeSparkline(points.map((point) => point.value));
-  const first = points[0]?.value;
-  const last = points.at(-1)?.value;
-  const changePct = Number.isFinite(first) && Number.isFinite(last) && first > 0 ? ((last / first) - 1) * 100 : null;
-  const model = technical.data?.model;
-  const fromHigh = model?.indicators?.pctFrom52wHigh;
-  const snapshotValue = model ? { score: model.score, regime: model.regime, last: Number.isFinite(last) ? last : null, changePct, pctFrom52wHigh: Number.isFinite(fromHigh) ? fromHigh : null } : null;
-
-  React.useEffect(() => {
-    onSnapshot(symbol, snapshotValue);
-    return () => onSnapshot(symbol, null);
-  }, [symbol, snapshotValue?.score, snapshotValue?.regime, snapshotValue?.last, snapshotValue?.changePct, snapshotValue?.pctFrom52wHigh]);
-
+  const changePct = row?.changePct;
+  const model = row?.model;
+  const fromHigh = model?.pctFrom52wHigh;
+  const state = model
+    ? `Score ${model.score} · ${model.regime}${Number.isFinite(fromHigh) ? ` · ${fromHigh > 0 ? '+' : ''}${fromHigh}% vs 52W high` : ''}`
+    : loading ? 'Calculating…' : row?.reason ?? (error ? `Unavailable: ${error}` : 'Score unavailable');
   return <div className="watchlist-row">
     <b>{symbol}</b>
-    {values.length > 1 ? <Sparkline color={changePct >= 0 ? '#75c966' : '#d98a72'} values={values} /> : <div className="model-chart-empty">No history</div>}
-    <span>{formatUsd(last)}</span>
+    {values.length > 1 ? <Sparkline color={changePct >= 0 ? '#75c966' : '#d98a72'} values={values} /> : <div className="model-chart-empty">{loading ? 'Loading…' : 'No history'}</div>}
+    <span>{formatUsd(row?.last)}</span>
     <span className={changePct >= 0 ? 'positive' : 'negative'}>{Number.isFinite(changePct) ? formatPercent(changePct) : '—'}</span>
-    <small>{model ? `Score ${model.score} · ${model.regime}${Number.isFinite(fromHigh) ? ` · ${fromHigh > 0 ? '+' : ''}${fromHigh}% vs 52W high` : ''}` : history.status === 'loading' ? 'Calculating…' : 'Score unavailable'}</small>
+    <small title={row?.source ? `${row.source}${row.stored ? ' (stored)' : ''}` : undefined}>{state}</small>
     <button onClick={() => onRemove(symbol)} aria-label={`Remove ${symbol}`}>×</button>
   </div>;
 }
@@ -3518,15 +3510,18 @@ function WatchlistsDashboard({ data, store }) {
   const [addError, setAddError] = React.useState(null);
 
   const symbols = lists[activeList] ?? [];
-  const [snapshots, setSnapshots] = React.useState({});
-  const updateSnapshot = React.useCallback((symbol, value) => {
-    setSnapshots((current) => {
-      if (current[symbol] === value || (value && current[symbol] && current[symbol].score === value.score && current[symbol].regime === value.regime)) return current;
-      const next = { ...current };
-      if (value === null) delete next[symbol]; else next[symbol] = value;
-      return next;
-    });
-  }, []);
+  // One request for the whole list. Rows already read stay on screen while an
+  // edited list reloads, rather than every row flashing back to "Calculating".
+  const rowsResource = useLazyResource(symbols.length ? `/api/analytics/watchlist-rows?symbols=${encodeURIComponent(symbols.join(','))}` : null);
+  const [rowCache, setRowCache] = React.useState({});
+  React.useEffect(() => {
+    if (rowsResource.status !== 'loaded') return;
+    setRowCache((current) => ({ ...current, ...Object.fromEntries((rowsResource.data?.rows ?? []).filter(Boolean).map((row) => [row.symbol, row])) }));
+  }, [rowsResource.status, rowsResource.data]);
+  const snapshots = Object.fromEntries(symbols.flatMap((symbol) => {
+    const row = rowCache[symbol];
+    return row?.model ? [[symbol, { score: row.model.score, regime: row.model.regime, last: row.last, changePct: row.changePct, pctFrom52wHigh: row.model.pctFrom52wHigh }]] : [];
+  }));
 
   const addSymbol = () => {
     const result = addSymbolToList(lists, activeList, draftSymbol);
@@ -3540,7 +3535,6 @@ function WatchlistsDashboard({ data, store }) {
   };
   const removeSymbol = (symbol) => {
     setLists((current) => ({ ...current, [activeList]: (current[activeList] ?? []).filter((item) => item !== symbol) }));
-    updateSnapshot(symbol, null);
   };
   const exportListCsv = () => {
     const header = 'Symbol,Last,Change3mPct,Score,Regime,PctFrom52wHigh';
@@ -3582,7 +3576,7 @@ function WatchlistsDashboard({ data, store }) {
         retrySync();
       }}>Connect</button>}<button className="active">Local lists</button></div>
     </section>
-    <DataDisclosure data={data} message="Each row pulls live market history and the technical-v1 snapshot from the server. Nothing is fabricated; unavailable providers show blanks." />
+    <DataDisclosure data={data} message="Each row is scored by technical-v1 on a year of daily closes: from the platform's own stored and provider histories for the markets it tracks, and from Yahoo Finance daily closes for any other ticker. A ticker with no data says so instead of showing an estimate." />
     <section className="screener-controls-row">
       <div className="window-buttons">{Object.keys(lists).map((name) => <button className={activeList === name ? 'selected' : ''} key={name} onClick={() => setActiveList(name)}>{name}</button>)}</div>
       <div className="watchlist-actions">
@@ -3598,12 +3592,14 @@ function WatchlistsDashboard({ data, store }) {
         const computed = symbols.map((symbol) => snapshots[symbol]).filter(Boolean);
         if (!symbols.length || !computed.length) return null;
         const avgScore = Math.round(computed.reduce((total, snapshot) => total + snapshot.score, 0) / computed.length);
-        const riskOn = computed.filter((snapshot) => snapshot.regime === 'Risk-on' || snapshot.regime === 'Constructive').length;
-        const stress = computed.filter((snapshot) => snapshot.regime === 'Stress').length;
-        return <p className="watchlist-summary">{symbols.length} tracked · {computed.length} calculated · avg score {avgScore} · {riskOn} risk-on · {stress} stress</p>;
+        // technical-v1 reads Constructive, Neutral or Guarded; the old counts
+        // looked for "Risk-on" and "Stress", and the second never occurs.
+        const constructive = computed.filter((snapshot) => snapshot.regime === 'Constructive').length;
+        const guarded = computed.filter((snapshot) => snapshot.regime === 'Guarded').length;
+        return <p className="watchlist-summary">{symbols.length} tracked · {computed.length} calculated · avg score {avgScore} · {constructive} constructive · {guarded} guarded</p>;
       })()}
       <div className="watchlist-head"><span>Symbol</span><span>3M trend</span><span>Latest</span><span>3M change</span><span>Technical state</span><span></span></div>
-      {symbols.map((symbol) => <WatchlistRow key={`${activeList}-${symbol}`} symbol={symbol} onRemove={removeSymbol} onSnapshot={updateSnapshot} />)}
+      {symbols.map((symbol) => <WatchlistRow key={`${activeList}-${symbol}`} symbol={symbol} row={rowCache[symbol] ?? null} loading={rowsResource.status === 'loading' && !rowCache[symbol]} error={rowsResource.status === 'unavailable' ? rowsResource.error : null} onRemove={removeSymbol} />)}
       {!symbols.length && <div className="calculation-empty">This list is empty — add a ticker above to start tracking calculated signals.</div>}
     </section>
     <WatchlistRiskPanel listName={activeList} symbols={symbols} />

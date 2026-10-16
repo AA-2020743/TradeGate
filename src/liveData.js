@@ -4,7 +4,21 @@ import { derivePlatformStatus } from './platformStatus.js';
 
 async function requestJson(path) {
   const response = await fetch(path, { headers: { Accept: 'application/json' } });
-  if (!response.ok) throw new Error(`Request failed with ${response.status}`);
+  if (!response.ok) {
+    // The server says why in its error body ("Unsupported history symbol",
+    // "At most 50 symbols"); a bare status code left panels unable to tell a
+    // ticker it does not track from an outage.
+    let detail = '';
+    try {
+      const body = await response.json();
+      detail = typeof body?.error === 'string' ? body.error : '';
+    } catch {
+      detail = '';
+    }
+    const error = new Error(detail ? `Request failed with ${response.status}: ${detail}` : `Request failed with ${response.status}`);
+    error.status = response.status;
+    throw error;
+  }
   return response.json();
 }
 
@@ -176,8 +190,13 @@ export function useMarketHistory(symbol, range) {
  * histories - held every page on a cold server.
  */
 export function useLazyResource(path) {
-  const [state, setState] = useState({ status: 'loading', data: null, error: null });
+  const [state, setState] = useState({ status: path ? 'loading' : 'idle', data: null, error: null });
   useEffect(() => {
+    // No path means nothing to load yet, such as an empty watchlist.
+    if (!path) {
+      setState({ status: 'idle', data: null, error: null });
+      return undefined;
+    }
     let active = true;
     setState({ status: 'loading', data: null, error: null });
     requestJson(path)

@@ -181,3 +181,13 @@ test('every response names the build that produced it, and the registry is serve
   const health = await (await get('/api/health')).json();
   assert.equal(health.build.shortCommit, payload.build.shortCommit);
 });
+
+test('watchlist rows reject malformed or oversized symbol lists before any provider is called', async () => {
+  for (const query of ['', '?symbols=', '?symbols=AAPL,%3Cscript%3E', `?symbols=${Array.from({ length: 51 }, (_, index) => `S${index}`).join(',')}`]) {
+    const response = await get(`/api/analytics/watchlist-rows${query}`);
+    assert.equal(response.status, 400, query);
+    const body = await response.json();
+    assert.equal(body.kind, 'bad-request');
+    assert.equal(typeof body.error, 'string');
+  }
+});

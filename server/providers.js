@@ -42,6 +42,7 @@ import { readWorkbook, sheetRows } from './xls.js';
 import { ALERT_HORIZONS, ALERT_OUTCOMES_VERSION, BENCHMARK, claimFor, scoreAlertOutcomes } from './alertOutcomes.js';
 import { cryptoHistoryGranularity, describeSeriesFreshness, isCryptoHistoryStale, isCotReportStale, isDailyCloseStale, isFredSeriesAbandoned, isFredSeriesStale, isPbocObservationStale, monthsBetween } from './freshness.js';
 import { percentileRank } from './statistics.js';
+import { buildWatchlistRow, trackedWatchlistRow } from './watchlistRows.js';
 
 /** The provider layer's spelling of the shared percentile. */
 export const percentileOf = percentileRank;
@@ -2032,6 +2033,57 @@ export async function getScreenerTrackRecord() {
       ...calculateScreenerTrackRecord({ histories, benchmark }),
     };
   });
+}
+
+/**
+ * Every row of a watchlist in one request. Symbols the deployment tracks are
+ * read through the same history and technical paths as the rest of the app;
+ * any other ticker is read from Yahoo's keyless daily closes, batched, so a
+ * list of names costs no Twelve Data credits and one request per twenty.
+ */
+export async function getWatchlistRows(symbols) {
+  const tracked = symbols.filter((symbol) => supportsHistorySymbol(symbol));
+  const untracked = symbols.filter((symbol) => !supportsHistorySymbol(symbol));
+  const trackedRows = await Promise.all(tracked.map(async (symbol) => {
+    const [history, technical] = await Promise.allSettled([getMarketHistory(symbol, '3M'), getTechnicalSnapshot(symbol)]);
+    const failure = [history, technical].find((result) => result.status === 'rejected')?.reason?.message ?? null;
+    return trackedWatchlistRow({
+      symbol,
+      history: history.status === 'fulfilled' ? history.value : null,
+      technical: technical.status === 'fulfilled' ? technical.value : null,
+      reason: failure,
+    });
+  }));
+  let untrackedRows = [];
+  if (untracked.length) {
+    const tickers = new Map(untracked.map((symbol) => [symbol, yahooTickerFor(symbol)]));
+    const key = [...tickers.values()].sort().join(',');
+    let closes = null;
+    let failure = null;
+    try {
+      closes = await withCache(`analytics:watchlist-rows:${key}`, 30 * 60_000, async () => {
+        const histories = await getSparkDatedHistories([...tickers.values()], '1y');
+        return { histories: Object.fromEntries(histories), failures: histories.failures ?? 0 };
+      });
+    } catch (error) {
+      failure = `Yahoo did not answer for these tickers (${error.message}).`;
+    }
+    untrackedRows = untracked.map((symbol) => buildWatchlistRow({
+      symbol,
+      yearPoints: closes?.histories?.[tickers.get(symbol)] ?? [],
+      source: 'Yahoo Finance daily closes',
+      reason: failure,
+    }));
+  }
+  const bySymbol = new Map([...trackedRows, ...untrackedRows].map((row) => [row.symbol, row]));
+  const rows = symbols.map((symbol) => bySymbol.get(symbol));
+  return {
+    asOf: new Date().toISOString(),
+    status: rows.some((row) => row.status === 'calculated') ? 'calculated' : 'unavailable',
+    requested: symbols.length,
+    calculated: rows.filter((row) => row.status === 'calculated').length,
+    rows,
+  };
 }
 
 export const WATCHLIST_RISK_MAX_SYMBOLS = 50;
