@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  MAX_SYMBOLS_PER_LIST, addSymbolToList, canAddSymbol, listsFromServer, nextListName, normalizeWatchlists, reconcileWatchlists,
+  MAX_SYMBOLS_PER_LIST, addSymbolToList, canAddSymbol, listsFromServer, nextListName, normalizeWatchlists, reconcileWatchlists, renameList,
   sameWatchlists, sanitizeListName, sanitizeSymbol,
 } from './watchlistRules.js';
 
@@ -143,4 +143,16 @@ test('a new list never takes the name of one that still exists', () => {
   // After deleting "List 2" the count points at "List 3", which is still there.
   assert.equal(nextListName({ Core: [], 'List 3': ['AMD'] }), 'List 4');
   assert.equal(nextListName({}), 'List 1');
+});
+
+test('a renamed list keeps its symbols and its place, and never takes another list\'s name', () => {
+  const lists = { Core: ['NVDA'], 'List 2': ['AMD'], Miners: ['GDX'] };
+  const renamed = renameList(lists, 'List 2', '  Semis  ');
+  assert.equal(renamed.ok, true);
+  assert.deepEqual(Object.keys(renamed.lists), ['Core', 'Semis', 'Miners']);
+  assert.deepEqual(renamed.lists.Semis, ['AMD']);
+  assert.match(renameList(lists, 'List 2', 'Core').reason, /already exists/);
+  assert.equal(renameList(lists, 'List 2', '   ').ok, false);
+  assert.equal(renameList(lists, 'Gone', 'X').ok, false);
+  assert.equal(renameList(lists, 'Core', 'x'.repeat(60)).name.length, 40);
 });

@@ -282,13 +282,19 @@ export function formatPercent(value) {
   return `${value >= 0 ? '+' : ''}${value.toFixed(2)}%`;
 }
 
-export function formatTimestamp(timestamp) {
+export function formatTimestamp(timestamp, now = new Date()) {
   if (!timestamp) return 'Awaiting provider timestamp';
   // Intl throws RangeError on an unparseable date, which would take down the
   // whole panel over one malformed provider field.
   const parsed = new Date(timestamp);
   if (Number.isNaN(parsed.getTime())) return 'Provider timestamp unreadable';
+  // A time alone reads as today: on a Monday morning Friday's close showed as
+  // "4:00 PM EDT". Anything not from today carries its date, and its year
+  // when that differs too.
+  const sameDay = parsed.toDateString() === now.toDateString();
+  const sameYear = parsed.getFullYear() === now.getFullYear();
   return new Intl.DateTimeFormat('en-US', {
+    ...(sameDay ? {} : { month: 'short', day: 'numeric', ...(sameYear ? {} : { year: 'numeric' }) }),
     hour: 'numeric',
     minute: '2-digit',
     timeZoneName: 'short',

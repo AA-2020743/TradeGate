@@ -108,3 +108,17 @@ export function nextListName(lists) {
   while (taken.has(`List ${number}`)) number += 1;
   return `List ${number}`;
 }
+
+/**
+ * A list renamed in place, keeping its position among the others. The name
+ * gets the server's own cleaning, and a name another list already has is
+ * refused rather than merged into it.
+ */
+export function renameList(lists, from, raw) {
+  const name = sanitizeListName(raw);
+  if (!lists?.[from]) return { ok: false, lists, name, reason: 'That list no longer exists.' };
+  if (!name) return { ok: false, lists, name, reason: 'A list needs a name.' };
+  if (name === from) return { ok: false, lists, name, reason: null };
+  if (Object.prototype.hasOwnProperty.call(lists, name)) return { ok: false, lists, name, reason: `A list called ${name} already exists.` };
+  return { ok: true, name, reason: null, lists: Object.fromEntries(Object.entries(lists).map(([key, symbols]) => [key === from ? name : key, symbols])) };
+}

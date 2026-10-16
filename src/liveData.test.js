@@ -22,6 +22,14 @@ test('a valid timestamp still formats', () => {
   assert.match(formatTimestamp(new Date('2026-08-20T12:00:00Z')), /12:00\s?PM/);
 });
 
+test('a timestamp from an earlier day carries its date, and today\'s does not', () => {
+  // Local dates, so the test reads the same in any time zone.
+  const friday = new Date(2026, 9, 16, 16, 0);
+  assert.doesNotMatch(formatTimestamp(friday, new Date(2026, 9, 16, 18, 30)), /Oct/);
+  assert.match(formatTimestamp(friday, new Date(2026, 9, 19, 9, 0)), /^Oct 16, 4:00\s?PM/);
+  assert.match(formatTimestamp(friday, new Date(2027, 0, 4, 9, 0)), /Oct 16, 2026/);
+});
+
 test('currency decimals follow magnitude rather than sign', () => {
   // The old check compared the raw value, so every negative took the
   // small-number branch no matter how large it was.

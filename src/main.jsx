@@ -3,7 +3,7 @@ import { createRoot } from 'react-dom/client';
 import './styles.css';
 import { changeOverSpan, formatPercent, formatSpanLabel, formatTimestamp, formatUsd, useEquityResearch, useLazyResource, useMarketHistory, usePlatformData, useTechnicalAnalytics } from './liveData.js';
 import { buildRoute, parseRoute } from './routing.js';
-import { MAX_LISTS, addSymbolToList, nextListName, normalizeWatchlists, reconcileWatchlists, sameWatchlists, sanitizeSymbol } from './watchlistRules.js';
+import { MAX_LISTS, addSymbolToList, nextListName, normalizeWatchlists, reconcileWatchlists, renameList, sameWatchlists, sanitizeSymbol } from './watchlistRules.js';
 import { SCREENER_COLUMNS, ariaSortFor, nextSortState, sortRows } from './screenerSort.js';
 import { compareSnapshots } from './snapshotDiff.js';
 
@@ -3597,6 +3597,19 @@ function WatchlistsDashboard({ data, store }) {
     setLists((current) => ({ ...current, [name]: [] }));
     setActiveList(name);
   };
+  const renameActiveList = () => {
+    // New lists are named "List 2", "List 3"; without this they kept it.
+    const entered = window.prompt('Rename this list', activeList);
+    if (entered === null) return;
+    const result = renameList(lists, activeList, entered);
+    if (!result.ok) {
+      if (result.reason) setAddError(result.reason);
+      return;
+    }
+    setAddError(null);
+    setLists(result.lists);
+    setActiveList(result.name);
+  };
   const deleteList = () => {
     if (Object.keys(lists).length <= 1) return;
     setLists((current) => {
@@ -3625,6 +3638,7 @@ function WatchlistsDashboard({ data, store }) {
         <button className="watch-button" onClick={addSymbol}>+ Add</button>
         {symbols.length ? <button className="watch-button" onClick={exportListCsv}>Export CSV</button> : null}
         <button className="watch-button" onClick={createList} disabled={Object.keys(lists).length >= MAX_LISTS} title={Object.keys(lists).length >= MAX_LISTS ? `The server stores at most ${MAX_LISTS} lists.` : undefined}>New list</button>
+        <button className="watch-button" onClick={renameActiveList}>Rename list</button>
         {Object.keys(lists).length > 1 && <button className="watch-button" onClick={deleteList}>Delete list</button>}
       </div>
     </section>
