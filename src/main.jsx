@@ -361,6 +361,8 @@ function App() {
   const navigateTo = React.useCallback((nav, anchor = null) => { setActiveNav(nav); setPendingAnchor(anchor); }, []);
   const [watchNote, setWatchNote] = React.useState(null);
   const mobileNavRef = React.useRef(null);
+  const paletteRef = React.useRef(null);
+  const paletteOpenerRef = React.useRef(null);
   React.useEffect(() => {
     // Keep the current workspace's tab in view in the scrolling phone strip.
     const nav = mobileNavRef.current;
@@ -508,11 +510,21 @@ function App() {
     const onKeyDown = (event) => {
       if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'k') {
         event.preventDefault();
+        if (!searchOpen) paletteOpenerRef.current = document.activeElement;
         setSearchQuery('');
         setCommandIndex(0);
         setSearchOpen(true);
       }
       if (event.key === 'Escape') setSearchOpen(false);
+      // Tab stays inside the open palette, as it does in the other dialogs.
+      if (searchOpen && event.key === 'Tab' && paletteRef.current) {
+        const focusable = [...paletteRef.current.querySelectorAll('input, button')].filter((node) => !node.disabled && node.offsetParent !== null);
+        const first = focusable[0];
+        const last = focusable.at(-1);
+        if (first && !paletteRef.current.contains(document.activeElement)) { event.preventDefault(); first.focus(); }
+        else if (first && event.shiftKey && document.activeElement === first) { event.preventDefault(); last.focus(); }
+        else if (first && !event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus(); }
+      }
       if (searchOpen && matchingCommands.length) {
         if (event.key === 'ArrowDown') {
           event.preventDefault();
@@ -534,10 +546,18 @@ function App() {
   }, [commandIndex, matchingCommands, searchOpen]);
 
   React.useEffect(() => {
-    if (searchOpen) requestAnimationFrame(() => searchInputRef.current?.focus());
+    if (searchOpen) {
+      requestAnimationFrame(() => searchInputRef.current?.focus());
+      return;
+    }
+    // Closed: focus goes back to whatever opened it, not to the page body.
+    const opener = paletteOpenerRef.current;
+    paletteOpenerRef.current = null;
+    if (opener && typeof opener.focus === 'function' && document.contains(opener)) opener.focus();
   }, [searchOpen]);
 
   const openSearch = () => {
+    if (!searchOpen) paletteOpenerRef.current = document.activeElement;
     setSearchQuery('');
     setCommandIndex(0);
     setSearchOpen(true);
@@ -617,7 +637,7 @@ function App() {
       </section>
       {helpOpen && <HelpDialog onClose={closeHelp} />}
       {searchOpen && <div className="command-overlay" onMouseDown={(event) => { if (event.target === event.currentTarget) setSearchOpen(false); }}>
-        <section className="command-palette" role="dialog" aria-modal="true" aria-label="Search research">
+        <section ref={paletteRef} className="command-palette" role="dialog" aria-modal="true" aria-label="Search research">
           <div className="command-input-wrap"><span>⌕</span><input ref={searchInputRef} value={searchQuery} onChange={(event) => { setSearchQuery(event.target.value); setCommandIndex(0); }} placeholder="Search research, markets, or symbols" aria-label="Search research, markets, or symbols" /><kbd>ESC</kbd></div>
           <div className="command-results"><p>QUICK ACCESS</p>{matchingCommands.length ? matchingCommands.map((command, index) => <button className={commandIndex === index ? 'command-selected' : ''} key={`${command.label}-${command.detail}`} onMouseEnter={() => setCommandIndex(index)} onClick={() => { command.action(); setSearchOpen(false); }}><span className="command-result-icon">{command.label.length <= 4 ? command.label.charAt(0) : '◌'}</span><span><b>{command.label}</b><small>{command.detail}</small></span><i>↵</i></button>) : <div className="command-empty">No matching research found.</div>}</div>
           <footer><span><kbd>↑↓</kbd> Navigate</span><span><kbd>↵</kbd> Open</span><span><kbd>ESC</kbd> Close</span></footer>
