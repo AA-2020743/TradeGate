@@ -59,8 +59,11 @@ const PLATFORM_CORE_KEYS = ['health', 'markets', 'liquidity', 'dxyBtc'];
  * it shows neither. Answers arriving close together are delivered in one
  * update; the derived state (the platform status) is computed as soon as the
  * core requests have settled; and the promise still resolves only when all
- * have, so a poller never starts one batch on top of another. A failed
- * request delivers null, as the all-at-once version did.
+ * have, so a poller never starts one batch on top of another.
+ *
+ * A failed request delivers nothing, so the last good answer stays on the
+ * page: one dropped poll used to blank a panel for a minute. Every payload
+ * carries its own date, and the core failures still reach the status.
  */
 export async function loadProgressively({ requests, coreKeys = [], request = requestJson, onUpdate, derive = () => ({}), flushMs = 60, isActive = () => true }) {
   const pending = {};
@@ -85,7 +88,7 @@ export async function loadProgressively({ requests, coreKeys = [], request = req
     .then(() => request(path))
     .then(
       (value) => { queue(key, value); return { status: 'fulfilled', value }; },
-      (reason) => { queue(key, null); return { status: 'rejected', reason }; },
+      (reason) => ({ status: 'rejected', reason }),
     ));
   const core = await Promise.all(coreKeys.map((key) => settled[keys.indexOf(key)]));
   if (isActive()) {

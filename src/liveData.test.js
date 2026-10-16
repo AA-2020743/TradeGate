@@ -114,7 +114,8 @@ test('fast answers are drawn before a slow one finishes', async () => {
   const early = Object.assign({}, ...updates);
   assert.deepEqual(early.health, { path: '/health' });
   assert.equal(early.status, 'live');
-  assert.equal(early.broken, null);
+  // A failed request delivers nothing, so a panel keeps its last good answer.
+  assert.equal('broken' in early, false);
   assert.equal('screener' in early, false);
   let finished = false;
   done.then(() => { finished = true; });
