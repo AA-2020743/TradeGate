@@ -1,7 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  MAX_SYMBOLS_PER_LIST, addSymbolToList, canAddSymbol, normalizeWatchlists, sanitizeListName, sanitizeSymbol,
+  MAX_SYMBOLS_PER_LIST, addSymbolToList, canAddSymbol, listsFromServer, nextListName, normalizeWatchlists, reconcileWatchlists,
+  sameWatchlists, sanitizeListName, sanitizeSymbol,
 } from './watchlistRules.js';
 
 // The server applies exactly this to every symbol it stores.
@@ -96,4 +97,50 @@ test('a normalised payload passes the server rules unchanged', () => {
     assert.ok(symbols.length <= MAX_SYMBOLS_PER_LIST);
     for (const symbol of symbols) assert.equal(serverSanitize(symbol), symbol);
   }
+});
+
+const DEFAULTS = { Core: ['NVDA', 'AAPL', 'GLD', 'BTC'] };
+
+test('server rows become the lists the client edits, cleaned the same way', () => {
+  assert.deepEqual(
+    listsFromServer([{ name: 'Mine', symbols: ['msft', 'MSFT', 'tsla'] }, { name: '', symbols: ['X'] }, { name: 'Bad' }, null]),
+    { Mine: ['MSFT', 'TSLA'] },
+  );
+  assert.deepEqual(listsFromServer(undefined), {});
+});
+
+test('list order does not make two sets of lists differ, but symbol order does', () => {
+  assert.equal(sameWatchlists({ B: ['X'], A: ['Y'] }, { A: ['Y'], B: ['X'] }), true);
+  assert.equal(sameWatchlists({ A: ['X', 'Y'] }, { A: ['Y', 'X'] }), false);
+  assert.equal(sameWatchlists({ A: ['x'] }, { A: ['X'] }), true);
+});
+
+test('a browser nobody has edited adopts the server lists instead of overwriting them', () => {
+  // The defaults reach localStorage on first render, before the server
+  // answers, so merely having stored lists does not mean they were edited.
+  const result = reconcileWatchlists({ local: DEFAULTS, defaults: DEFAULTS, server: [{ name: 'Mine', symbols: ['MSFT'] }] });
+  assert.equal(result.action, 'adopt');
+  assert.deepEqual(result.lists, { Mine: ['MSFT'] });
+  assert.equal(reconcileWatchlists({ local: null, defaults: DEFAULTS, server: [{ name: 'Mine', symbols: ['MSFT'] }] }).action, 'adopt');
+});
+
+test('an edited browser that disagrees with the server keeps its lists and reports the conflict', () => {
+  const local = { Core: ['NVDA', 'AMD'] };
+  const result = reconcileWatchlists({ local, defaults: DEFAULTS, server: [{ name: 'Mine', symbols: ['MSFT'] }] });
+  assert.equal(result.action, 'conflict');
+  assert.deepEqual(result.lists, local);
+  assert.deepEqual(result.serverLists, { Mine: ['MSFT'] });
+});
+
+test('matching lists need nothing, and an empty server takes only edited lists', () => {
+  assert.equal(reconcileWatchlists({ local: { B: ['X'], A: ['Y'] }, defaults: DEFAULTS, server: [{ name: 'A', symbols: ['Y'] }, { name: 'B', symbols: ['X'] }] }).action, 'keep');
+  assert.equal(reconcileWatchlists({ local: { Core: ['AMD'] }, defaults: DEFAULTS, server: [] }).action, 'push');
+  assert.equal(reconcileWatchlists({ local: DEFAULTS, defaults: DEFAULTS, server: [] }).action, 'keep');
+});
+
+test('a new list never takes the name of one that still exists', () => {
+  assert.equal(nextListName({ Core: [] }), 'List 2');
+  // After deleting "List 2" the count points at "List 3", which is still there.
+  assert.equal(nextListName({ Core: [], 'List 3': ['AMD'] }), 'List 4');
+  assert.equal(nextListName({}), 'List 1');
 });

@@ -3,7 +3,7 @@ import { createRoot } from 'react-dom/client';
 import './styles.css';
 import { changeOverSpan, formatPercent, formatSpanLabel, formatTimestamp, formatUsd, useEquityResearch, useLazyResource, useMarketHistory, usePlatformData, useTechnicalAnalytics } from './liveData.js';
 import { buildRoute, parseRoute } from './routing.js';
-import { addSymbolToList, normalizeWatchlists } from './watchlistRules.js';
+import { MAX_LISTS, addSymbolToList, nextListName, normalizeWatchlists, reconcileWatchlists, sameWatchlists } from './watchlistRules.js';
 import { SCREENER_COLUMNS, ariaSortFor, nextSortState, sortRows } from './screenerSort.js';
 import { compareSnapshots } from './snapshotDiff.js';
 
@@ -262,6 +262,7 @@ function App() {
   const searchInputRef = React.useRef(null);
   const routeSynced = React.useRef(false);
   const platformData = usePlatformData();
+  const watchlistStore = useWatchlistStore();
   const history = useMarketHistory(selectedTicker, period);
   const technical = useTechnicalAnalytics(selectedTicker);
   const nvdaSpark = useMarketHistory('NVDA', '1M');
@@ -383,7 +384,7 @@ function App() {
 
         <div className="dashboard">
           <WorkspaceErrorBoundary resetKey={activeNav}>
-          {activeNav === 'Macro' ? <MacroDashboard data={platformData} /> : activeNav === 'Forex' ? <ForexDashboard data={platformData} /> : activeNav === 'Crypto' ? <CryptoDashboard data={platformData} /> : activeNav === 'Markets' ? <MarketsDashboard data={platformData} /> : activeNav === 'Equities' ? <EquitiesDashboard platformData={platformData} /> : activeNav === 'Metals' ? <MetalsDashboard data={platformData} /> : activeNav === 'Screener' ? <ScreenerDashboard data={platformData} /> : activeNav === 'Watchlists' ? <WatchlistsDashboard data={platformData} /> : <>
+          {activeNav === 'Macro' ? <MacroDashboard data={platformData} /> : activeNav === 'Forex' ? <ForexDashboard data={platformData} /> : activeNav === 'Crypto' ? <CryptoDashboard data={platformData} /> : activeNav === 'Markets' ? <MarketsDashboard data={platformData} /> : activeNav === 'Equities' ? <EquitiesDashboard platformData={platformData} /> : activeNav === 'Metals' ? <MetalsDashboard data={platformData} /> : activeNav === 'Screener' ? <ScreenerDashboard data={platformData} /> : activeNav === 'Watchlists' ? <WatchlistsDashboard data={platformData} store={watchlistStore} /> : <>
           <section className="welcome-row">
             <div><p className="eyebrow">{new Intl.DateTimeFormat('en-US', { weekday: 'long', month: 'long', day: 'numeric' }).format(new Date()).toUpperCase()}</p><h1>Good morning, Alex.</h1><p className="intro">Here is your market pulse for today.</p></div>
             <div className={`market-status ${platformData.status}`}><span className="live-dot"></span><span>{platformData.status === 'live' ? 'Data feeds connected' : platformData.status === 'partial' ? 'Partial data coverage' : 'Data API unavailable'}</span><strong>{formatTimestamp(platformData.markets?.asOf)}</strong></div>
@@ -3303,59 +3304,112 @@ function IntradayRotationPanel({ fallback }) {
   </article>;
 }
 
-function WatchlistsDashboard({ data }) {
-  const [lists, setLists] = React.useState(() => {
-    try {
-      const stored = JSON.parse(window.localStorage.getItem('tradegate-watchlists'));
-      return stored && typeof stored === 'object' && Object.keys(stored).length ? stored : DEFAULT_WATCHLISTS;
-    } catch {
-      return DEFAULT_WATCHLISTS;
-    }
-  });
-  const [activeList, setActiveList] = React.useState(() => Object.keys(DEFAULT_WATCHLISTS)[0]);
-  const [draftSymbol, setDraftSymbol] = React.useState('');
-  const [addError, setAddError] = React.useState(null);
+function readStoredWatchlists() {
+  try {
+    const stored = JSON.parse(window.localStorage.getItem('tradegate-watchlists'));
+    return stored && typeof stored === 'object' && !Array.isArray(stored) && Object.keys(stored).length ? stored : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * The watchlists, held once for the whole app rather than inside the
+ * Watchlists page. Inside the page, an edit followed by a click elsewhere
+ * within the save delay unmounted the page and cancelled its save, and the
+ * Overview had no way to add the symbol it was showing.
+ */
+function useWatchlistStore() {
+  const [lists, setLists] = React.useState(() => readStoredWatchlists() ?? DEFAULT_WATCHLISTS);
   const [syncState, setSyncState] = React.useState('idle');
-  const serverSyncedRef = React.useRef(false);
+  const [serverLists, setServerLists] = React.useState(null);
+  // What the server is known to hold; null until it has answered. Lists equal
+  // to it are not written back, so adopting the server's lists is not echoed.
+  const serverCopyRef = React.useRef(null);
+  const listsRef = React.useRef(lists);
+  const pendingRef = React.useRef(null);
   const syncTimerRef = React.useRef(null);
+  listsRef.current = lists;
+
+  const push = React.useCallback((next, { keepalive = false } = {}) => {
+    pendingRef.current = null;
+    setSyncState('syncing');
+    // The server refuses writes it cannot attribute to the owner. The token is
+    // kept in this browser only and sent as a bearer header; without it the
+    // lists stay local and the pill says why instead of claiming a failure.
+    let token = null;
+    try { token = window.localStorage.getItem('tradegate-write-token'); } catch { token = null; }
+    const body = normalizeWatchlists(next);
+    return fetch('/api/watchlists', { method: 'PUT', keepalive, headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) }, body: JSON.stringify(body) })
+      .then((response) => response.json())
+      .then((payload) => {
+        if (payload?.saved) {
+          serverCopyRef.current = body;
+          setServerLists(null);
+          setSyncState('synced');
+        } else {
+          setSyncState(payload?.writeProtected ? 'protected' : 'local');
+        }
+      })
+      .catch(() => setSyncState('failed'));
+  }, []);
 
   React.useEffect(() => {
-    window.localStorage.setItem('tradegate-watchlists', JSON.stringify(lists));
-    if (!serverSyncedRef.current) return;
-    if (syncTimerRef.current) clearTimeout(syncTimerRef.current);
-    syncTimerRef.current = setTimeout(() => {
-      setSyncState('syncing');
-      // The server refuses writes it cannot attribute to the owner. The token is
-      // kept in this browser only and sent as a bearer header; without it the
-      // lists stay local and the pill says why instead of claiming a failure.
-      let token = null;
-      try { token = window.localStorage.getItem('tradegate-write-token'); } catch { token = null; }
-      fetch('/api/watchlists', { method: 'PUT', headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) }, body: JSON.stringify(normalizeWatchlists(lists)) })
-        .then((response) => response.json())
-        .then((payload) => setSyncState(payload?.saved ? 'synced' : payload?.writeProtected ? 'protected' : 'local'))
-        .catch(() => setSyncState('failed'));
-    }, 1500);
+    try { window.localStorage.setItem('tradegate-watchlists', JSON.stringify(lists)); } catch { /* storage blocked: the lists stay in memory */ }
+    if (serverCopyRef.current === null || sameWatchlists(lists, serverCopyRef.current)) return undefined;
+    pendingRef.current = lists;
+    clearTimeout(syncTimerRef.current);
+    syncTimerRef.current = setTimeout(() => push(lists), 1500);
     return () => clearTimeout(syncTimerRef.current);
-  }, [lists]);
+  }, [lists, push]);
+
+  React.useEffect(() => {
+    // A tab closed inside the save delay would otherwise keep the edit only in
+    // this browser, and the next visit would find the two sides disagreeing.
+    const flush = () => {
+      if (!pendingRef.current) return;
+      clearTimeout(syncTimerRef.current);
+      push(pendingRef.current, { keepalive: true });
+    };
+    window.addEventListener('pagehide', flush);
+    return () => window.removeEventListener('pagehide', flush);
+  }, [push]);
 
   React.useEffect(() => {
     let active = true;
     fetch('/api/watchlists').then((response) => response.json()).then((payload) => {
-      if (!active || payload?.status !== 'calculated') { if (active) setSyncState('local'); return; }
-      const hasLocal = Boolean(window.localStorage.getItem('tradegate-watchlists'));
-      if (!hasLocal && Array.isArray(payload.lists) && payload.lists.length) {
-        const adopted = {};
-        for (const list of payload.lists) if (list?.name && Array.isArray(list.symbols)) adopted[list.name] = list.symbols;
-        if (Object.keys(adopted).length) {
-          setLists(adopted);
-          setActiveList(Object.keys(adopted)[0]);
-        }
-      }
-      serverSyncedRef.current = true;
-      setSyncState('synced');
+      if (!active) return;
+      if (payload?.status !== 'calculated') { setSyncState('local'); return; }
+      const result = reconcileWatchlists({ local: listsRef.current, defaults: DEFAULT_WATCHLISTS, server: payload.lists });
+      serverCopyRef.current = result.serverLists;
+      if (result.action === 'adopt') setLists(result.lists);
+      if (result.action === 'push') push(result.lists);
+      setServerLists(result.action === 'conflict' ? result.serverLists : null);
+      setSyncState(result.action === 'conflict' ? 'conflict' : 'synced');
     }).catch(() => { if (active) setSyncState('local'); });
     return () => { active = false; };
-  }, []);
+  }, [push]);
+
+  const adoptServerLists = React.useCallback(() => {
+    if (!serverLists) return;
+    setLists(serverLists);
+    setServerLists(null);
+    setSyncState('synced');
+  }, [serverLists]);
+  const retrySync = React.useCallback(() => push(listsRef.current), [push]);
+
+  return { lists, setLists, syncState, serverLists, adoptServerLists, retrySync };
+}
+
+function WatchlistsDashboard({ data, store }) {
+  const { lists, setLists, syncState, serverLists, adoptServerLists, retrySync } = store;
+  // A remembered choice that no longer names a list (deleted here, or replaced
+  // by the server's lists) falls back to the first one instead of showing an
+  // empty list that the next add would quietly recreate.
+  const [chosenList, setActiveList] = React.useState(null);
+  const activeList = chosenList && lists[chosenList] ? chosenList : Object.keys(lists)[0];
+  const [draftSymbol, setDraftSymbol] = React.useState('');
+  const [addError, setAddError] = React.useState(null);
 
   const symbols = lists[activeList] ?? [];
   const [snapshots, setSnapshots] = React.useState({});
@@ -3397,7 +3451,8 @@ function WatchlistsDashboard({ data }) {
     URL.revokeObjectURL(url);
   };
   const createList = () => {
-    const name = `List ${Object.keys(lists).length + 1}`;
+    if (Object.keys(lists).length >= MAX_LISTS) return;
+    const name = nextListName(lists);
     setLists((current) => ({ ...current, [name]: [] }));
     setActiveList(name);
   };
@@ -3408,17 +3463,17 @@ function WatchlistsDashboard({ data }) {
       delete next[activeList];
       return next;
     });
-    setActiveList((current) => Object.keys(lists).find((name) => name !== current) ?? 'Core');
+    setActiveList(Object.keys(lists).find((name) => name !== activeList) ?? null);
   };
 
   return <div className="watchlists-dashboard">
     <section className="macro-intro">
-      <div><p className="eyebrow">WATCHLIST WORKSPACE</p><h1>Your names, calculated.</h1><p className="intro">Live provider histories, technical scores, and regimes for the symbols you track. Lists persist in this browser{syncState === 'synced' ? ' and mirror to the server database.' : '.'}</p></div>
-      <div className="model-tabs">{syncState !== 'idle' && syncState !== 'local' && <span className="watch-sync-pill" data-state={syncState}>{syncState === 'syncing' ? 'SYNCING…' : syncState === 'failed' ? 'LOCAL ONLY · SYNC FAILED' : syncState === 'protected' ? 'LOCAL ONLY · SERVER WRITE-PROTECTED' : 'SERVER SYNCED'}</span>}{syncState === 'protected' && <button onClick={() => {
+      <div><p className="eyebrow">WATCHLIST WORKSPACE</p><h1>Your names, calculated.</h1><p className="intro">Live provider histories, technical scores, and regimes for the symbols you track. Lists persist in this browser{syncState === 'synced' ? ' and mirror to the server database.' : '.'}</p>{serverLists ? <p className="watchlist-conflict" role="status">The server holds different lists ({Object.keys(serverLists).join(', ')}) from the ones saved in this browser. These are this browser's; editing them replaces the server's. <button className="watch-button" onClick={adoptServerLists}>Use the server's lists</button></p> : null}</div>
+      <div className="model-tabs">{syncState !== 'idle' && syncState !== 'local' && <span className="watch-sync-pill" data-state={syncState}>{syncState === 'syncing' ? 'SYNCING…' : syncState === 'failed' ? 'LOCAL ONLY · SYNC FAILED' : syncState === 'protected' ? 'LOCAL ONLY · SERVER WRITE-PROTECTED' : syncState === 'conflict' ? 'DIFFERS FROM SERVER' : 'SERVER SYNCED'}</span>}{syncState === 'protected' && <button onClick={() => {
         const entered = window.prompt('Enter this server\u2019s write token (TRADEGATE_WRITE_TOKEN). It is stored in this browser only.');
         if (!entered) return;
         try { window.localStorage.setItem('tradegate-write-token', entered.trim()); } catch { return; }
-        setLists((current) => ({ ...current }));
+        retrySync();
       }}>Connect</button>}<button className="active">Local lists</button></div>
     </section>
     <DataDisclosure data={data} message="Each row pulls live market history and the technical-v1 snapshot from the server. Nothing is fabricated; unavailable providers show blanks." />
@@ -3428,7 +3483,7 @@ function WatchlistsDashboard({ data }) {
         <input className="screener-search" value={draftSymbol} onChange={(event) => { setDraftSymbol(event.target.value); setAddError(null); }} onKeyDown={(event) => event.key === 'Enter' && addSymbol()} placeholder="Add symbol…" aria-label="Add symbol" />{addError ? <small className="watchlist-add-error" role="status">{addError}</small> : null}
         <button className="watch-button" onClick={addSymbol}>+ Add</button>
         {symbols.length ? <button className="watch-button" onClick={exportListCsv}>Export CSV</button> : null}
-        <button className="watch-button" onClick={createList}>New list</button>
+        <button className="watch-button" onClick={createList} disabled={Object.keys(lists).length >= MAX_LISTS} title={Object.keys(lists).length >= MAX_LISTS ? `The server stores at most ${MAX_LISTS} lists.` : undefined}>New list</button>
         {Object.keys(lists).length > 1 && <button className="watch-button" onClick={deleteList}>Delete list</button>}
       </div>
     </section>

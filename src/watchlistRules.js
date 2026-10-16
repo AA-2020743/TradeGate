@@ -50,3 +50,61 @@ export function normalizeWatchlists(lists) {
   }
   return normalized;
 }
+
+/** The server's rows as the name-to-symbols object the client edits. */
+export function listsFromServer(rows) {
+  const adopted = {};
+  for (const list of Array.isArray(rows) ? rows : []) {
+    if (list?.name && Array.isArray(list.symbols)) adopted[list.name] = list.symbols;
+  }
+  return normalizeWatchlists(adopted);
+}
+
+/**
+ * Same lists holding the same symbols in the same order. List order is
+ * ignored because the server hands lists back sorted by name, so a browser's
+ * own insertion order would otherwise always read as a difference.
+ */
+export function sameWatchlists(a, b) {
+  const canonical = (lists) => JSON.stringify(Object.entries(normalizeWatchlists(lists))
+    .sort(([left], [right]) => (left < right ? -1 : left > right ? 1 : 0)));
+  return canonical(a) === canonical(b);
+}
+
+/**
+ * What a browser should do with its lists once the server has answered.
+ *
+ * Checking only whether anything was in localStorage could not work: the
+ * defaults are written there on first render, before the server answers, so
+ * every browser looked edited, a new one never picked up the server's lists,
+ * and its first edit replaced them with the defaults plus that edit. Holding
+ * exactly the defaults is the sign of a browser nobody has edited, and only
+ * that browser adopts the server's lists. An edited one that disagrees keeps
+ * its own and is told, so neither side is thrown away without a choice.
+ *
+ *   adopt    - show the server's lists
+ *   push     - the server holds none; send this browser's edited lists
+ *   keep     - nothing to do
+ *   conflict - both sides edited and they differ
+ */
+export function reconcileWatchlists({ local, defaults, server }) {
+  const serverLists = listsFromServer(server);
+  const localLists = local && typeof local === 'object' ? local : {};
+  const edited = Object.keys(localLists).length > 0 && !sameWatchlists(localLists, defaults);
+  if (!Object.keys(serverLists).length) return { action: edited ? 'push' : 'keep', lists: localLists, serverLists };
+  if (sameWatchlists(localLists, serverLists)) return { action: 'keep', lists: localLists, serverLists };
+  if (!edited) return { action: 'adopt', lists: serverLists, serverLists };
+  return { action: 'conflict', lists: localLists, serverLists };
+}
+
+/**
+ * The first "List N" not already taken. Counting the lists was not enough:
+ * after a deletion the count can name a list that still exists, and creating
+ * the "new" one replaced that list with an empty one.
+ */
+export function nextListName(lists) {
+  const taken = new Set(Object.keys(lists ?? {}));
+  let number = taken.size + 1;
+  while (taken.has(`List ${number}`)) number += 1;
+  return `List ${number}`;
+}
