@@ -197,8 +197,7 @@ function LiquidityHistoryChart({ history, range, onRangeChange, expanded = false
   </div>;
 }
 
-function LiquidityChartDialog({ history, title, description, label, onClose }) {
-  const [range, setRange] = React.useState('All');
+function useDialogClose(onClose) {
   React.useEffect(() => {
     const closeOnEscape = (event) => {
       if (event.key === 'Escape') onClose();
@@ -211,6 +210,71 @@ function LiquidityChartDialog({ history, title, description, label, onClose }) {
       document.body.style.overflow = previousOverflow;
     };
   }, [onClose]);
+}
+
+function InfoDialog({ id, kicker, title, description, closeLabel, onClose, children }) {
+  useDialogClose(onClose);
+  return <div className="liquidity-dialog-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}>
+    <section className="liquidity-dialog info-dialog panel" role="dialog" aria-modal="true" aria-labelledby={`${id}-title`}>
+      <header><div><p className="section-kicker">{kicker}</p><h2 id={`${id}-title`}>{title}</h2>{description ? <p>{description}</p> : null}</div><button className="liquidity-dialog-close" onClick={onClose} aria-label={closeLabel} autoFocus>×</button></header>
+      {children}
+    </section>
+  </div>;
+}
+
+function HelpDialog({ onClose }) {
+  return <InfoDialog id="help-dialog" kicker="HELP" closeLabel="Close help" title="Reading TradeGate" description="An independent research workspace. Nothing here is investment advice." onClose={onClose}>
+    <div className="help-grid">
+      <section><h3>Moving around</h3><ul>
+        <li>The sidebar switches workspaces. Each one has its own address, such as <code>#/macro</code>, so it can be bookmarked or shared.</li>
+        <li><kbd>⌘ K</kbd> or <kbd>Ctrl K</kbd> opens search, and <kbd>Esc</kbd> closes it and any open dialog.</li>
+        <li>The moon and sun button switches between dark and light, and the choice is remembered in this browser.</li>
+      </ul></section>
+      <section><h3>Status labels</h3><ul>
+        <li><b>Calculated</b> means the panel was computed from provider data on this load.</li>
+        <li><b>Unavailable</b> means its inputs did not arrive, and nothing is estimated in their place.</li>
+        <li><b>Stored</b> beside a price means it came from the database copy because the live provider did not answer.</li>
+        <li>The pill at the top right says whether the data feeds are live, partial or offline. Hover over it to see which providers are serving.</li>
+      </ul></section>
+      <section><h3>Track records</h3><ul>
+        <li>Each model is replayed on its own history. The older 70% is where it was developed, and the newest 30% is held out to test it.</li>
+        <li><b>Held up</b> means it kept ordering later returns in the held-out block. <b>Faded</b>, <b>reversed</b> and <b>no order</b> mean it did not, and <b>thin</b> means there was too little data to judge.</li>
+        <li>Where a record sits beside a worst-fall record, the two show whether a reading tells you about returns, about risk, or both.</li>
+        <li>The Markets workspace collects every record in its scorecard.</li>
+      </ul></section>
+      <section><h3>Watchlists</h3><ul>
+        <li>Lists are saved in this browser and, when the server has a database, mirrored to it.</li>
+        <li>A server with a write token takes changes only from a browser that has entered it. Use Connect on the Watchlists page to enter it.</li>
+      </ul></section>
+    </div>
+  </InfoDialog>;
+}
+
+const LAG_STATE_LABELS = { current: 'On schedule', overdue: 'Late', stale: 'Stale', abandoned: 'Stopped' };
+const LAG_STATE_ORDER = { abandoned: 0, stale: 1, overdue: 2, current: 3 };
+const LAG_STATE_TONE = { current: 'positive', overdue: 'neutral', stale: 'negative', abandoned: 'negative' };
+
+function SourceLagsDialog({ series, onClose }) {
+  const rows = [...(series ?? [])].sort((left, right) => (LAG_STATE_ORDER[left.freshness?.state] ?? 4) - (LAG_STATE_ORDER[right.freshness?.state] ?? 4) || String(left.name).localeCompare(String(right.name)));
+  const late = rows.filter((row) => row.freshness?.state && row.freshness.state !== 'current').length;
+  return <InfoDialog id="source-lags-dialog" kicker="DATA PROVENANCE" closeLabel="Close sources and lags" title="Sources and publication lags" description={rows.length ? `${rows.length} official series, ${late ? `${late} behind their normal publication schedule` : 'all on their normal publication schedule'}. A series' normal gap is the oldest its newest print gets between releases; its tolerance adds room for a slipped release.` : 'The macro series have not loaded, so there are no publication lags to show.'} onClose={onClose}>
+    {rows.length ? <div className="lag-table" role="table" aria-label="Each macro series with its latest observation and publication lag">
+      <div className="lag-row lag-head" role="row"><span role="columnheader">Series</span><span role="columnheader">Latest</span><span role="columnheader">Age</span><span role="columnheader">Normal gap</span><span role="columnheader">Tolerance</span><span role="columnheader">State</span></div>
+      {rows.map((row) => <div className="lag-row" role="row" key={row.id}>
+        <span role="cell"><b>{row.name}</b><small>{row.id}{row.stored ? ' · stored copy' : ''}</small></span>
+        <span role="cell" data-label="Latest">{row.date ?? '\u2014'}</span>
+        <span role="cell" data-label="Age">{Number.isFinite(row.freshness?.ageDays) ? `${row.freshness.ageDays}d` : '\u2014'}</span>
+        <span role="cell" data-label="Normal gap">{Number.isFinite(row.freshness?.expectedWithinDays) ? `${row.freshness.expectedWithinDays}d` : '\u2014'}</span>
+        <span role="cell" data-label="Tolerance">{Number.isFinite(row.freshness?.maxAgeDays) ? `${row.freshness.maxAgeDays}d` : '\u2014'}</span>
+        <span role="cell" data-label="State" title={row.freshness?.read ?? undefined}><i className={LAG_STATE_TONE[row.freshness?.state] ?? ''}>{LAG_STATE_LABELS[row.freshness?.state] ?? 'Unknown'}</i></span>
+      </div>)}
+    </div> : null}
+  </InfoDialog>;
+}
+
+function LiquidityChartDialog({ history, title, description, label, onClose }) {
+  const [range, setRange] = React.useState('All');
+  useDialogClose(onClose);
   return <div className="liquidity-dialog-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}>
     <section className="liquidity-dialog panel" role="dialog" aria-modal="true" aria-labelledby="liquidity-dialog-title">
       <header><div><p className="section-kicker">HISTORICAL MODEL INSPECTOR</p><h2 id="liquidity-dialog-title">{title}</h2><p>{description}</p></div><button className="liquidity-dialog-close" onClick={onClose} aria-label="Close liquidity chart">×</button></header>
@@ -263,6 +327,11 @@ function App() {
   const routeSynced = React.useRef(false);
   const platformData = usePlatformData();
   const watchlistStore = useWatchlistStore();
+  const [helpOpen, setHelpOpen] = React.useState(false);
+  const closeHelp = React.useCallback(() => setHelpOpen(false), []);
+  const [pendingAnchor, setPendingAnchor] = React.useState(null);
+  const navigateTo = React.useCallback((nav, anchor = null) => { setActiveNav(nav); setPendingAnchor(anchor); }, []);
+  const [watchNote, setWatchNote] = React.useState(null);
   const history = useMarketHistory(selectedTicker, period);
   const technical = useTechnicalAnalytics(selectedTicker);
   const nvdaSpark = useMarketHistory('NVDA', '1M');
@@ -274,6 +343,19 @@ function App() {
   const hydratedWatchlist = watchlist.map((asset) => ({ ...asset, quote: quotesByKey[asset.ticker] ?? null }));
   const selectedAsset = hydratedWatchlist.find((asset) => asset.ticker === selectedTicker) ?? hydratedWatchlist[0];
   const selectedQuote = selectedAsset.quote;
+  const watchedIn = Object.keys(watchlistStore.lists).find((name) => (watchlistStore.lists[name] ?? []).includes(selectedTicker)) ?? null;
+  const addSelectedToWatchlist = () => {
+    if (watchedIn) { setActiveNav('Watchlists'); return; }
+    const target = Object.keys(watchlistStore.lists)[0] ?? Object.keys(DEFAULT_WATCHLISTS)[0];
+    const result = addSymbolToList(watchlistStore.lists, target, selectedTicker);
+    if (!result.ok) { setWatchNote({ ticker: selectedTicker, text: result.reason }); return; }
+    setWatchNote(null);
+    watchlistStore.setLists(result.lists);
+  };
+  const greeting = (() => {
+    const hour = new Date().getHours();
+    return hour >= 5 && hour < 12 ? 'Good morning.' : hour >= 12 && hour < 18 ? 'Good afternoon.' : 'Good evening.';
+  })();
   const technicalModel = technical.data?.model;
   const chartGeometry = buildChartGeometry(history.data?.points ?? []);
   const historyLabels = history.data?.points?.length ? [0, .25, .5, .75, 1].map((position) => {
@@ -299,6 +381,22 @@ function App() {
     document.documentElement.style.colorScheme = theme;
     window.localStorage.setItem('tradegate-theme', theme);
   }, [theme]);
+
+  React.useEffect(() => {
+    // A link into a panel further down a workspace: wait for the workspace to
+    // render the panel, then bring it into view.
+    if (!pendingAnchor) return undefined;
+    let frames = 0;
+    let handle = null;
+    const seek = () => {
+      const target = document.getElementById(pendingAnchor);
+      if (target) { target.scrollIntoView({ behavior: 'smooth', block: 'start' }); setPendingAnchor(null); return; }
+      frames += 1;
+      if (frames < 120) handle = window.requestAnimationFrame(seek); else setPendingAnchor(null);
+    };
+    handle = window.requestAnimationFrame(seek);
+    return () => window.cancelAnimationFrame(handle);
+  }, [pendingAnchor, activeNav]);
 
   React.useEffect(() => {
     const onHashChange = () => {
@@ -371,22 +469,22 @@ function App() {
           {navItems.map(([icon, label, status]) => <button key={label} className={`nav-item ${activeNav === label ? 'active' : ''}`} onClick={() => setActiveNav(label)}><span>{icon}</span>{label}{status && <small className="nav-preview">{status}</small>}</button>)}
         </nav>
         <div className="sidebar-bottom">
-          <div className="trial-card"><span className="trial-icon">✦</span><strong>Unlock the full view</strong><p>Get powerful research tools, all in one place.</p><button>Explore Pro <span>→</span></button></div>
-          <button className="profile"><span className="avatar">AS</span><span className="profile-copy"><strong>Alex Simmons</strong><small>Free plan</small></span><span className="dots">•••</span></button>
+          <div className="trial-card"><span className="trial-icon">✦</span><strong>Which signals held up?</strong><p>Every model is replayed on data it was not tuned on. The scorecard shows which ones kept their order.</p><button onClick={() => navigateTo('Markets', 'model-scorecard')}>Open the scorecard <span>→</span></button></div>
+          <div className="profile build-stamp" title={platformData.health?.build?.commit ? `Commit ${platformData.health.build.commit}${platformData.health.build.node ? ` · Node ${platformData.health.build.node}` : ''}` : undefined}><span className="avatar">TG</span><span className="profile-copy"><strong>Build {platformData.health?.build?.shortCommit ?? '\u2014'}</strong><small>{platformData.health?.build?.startedAt ? `Server up since ${formatTimestamp(platformData.health.build.startedAt)}` : 'Server not reached yet'}</small></span></div>
         </div>
       </aside>
 
       <section className="content">
         <header className="topbar">
           <div className="crumb"><span>Research</span><b>/</b><strong>{activeNav}</strong></div>
-          <div className="top-actions"><DataStatus data={platformData} /><button className="search" onClick={openSearch} aria-label="Search research"><span>⌕</span><span>Search anything</span><kbd>⌘ K</kbd></button><button className="icon-button theme-toggle" onClick={toggleTheme} aria-label={`Switch to ${theme === 'light' ? 'dark' : 'light'} mode`} title={`Switch to ${theme === 'light' ? 'dark' : 'light'} mode`}>{theme === 'light' ? '☾' : '☼'}</button><button className="icon-button" aria-label="Help">?</button></div>
+          <div className="top-actions"><DataStatus data={platformData} /><button className="search" onClick={openSearch} aria-label="Search research"><span>⌕</span><span>Search anything</span><kbd>⌘ K</kbd></button><button className="icon-button theme-toggle" onClick={toggleTheme} aria-label={`Switch to ${theme === 'light' ? 'dark' : 'light'} mode`} title={`Switch to ${theme === 'light' ? 'dark' : 'light'} mode`}>{theme === 'light' ? '☾' : '☼'}</button><button className="icon-button" aria-label="Help" title="Help" onClick={() => setHelpOpen(true)}>?</button></div>
         </header>
 
         <div className="dashboard">
           <WorkspaceErrorBoundary resetKey={activeNav}>
-          {activeNav === 'Macro' ? <MacroDashboard data={platformData} /> : activeNav === 'Forex' ? <ForexDashboard data={platformData} /> : activeNav === 'Crypto' ? <CryptoDashboard data={platformData} /> : activeNav === 'Markets' ? <MarketsDashboard data={platformData} /> : activeNav === 'Equities' ? <EquitiesDashboard platformData={platformData} /> : activeNav === 'Metals' ? <MetalsDashboard data={platformData} /> : activeNav === 'Screener' ? <ScreenerDashboard data={platformData} /> : activeNav === 'Watchlists' ? <WatchlistsDashboard data={platformData} store={watchlistStore} /> : <>
+          {activeNav === 'Macro' ? <MacroDashboard data={platformData} /> : activeNav === 'Forex' ? <ForexDashboard data={platformData} /> : activeNav === 'Crypto' ? <CryptoDashboard data={platformData} /> : activeNav === 'Markets' ? <MarketsDashboard data={platformData} onNavigate={navigateTo} /> : activeNav === 'Equities' ? <EquitiesDashboard platformData={platformData} /> : activeNav === 'Metals' ? <MetalsDashboard data={platformData} /> : activeNav === 'Screener' ? <ScreenerDashboard data={platformData} /> : activeNav === 'Watchlists' ? <WatchlistsDashboard data={platformData} store={watchlistStore} /> : <>
           <section className="welcome-row">
-            <div><p className="eyebrow">{new Intl.DateTimeFormat('en-US', { weekday: 'long', month: 'long', day: 'numeric' }).format(new Date()).toUpperCase()}</p><h1>Good morning, Alex.</h1><p className="intro">Here is your market pulse for today.</p></div>
+            <div><p className="eyebrow">{new Intl.DateTimeFormat('en-US', { weekday: 'long', month: 'long', day: 'numeric' }).format(new Date()).toUpperCase()}</p><h1>{greeting}</h1><p className="intro">Here is your market pulse for today.</p></div>
             <div className={`market-status ${platformData.status}`}><span className="live-dot"></span><span>{platformData.status === 'live' ? 'Data feeds connected' : platformData.status === 'partial' ? 'Partial data coverage' : 'Data API unavailable'}</span><strong>{formatTimestamp(platformData.markets?.asOf)}</strong></div>
           </section>
 
@@ -398,12 +496,12 @@ function App() {
             <MarketCell name="Nasdaq 100 ETF" quote={quotesByKey.QQQ} />
             <MarketCell name="Gold ETF" quote={quotesByKey.GLD} />
             <MarketCell name="Bitcoin" quote={quotesByKey.BTC} />
-            <button className="strip-more">•••</button>
+            <button className="strip-more" onClick={() => setActiveNav('Markets')} aria-label="More markets" title="More markets on the heatmap">•••</button>
           </section>
 
           <div className="daily-changes"><DailyChangesPanel /></div>
 
-          <section className="focus-header"><div><p className="section-kicker">IN FOCUS</p><h2>{selectedTicker} <span>·</span> {selectedAsset.name}</h2></div><button className="watch-button">☆ Add to watchlist</button></section>
+          <section className="focus-header"><div><p className="section-kicker">IN FOCUS</p><h2>{selectedTicker} <span>·</span> {selectedAsset.name}</h2></div><div className="focus-watch">{watchNote?.ticker === selectedTicker ? <small role="status">{watchNote.text}</small> : null}<button className="watch-button" onClick={addSelectedToWatchlist} title={watchedIn ? `Open the ${watchedIn} list` : `Add ${selectedTicker} to ${Object.keys(watchlistStore.lists)[0] ?? 'your list'}`}>{watchedIn ? `★ On ${watchedIn}` : '☆ Add to watchlist'}</button></div></section>
 
           <section className="focus-grid">
             <article className="chart-card panel">
@@ -416,7 +514,7 @@ function App() {
           </section>
 
           <section className="lower-grid">
-            <article className={`watchlist-card panel ${watchlist.every((item) => (sparkByTicker[item.ticker]?.data?.points?.length ?? 0) > 0) ? '' : 'preview-section'}`}><div className="card-heading"><div><StatusKicker label="LIVE PRICES" published={hydratedWatchlist.every((item) => (sparkByTicker[item.ticker]?.data?.points?.length ?? 0) > 0)} /><h3>Watchlist</h3></div><button>View all <span>→</span></button></div><div className="watchlist-table">{hydratedWatchlist.map((item) => <button className={`watch-row ${selectedTicker === item.ticker ? 'watch-selected' : ''}`} onClick={() => setSelectedTicker(item.ticker)} key={item.ticker}><span className="asset-badge" style={{ backgroundColor: item.color }}>{item.ticker.charAt(0)}</span><span className="asset-name"><b>{item.ticker}</b><small>{item.name}</small></span><span className="mini-chart">{(sparkByTicker[item.ticker]?.data?.points?.length ?? 0) > 0 ? <Sparkline color={item.color} values={normalizeSparkline(sparkByTicker[item.ticker].data.points.map((point) => point.value))} /> : <Sparkline color={item.color} values={[0, 0]} />}</span><span className="asset-price"><b>{formatUsd(item.quote?.price)}</b><small className={item.quote?.changePercent < 0 ? 'negative' : ''}>{formatPercent(item.quote?.changePercent)}{item.quote?.stored ? ' · stored' : ''}</small></span></button>)}</div></article>
+            <article className={`watchlist-card panel ${watchlist.every((item) => (sparkByTicker[item.ticker]?.data?.points?.length ?? 0) > 0) ? '' : 'preview-section'}`}><div className="card-heading"><div><StatusKicker label="LIVE PRICES" published={hydratedWatchlist.every((item) => (sparkByTicker[item.ticker]?.data?.points?.length ?? 0) > 0)} /><h3>Watchlist</h3></div><button onClick={() => setActiveNav('Watchlists')}>View all <span>→</span></button></div><div className="watchlist-table">{hydratedWatchlist.map((item) => <button className={`watch-row ${selectedTicker === item.ticker ? 'watch-selected' : ''}`} onClick={() => setSelectedTicker(item.ticker)} key={item.ticker}><span className="asset-badge" style={{ backgroundColor: item.color }}>{item.ticker.charAt(0)}</span><span className="asset-name"><b>{item.ticker}</b><small>{item.name}</small></span><span className="mini-chart">{(sparkByTicker[item.ticker]?.data?.points?.length ?? 0) > 0 ? <Sparkline color={item.color} values={normalizeSparkline(sparkByTicker[item.ticker].data.points.map((point) => point.value))} /> : <Sparkline color={item.color} values={[0, 0]} />}</span><span className="asset-price"><b>{formatUsd(item.quote?.price)}</b><small className={item.quote?.changePercent < 0 ? 'negative' : ''}>{formatPercent(item.quote?.changePercent)}{item.quote?.stored ? ' · stored' : ''}</small></span></button>)}</div></article>
             {(() => {
               const wireItems = newsWireItems(platformData);
               const news = platformData?.news;
@@ -428,6 +526,7 @@ function App() {
           </WorkspaceErrorBoundary>
         </div>
       </section>
+      {helpOpen && <HelpDialog onClose={closeHelp} />}
       {searchOpen && <div className="command-overlay" onMouseDown={(event) => { if (event.target === event.currentTarget) setSearchOpen(false); }}>
         <section className="command-palette" role="dialog" aria-modal="true" aria-label="Search research">
           <div className="command-input-wrap"><span>⌕</span><input ref={searchInputRef} value={searchQuery} onChange={(event) => { setSearchQuery(event.target.value); setCommandIndex(0); }} placeholder="Search research, markets, or symbols" /><kbd>ESC</kbd></div>
@@ -1254,7 +1353,7 @@ function ScorecardPanel() {
   const { status: loadStatus, data: card, error } = useLazyResource('/api/analytics/scorecard');
   const published = card?.status === 'calculated';
   const score = (value) => (Number.isFinite(value) ? `${value > 0 ? '+' : ''}${value}` : '\u2014');
-  return <article className={`panel scorecard-panel ${published ? '' : 'preview-section'}`}>
+  return <article id="model-scorecard" className={`panel scorecard-panel ${published ? '' : 'preview-section'}`}>
     <div className="panel-title">
       <div>
         <StatusKicker label="TRACK-RECORD SCORECARD" published={published} />
@@ -2387,7 +2486,11 @@ function formatMacroValue(series) {
   return new Intl.NumberFormat('en-US', { maximumFractionDigits: 2 }).format(series.value);
 }
 
-function MarketsDashboard({ data }) {
+// The heatmap's markets are researched in the workspace for their asset
+// class; every group not named here is an equity index.
+const HEATMAP_GROUP_NAV = { Crypto: 'Crypto', Metals: 'Metals' };
+
+function MarketsDashboard({ data, onNavigate }) {
   const [group, setGroup] = React.useState('All');
   const [activeMetric, setActiveMetric] = React.useState('score');
   const [selectedSymbol, setSelectedSymbol] = React.useState('SPY');
@@ -2438,7 +2541,7 @@ function MarketsDashboard({ data }) {
 
     <section className="heatmap-workspace">
       <article className={`heatmap-panel panel ${heatmap?.status === 'calculated' ? '' : 'preview-section'}`}><div className="heatmap-legend"><span><i className="positive"></i>Supportive</span><span><i className="neutral"></i>Mixed</span><span><i className="negative"></i>Guarded</span><small>60D alignment window</small></div><div className="heatmap-scroll"><div className="heatmap-table"><div className="heatmap-table-head"><span>Market</span>{heatmapColumns.map(([key, label]) => <button className={activeMetric === key ? 'metric-active' : ''} key={key} onClick={() => setActiveMetric(key)}>{label}</button>)}</div>{visibleAssets.map((asset) => <button className={`heatmap-row ${selectedAsset?.symbol === asset.symbol ? 'asset-selected' : ''}`} onClick={() => setSelectedSymbol(asset.symbol)} key={asset.symbol}><span className="heatmap-asset"><b>{asset.symbol}{asset.dataQuality?.status === 'review' ? <i className="quality-flag" title={asset.dataQuality.read}>price review</i> : null}</b><small>{asset.name}</small></span>{heatmapColumns.map(([key]) => <span className={`heatmap-cell ${cellTone(asset, key)} ${activeMetric === key ? 'metric-active' : ''}`} key={key}>{cellValue(asset, key)}</span>)}</button>)}{!visibleAssets.length && <div className="equity-empty">No calculated markets yet — stored close histories are required.</div>}</div></div></article>
-      {selectedAsset && <article className="heatmap-detail panel"><div className="panel-title"><div><p className="section-kicker">SELECTED MARKET</p><h3>{selectedAsset.name}</h3></div><span className="market-symbol us-indices">{selectedAsset.symbol}</span></div><div className="detail-score"><span>Technical score</span><b className={cellTone(selectedAsset, 'score')}>{selectedAsset.score}</b><small>{selectedAsset.regime} regime · as of {String(selectedAsset.asOf ?? '').slice(0, 10)}</small></div>{selectedAsset.dataQuality ? <p className={`quality-note quality-${selectedAsset.dataQuality.status}`}>{selectedAsset.dataQuality.status === 'verified' ? 'Prices verified: ' : selectedAsset.dataQuality.status === 'review' ? 'Provisional - ' : 'Unverified: '}{selectedAsset.dataQuality.read}</p> : null}<div className="detail-metrics">{[['trend', 'Trend'], ['momentum', 'Momentum'], ['volatility', 'Volatility'], ['crowding', 'Crowding'], ['alignment', 'Alignment']].map(([key, label]) => <div key={key}><span>{label}</span><b className={cellTone(selectedAsset, key)}>{cellValue(selectedAsset, key)}</b></div>)}</div><div className="heatmap-callout"><span>Model read</span><p>{selectedAsset.trend} against a {selectedAsset.volatility.toLowerCase()} volatility profile; equity-market alignment is {String(selectedAsset.alignmentValue ?? '—')}{Number.isFinite(selectedAsset.crowdingPercentile) ? ` with leveraged-fund positioning at the ${ordinal(selectedAsset.crowdingPercentile)} percentile` : ''}.</p></div><button className="source-link">Open {selectedAsset.symbol} research →</button></article>}
+      {selectedAsset && <article className="heatmap-detail panel"><div className="panel-title"><div><p className="section-kicker">SELECTED MARKET</p><h3>{selectedAsset.name}</h3></div><span className="market-symbol us-indices">{selectedAsset.symbol}</span></div><div className="detail-score"><span>Technical score</span><b className={cellTone(selectedAsset, 'score')}>{selectedAsset.score}</b><small>{selectedAsset.regime} regime · as of {String(selectedAsset.asOf ?? '').slice(0, 10)}</small></div>{selectedAsset.dataQuality ? <p className={`quality-note quality-${selectedAsset.dataQuality.status}`}>{selectedAsset.dataQuality.status === 'verified' ? 'Prices verified: ' : selectedAsset.dataQuality.status === 'review' ? 'Provisional - ' : 'Unverified: '}{selectedAsset.dataQuality.read}</p> : null}<div className="detail-metrics">{[['trend', 'Trend'], ['momentum', 'Momentum'], ['volatility', 'Volatility'], ['crowding', 'Crowding'], ['alignment', 'Alignment']].map(([key, label]) => <div key={key}><span>{label}</span><b className={cellTone(selectedAsset, key)}>{cellValue(selectedAsset, key)}</b></div>)}</div><div className="heatmap-callout"><span>Model read</span><p>{selectedAsset.trend} against a {selectedAsset.volatility.toLowerCase()} volatility profile; equity-market alignment is {String(selectedAsset.alignmentValue ?? '—')}{Number.isFinite(selectedAsset.crowdingPercentile) ? ` with leveraged-fund positioning at the ${ordinal(selectedAsset.crowdingPercentile)} percentile` : ''}.</p></div><button className="source-link" onClick={() => onNavigate?.(HEATMAP_GROUP_NAV[selectedAsset.group] ?? 'Equities')}>Open {(HEATMAP_GROUP_NAV[selectedAsset.group] ?? 'Equities').toLowerCase()} research →</button></article>}
     </section>
 
     <SignalRecordsPanel records={data.signalRecords} />
@@ -2516,7 +2619,7 @@ function MetalsDashboard({ data }) {
     </section>
 
     <section className="metals-bottom-grid">
-      <article className={`miners-panel panel ${(workspace?.miners ?? []).length ? '' : 'preview-section'}`}><div className="panel-title"><div><StatusKicker label="MINER EQUITY EXPRESSION" published={Boolean((workspace?.miners ?? []).length)} /><h3>Miner ETF momentum</h3></div><span className="data-pill">20-session</span></div><div className="miner-list">{(workspace?.miners ?? []).map((miner) => <button key={miner.symbol}><span>{miner.symbol}</span><b>{miner.name}</b><small className={(miner.change20d ?? 0) >= 0 ? 'positive' : 'negative'}>{Number.isFinite(miner.change20d) ? `${miner.change20d > 0 ? '+' : ''}${miner.change20d}%` : '—'}</small><i>↗</i></button>)}{!(workspace?.miners ?? []).length && <div className="equity-empty">Miner histories are required before momentum can publish.</div>}</div><p>Miners add operating leverage to metal prices, but input costs and equity-beta remain separate risks.</p></article>
+      <article className={`miners-panel panel ${(workspace?.miners ?? []).length ? '' : 'preview-section'}`}><div className="panel-title"><div><StatusKicker label="MINER EQUITY EXPRESSION" published={Boolean((workspace?.miners ?? []).length)} /><h3>Miner ETF momentum</h3></div><span className="data-pill">20-session</span></div><div className="miner-list">{(workspace?.miners ?? []).map((miner) => <div className="miner-row" key={miner.symbol}><span>{miner.symbol}</span><b>{miner.name}</b><small className={(miner.change20d ?? 0) >= 0 ? 'positive' : 'negative'}>{Number.isFinite(miner.change20d) ? `${miner.change20d > 0 ? '+' : ''}${miner.change20d}%` : '—'}</small></div>)}{!(workspace?.miners ?? []).length && <div className="equity-empty">Miner histories are required before momentum can publish.</div>}</div><p>Miners add operating leverage to metal prices, but input costs and equity-beta remain separate risks.</p></article>
       <article className={`metal-costs-panel panel ${costStructure?.status === 'unavailable' ? 'preview-section' : ''}`}><div className="panel-title"><div><p className="section-kicker">METALS COST STRUCTURE · {costStructure?.status?.toUpperCase() ?? 'UNAVAILABLE'}</p><h3>{costStructure?.headline ?? 'Awaiting energy and miner histories'}</h3></div>{costStructure?.status === 'unavailable' ? <PreviewBadge label="Inputs required" /> : <span className="data-pill">{Number.isFinite(costStructure?.energyPressure) ? `Energy ${ordinal(costStructure.energyPressure)} pct` : 'Energy pending'}</span>}</div>{(costStructure?.legs ?? []).map((leg) => <div className="metal-cost-row" key={leg.key}><div><b>{leg.name}</b><small>{leg.status === 'calculated' ? `${leg.source} · ${Number.isFinite(leg.percentile) ? `${ordinal(leg.percentile)} pct of 1Y` : 'percentile pending'}` : leg.reason}</small></div><span className={leg.status !== 'calculated' ? 'neutral' : leg.change20d > 0 ? 'positive' : leg.change20d < 0 ? 'negative' : 'neutral'}>{leg.status === 'calculated' ? `${leg.unit === 'ratio' ? leg.value : `$${leg.value}`}${Number.isFinite(leg.change20d) ? ` · ${leg.change20d > 0 ? '+' : ''}${leg.change20d}%` : ''}` : 'Unavailable'}</span></div>)}<div className="cost-callout"><span>What matters next</span><p>{costStructure?.read ?? 'Energy histories and a miner-to-metal ratio are required before producer economics can be read.'} {costStructure?.methodology}</p></div></article>
     </section>
     <p className="independence-note">TradeGate is an independent market research platform and is not affiliated with Tradegate AG.</p>
@@ -2962,6 +3065,8 @@ function MacroDashboard({ data }) {
   const [correlationWindow, setCorrelationWindow] = React.useState('60D');
   const [liquidityChartOpen, setLiquidityChartOpen] = React.useState(false);
   const [globalChartOpen, setGlobalChartOpen] = React.useState(false);
+  const [sourcesOpen, setSourcesOpen] = React.useState(false);
+  const closeSources = React.useCallback(() => setSourcesOpen(false), []);
   const liquidityRaw = data.liquidity?.model;
   const liquidityModel = published(liquidityRaw) ? liquidityRaw : null;
   const liquidityRunway = data.liquidity?.liquidityRunway;
@@ -3116,7 +3221,8 @@ function MacroDashboard({ data }) {
       {data.alerts?.status === 'calculated' && data.alerts.alerts?.length ? <article className="change-panel panel"><p className="section-kicker">MODEL ALERTS · PERSISTED</p><h3>Detected vitals shifts across ingestion runs</h3><div className="narrative-list">{data.alerts.alerts.slice(0, 8).map((alert) => <p key={`${alert.modelId}-${alert.key}-${alert.detectedAt}`} className="change-copy">{alert.text}<span className="alert-meta">{MODEL_LABELS[alert.modelId] ?? alert.modelId} · {alertAge(alert.detectedAt)}</span></p>)}</div><div className="change-tags"><span>{data.alerts.alerts.length} stored</span><span>Ingestion-time detection</span></div></article> : null}
       <article className={`change-panel panel ${narrative?.status === 'updated' || narrative?.status === 'stable' ? '' : 'preview-section'}`}><p className="section-kicker">NARRATIVE · {narrative?.status === 'updated' ? 'MODEL CHANGES DETECTED' : narrative?.status === 'stable' ? 'MODEL CHANGES' : 'MODEL PREVIEW'}</p>{narrative?.entries?.length ? <div className="narrative-list">{narrative.entries.map((entry) => <p key={entry.key} className="change-copy">{entry.text}</p>)}</div> : <><h3>Automated change detection pending.</h3><p className="change-copy">{narrative?.status === 'insufficient-history' ? 'At least two persisted ingestion runs are required before model changes can be narrated.' : 'This panel is generated from persisted model changes once ingestion history exists.'}</p></>}<div className="change-tags"><span>Versioned changes</span><span>Source lineage</span><span>Release-aware</span></div></article>
       <article className={`sensitivity-panel panel ${regimeCorrelations?.status === 'calculated' ? '' : 'preview-section'}`}><div className="panel-title"><div><StatusKicker label="ASSET SENSITIVITY" published={sensitivityRows.some((row) => Number.isFinite(row.value))} /><h3>Current macro exposures</h3></div><button onClick={() => setActiveModel('Correlations')}>Details →</button></div><div className="sensitivity-list">{sensitivityRows.map((row) => <div key={row.asset}><b>{row.asset}</b><span>{row.driver} <i>{row.strength}</i></span><small>{Number.isFinite(row.value) ? `${row.value > 0 ? '+' : ''}${row.value.toFixed(2)}` : '—'}</small></div>)}</div><p className="model-footnote">Sensitivities are the {correlationWindow} correlations from <code>regime-correlation-v1</code>; strength labels derive from |r| thresholds of 0.25 and 0.50.</p></article>
-      <article className="sources-panel panel"><p className="section-kicker">DATA PROVENANCE</p><h3>Connected and target sources.</h3><p>FRED is connected, including ECB and BoJ balance sheets with H.10 FX conversion, and PBoC total assets arrive via BIS WS_CBTA on DBnomics. BoE, IMF broad money, and institutional market feeds remain planned inputs.</p><button>Explore sources and lags →</button></article>
+      <article className="sources-panel panel"><p className="section-kicker">DATA PROVENANCE</p><h3>Connected and target sources.</h3><p>FRED is connected, including ECB and BoJ balance sheets with H.10 FX conversion, and PBoC total assets arrive via BIS WS_CBTA on DBnomics. BoE, IMF broad money, and institutional market feeds remain planned inputs.</p><button onClick={() => setSourcesOpen(true)} disabled={!data.liquidity?.series?.length} title={data.liquidity?.series?.length ? undefined : 'The macro series have not loaded yet.'}>Explore sources and lags →</button></article>
+      {sourcesOpen && <SourceLagsDialog series={data.liquidity?.series} onClose={closeSources} />}
     </section>
     <LazyAlertOutcomesPanel />
     <p className="independence-note">TradeGate is an independent market research platform and is not affiliated with Tradegate AG.</p>
