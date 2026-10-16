@@ -144,3 +144,12 @@ test('a symbol spark returns short or not at all is fetched by date range from t
     globalThis.fetch = original;
   }
 });
+
+test('every chart range the app asks for is served as itself', async () => {
+  const { normalizeHistoryRange } = await import('./providers.js');
+  // Watchlist rows ask for '3M'; it used to be read as '1M', so their
+  // three-month change was a one-month change.
+  for (const range of ['1D', '5D', '1M', '3M', '6M', 'YTD', '1Y', 'All']) assert.equal(normalizeHistoryRange(range), range);
+  assert.equal(normalizeHistoryRange('10Y'), '1M');
+  assert.equal(normalizeHistoryRange(undefined), '1M');
+});

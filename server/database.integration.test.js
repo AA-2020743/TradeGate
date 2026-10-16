@@ -202,6 +202,10 @@ describe('fresh stored history is served without a provider request', async () =
     assert.equal(history.source, 'PostgreSQL (stored provider history)');
     assert.equal(history.storedProvider, 'Twelve Data');
     assert.ok(history.points.length >= 200);
+    // Three months is three months: '3M' used to fall back to one month.
+    const quarter = await getMarketHistory('SPY', '3M');
+    assert.equal(quarter.range, '3M');
+    assert.ok(quarter.points.length >= 90 && quarter.points.length <= 93, `3M returned ${quarter.points.length} daily points`);
     assert.deepEqual(requested, []);
   } finally {
     globalThis.fetch = original;

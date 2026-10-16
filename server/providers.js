@@ -276,6 +276,10 @@ const HISTORY_RANGES = {
   '1D': { days: '1', interval: '5min', outputsize: '78' },
   '5D': { days: '5', interval: '30min', outputsize: '80' },
   '1M': { days: '30', interval: '1day', outputsize: '31' },
+  // Watchlist rows chart three months. Without this entry '3M' fell back to
+  // '1M', so their "3M change" was a one-month change. 92 days is past the
+  // 90 at which CoinGecko switches from hourly to daily points.
+  '3M': { days: '92', interval: '1day', outputsize: '66' },
   '6M': { days: '180', interval: '1day', outputsize: '180' },
   YTD: { days: '365', interval: '1day', outputsize: '260' },
   '1Y': { days: '365', interval: '1day', outputsize: '365' },
@@ -626,9 +630,14 @@ export async function getEquityLongHistory(symbol, { years = 5 } = {}) {
   });
 }
 
+/** A range this module can serve; anything else is read as one month. */
+export function normalizeHistoryRange(requestedRange) {
+  return HISTORY_RANGES[requestedRange] ? requestedRange : '1M';
+}
+
 export async function getMarketHistory(symbol, requestedRange, options = {}) {
   const normalizedSymbol = symbol.toUpperCase();
-  const range = HISTORY_RANGES[requestedRange] ? requestedRange : '1M';
+  const range = normalizeHistoryRange(requestedRange);
   if (!HISTORY_SYMBOLS.has(normalizedSymbol)) throw new Error(`Unsupported history symbol: ${normalizedSymbol}`);
 
   const cacheMode = options.preferStored === false ? 'provider' : 'default';
