@@ -798,3 +798,6 @@ html[data-theme='dark'] .focus-watch small { color: #e0b48f; }
   html[data-theme='dark'] .mobile-nav button { background: #1a221d; border-color: #303b34; color: #dce5dc; }
   html[data-theme='dark'] .mobile-nav button.active { background: #bff66a; border-color: #bff66a; color: #16201a; }
 }
+
+.watch-card-note { display: block; margin-top: 8px; color: #5f6861; font-size: 11px; line-height: 1.45; }
+html[data-theme='dark'] .watch-card-note { color: #9aa79b; }

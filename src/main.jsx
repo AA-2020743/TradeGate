@@ -27,6 +27,10 @@ const watchlist = [
 ];
 
 const watchlistSymbols = watchlist.map((asset) => asset.ticker);
+const OVERVIEW_LIST_ROWS = 6;
+// A focused symbol from the reader's own lists survives a reload of its address.
+const routeSymbols = () => [...new Set([...watchlistSymbols, ...Object.values(readStoredWatchlists() ?? {}).flat()])];
+const OVERVIEW_ROW_COLORS = ['#75d95d', '#f2a447', '#c4a7ff', '#ff7c4d', '#5ec8d8', '#e8c547'];
 
 const newsWireItems = (platformData) => {
   const decode = (text) => text.replace(/&apos;/g, "'").replace(/&#39;/g, "'").replace(/&quot;/g, '"').replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>');
@@ -315,7 +319,7 @@ class WorkspaceErrorBoundary extends React.Component {
 }
 
 function App() {
-  const initialRoute = React.useRef(parseRoute(window.location.hash, watchlistSymbols)).current;
+  const initialRoute = React.useRef(parseRoute(window.location.hash, routeSymbols())).current;
   const [activeNav, setActiveNav] = React.useState(initialRoute.nav);
   const [period, setPeriod] = React.useState('1D');
   const [selectedTicker, setSelectedTicker] = React.useState(initialRoute.symbol ?? 'NVDA');
@@ -341,14 +345,34 @@ function App() {
   }, [activeNav]);
   const history = useMarketHistory(selectedTicker, period);
   const technical = useTechnicalAnalytics(selectedTicker);
-  const nvdaSpark = useMarketHistory('NVDA', '1M');
-  const aaplSpark = useMarketHistory('AAPL', '1M');
-  const gldSpark = useMarketHistory('GLD', '1M');
-  const btcSpark = useMarketHistory('BTC', '1M');
-  const sparkByTicker = { NVDA: nvdaSpark, AAPL: aaplSpark, GLD: gldSpark, BTC: btcSpark };
   const quotesByKey = Object.fromEntries((platformData.markets?.assets ?? []).map((asset) => [asset.key, asset]));
-  const hydratedWatchlist = watchlist.map((asset) => ({ ...asset, quote: quotesByKey[asset.ticker] ?? null }));
-  const selectedAsset = hydratedWatchlist.find((asset) => asset.ticker === selectedTicker) ?? hydratedWatchlist[0];
+  // The Overview card shows the reader's own first list. It showed four fixed
+  // tickers under the title "Watchlist", so a symbol added to a list never
+  // appeared here; one batched request also replaces four sparkline requests.
+  const overviewListName = Object.keys(watchlistStore.lists)[0] ?? null;
+  const overviewSymbols = (overviewListName ? watchlistStore.lists[overviewListName] ?? [] : []).slice(0, OVERVIEW_LIST_ROWS);
+  const overviewRows = useLazyResource(overviewSymbols.length ? `/api/analytics/watchlist-rows?symbols=${encodeURIComponent(overviewSymbols.join(','))}` : null);
+  const overviewRowBySymbol = new Map((overviewRows.data?.rows ?? []).filter(Boolean).map((row) => [row.symbol, row]));
+  const overviewItems = overviewSymbols.map((symbol, index) => {
+    const known = watchlist.find((asset) => asset.ticker === symbol);
+    const row = overviewRowBySymbol.get(symbol) ?? null;
+    const quote = quotesByKey[symbol] ?? null;
+    const points = row?.points ?? [];
+    const previous = points.at(-2)?.value;
+    const dayChange = Number.isFinite(previous) && previous > 0 && Number.isFinite(row?.last) ? ((row.last / previous) - 1) * 100 : null;
+    return {
+      ticker: symbol,
+      name: known?.name ?? (row?.model ? `Score ${row.model.score} · ${row.model.regime}` : row?.status === 'unavailable' ? 'No data' : ''),
+      color: known?.color ?? OVERVIEW_ROW_COLORS[index % OVERVIEW_ROW_COLORS.length],
+      tracked: row?.tracked ?? Boolean(known),
+      points,
+      price: Number.isFinite(quote?.price) ? quote.price : row?.last ?? null,
+      change: Number.isFinite(quote?.changePercent) ? quote.changePercent : dayChange,
+      stored: Boolean(quote?.stored),
+    };
+  });
+  const knownFocus = watchlist.find((asset) => asset.ticker === selectedTicker);
+  const selectedAsset = { ticker: selectedTicker, name: knownFocus?.name ?? selectedTicker, color: knownFocus?.color, quote: quotesByKey[selectedTicker] ?? null };
   const selectedQuote = selectedAsset.quote;
   const watchedIn = Object.keys(watchlistStore.lists).find((name) => (watchlistStore.lists[name] ?? []).includes(selectedTicker)) ?? null;
   const addSelectedToWatchlist = () => {
@@ -437,7 +461,7 @@ function App() {
 
   React.useEffect(() => {
     const onHashChange = () => {
-      const route = parseRoute(window.location.hash, watchlistSymbols);
+      const route = parseRoute(window.location.hash, routeSymbols());
       setActiveNav(route.nav);
       if (route.symbol) setSelectedTicker(route.symbol);
     };
@@ -555,7 +579,7 @@ function App() {
           </section>
 
           <section className="lower-grid">
-            <article className={`watchlist-card panel ${watchlist.every((item) => (sparkByTicker[item.ticker]?.data?.points?.length ?? 0) > 0) ? '' : 'preview-section'}`}><div className="card-heading"><div><StatusKicker label="LIVE PRICES" published={hydratedWatchlist.every((item) => (sparkByTicker[item.ticker]?.data?.points?.length ?? 0) > 0)} /><h3>Watchlist</h3></div><button onClick={() => setActiveNav('Watchlists')}>View all <span>→</span></button></div><div className="watchlist-table">{hydratedWatchlist.map((item) => <button className={`watch-row ${selectedTicker === item.ticker ? 'watch-selected' : ''}`} onClick={() => setSelectedTicker(item.ticker)} key={item.ticker}><span className="asset-badge" style={{ backgroundColor: item.color }}>{item.ticker.charAt(0)}</span><span className="asset-name"><b>{item.ticker}</b><small>{item.name}</small></span><span className="mini-chart">{(sparkByTicker[item.ticker]?.data?.points?.length ?? 0) > 0 ? <Sparkline color={item.color} values={normalizeSparkline(sparkByTicker[item.ticker].data.points.map((point) => point.value))} /> : <Sparkline color={item.color} values={[0, 0]} />}</span><span className="asset-price"><b>{formatUsd(item.quote?.price)}</b><small className={item.quote?.changePercent < 0 ? 'negative' : ''}>{formatPercent(item.quote?.changePercent)}{item.quote?.stored ? ' · stored' : ''}</small></span></button>)}</div></article>
+            <article className={`watchlist-card panel ${overviewItems.some((item) => item.points.length > 1) ? '' : 'preview-section'}`}><div className="card-heading"><div><StatusKicker label="YOUR LIST · 3-MONTH TREND" published={overviewItems.some((item) => item.points.length > 1)} /><h3>{overviewListName ?? 'Watchlist'}</h3></div><button onClick={() => setActiveNav('Watchlists')}>View all <span>→</span></button></div><div className="watchlist-table">{overviewItems.map((item) => <button className={`watch-row ${selectedTicker === item.ticker ? 'watch-selected' : ''}`} onClick={() => (item.tracked ? setSelectedTicker(item.ticker) : setActiveNav('Watchlists'))} title={item.tracked ? `Focus ${item.ticker}` : `${item.ticker} is charted on the Watchlists page`} key={item.ticker}><span className="asset-badge" style={{ backgroundColor: item.color }}>{item.ticker.charAt(0)}</span><span className="asset-name"><b>{item.ticker}</b><small>{item.name}</small></span><span className="mini-chart">{item.points.length > 1 ? <Sparkline color={item.color} values={normalizeSparkline(item.points.map((point) => point.value))} /> : null}</span><span className="asset-price"><b>{formatUsd(item.price)}</b><small className={item.change < 0 ? 'negative' : ''}>{formatPercent(item.change)}{item.stored ? ' · stored' : ''}</small></span></button>)}{!overviewItems.length ? <div className="calculation-empty">{overviewListName ? `${overviewListName} is empty.` : 'No list yet.'} Add symbols on the Watchlists page, or with the button above.</div> : overviewRows.status === 'unavailable' ? <small className="watch-card-note">Rows could not be loaded: {overviewRows.error}</small> : null}{(watchlistStore.lists[overviewListName] ?? []).length > OVERVIEW_LIST_ROWS ? <small className="watch-card-note">Showing {OVERVIEW_LIST_ROWS} of {(watchlistStore.lists[overviewListName] ?? []).length}; the rest are on the Watchlists page.</small> : null}</div></article>
             {(() => {
               const wireItems = newsWireItems(platformData);
               const news = platformData?.news;
