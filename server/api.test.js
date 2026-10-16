@@ -69,6 +69,14 @@ test('an unsupported history symbol is a 404, not a provider failure', async () 
   assert.equal(body.kind, 'not-supported');
 });
 
+test('an unsupported technical symbol answers the same 404 as its history', async () => {
+  const response = await get('/api/analytics/technical/NOTATICKER');
+  assert.equal(response.status, 404);
+  const body = await response.json();
+  assert.match(body.error, /Unsupported history symbol/);
+  assert.equal(body.kind, 'not-supported');
+});
+
 test('a malformed JSON body is rejected as a client error', async () => {
   const response = await putJson('/api/watchlists', '{"broken":');
   assert.equal(response.status, 400);

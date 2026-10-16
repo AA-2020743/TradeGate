@@ -245,10 +245,8 @@ app.get('/api/analytics/technical/:symbol', async (request, response, next) => {
   try {
     response.json(await getTechnicalSnapshot(request.params.symbol));
   } catch (error) {
-    if (error.message.startsWith('Unsupported history symbol')) {
-      response.status(400).json({ error: error.message });
-      return;
-    }
+    // The last route-local 400 for this condition: the history and equity
+    // routes already answered an untracked symbol 404 through the classifier.
     next(error);
   }
 });
