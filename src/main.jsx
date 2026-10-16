@@ -332,6 +332,13 @@ function App() {
   const [pendingAnchor, setPendingAnchor] = React.useState(null);
   const navigateTo = React.useCallback((nav, anchor = null) => { setActiveNav(nav); setPendingAnchor(anchor); }, []);
   const [watchNote, setWatchNote] = React.useState(null);
+  const mobileNavRef = React.useRef(null);
+  React.useEffect(() => {
+    // Keep the current workspace's tab in view in the scrolling phone strip.
+    const nav = mobileNavRef.current;
+    const active = nav?.querySelector('button.active');
+    if (nav && active && nav.scrollWidth > nav.clientWidth) nav.scrollLeft = active.offsetLeft - (nav.clientWidth - active.offsetWidth) / 2;
+  }, [activeNav]);
   const history = useMarketHistory(selectedTicker, period);
   const technical = useTechnicalAnalytics(selectedTicker);
   const nvdaSpark = useMarketHistory('NVDA', '1M');
@@ -400,6 +407,11 @@ function App() {
     };
   })();
   const matchingCommands = tickerCommand ? [...filteredCommands, tickerCommand] : filteredCommands;
+
+  React.useEffect(() => {
+    // Tabs and history entries name the workspace, not just the app.
+    document.title = activeNav === 'Overview' ? 'TradeGate' : `${activeNav} · TradeGate`;
+  }, [activeNav]);
 
   React.useEffect(() => {
     document.documentElement.dataset.theme = theme;
@@ -504,6 +516,10 @@ function App() {
           <div className="crumb"><span>Research</span><b>/</b><strong>{activeNav}</strong></div>
           <div className="top-actions"><DataStatus data={platformData} /><button className="search" onClick={openSearch} aria-label="Search research"><span>⌕</span><span>Search anything</span><kbd>⌘ K</kbd></button><button className="icon-button theme-toggle" onClick={toggleTheme} aria-label={`Switch to ${theme === 'light' ? 'dark' : 'light'} mode`} title={`Switch to ${theme === 'light' ? 'dark' : 'light'} mode`}>{theme === 'light' ? '☾' : '☼'}</button><button className="icon-button" aria-label="Help" title="Help" onClick={() => setHelpOpen(true)}>?</button></div>
         </header>
+        {/* Phones hide the sidebar, and nothing replaced it: until the page had a
+            viewport tag phones laid it out 980px wide and kept the icon rail, so
+            the gap never showed. */}
+        <nav className="mobile-nav" aria-label="Workspaces" ref={mobileNavRef}>{navItems.map(([icon, label]) => <button key={label} className={activeNav === label ? 'active' : ''} aria-current={activeNav === label ? 'page' : undefined} onClick={() => setActiveNav(label)}><span aria-hidden="true">{icon}</span>{label}</button>)}</nav>
 
         <div className="dashboard">
           <WorkspaceErrorBoundary resetKey={activeNav}>
@@ -554,7 +570,7 @@ function App() {
       {helpOpen && <HelpDialog onClose={closeHelp} />}
       {searchOpen && <div className="command-overlay" onMouseDown={(event) => { if (event.target === event.currentTarget) setSearchOpen(false); }}>
         <section className="command-palette" role="dialog" aria-modal="true" aria-label="Search research">
-          <div className="command-input-wrap"><span>⌕</span><input ref={searchInputRef} value={searchQuery} onChange={(event) => { setSearchQuery(event.target.value); setCommandIndex(0); }} placeholder="Search research, markets, or symbols" /><kbd>ESC</kbd></div>
+          <div className="command-input-wrap"><span>⌕</span><input ref={searchInputRef} value={searchQuery} onChange={(event) => { setSearchQuery(event.target.value); setCommandIndex(0); }} placeholder="Search research, markets, or symbols" aria-label="Search research, markets, or symbols" /><kbd>ESC</kbd></div>
           <div className="command-results"><p>QUICK ACCESS</p>{matchingCommands.length ? matchingCommands.map((command, index) => <button className={commandIndex === index ? 'command-selected' : ''} key={`${command.label}-${command.detail}`} onMouseEnter={() => setCommandIndex(index)} onClick={() => { command.action(); setSearchOpen(false); }}><span className="command-result-icon">{command.label.length <= 4 ? command.label.charAt(0) : '◌'}</span><span><b>{command.label}</b><small>{command.detail}</small></span><i>↵</i></button>) : <div className="command-empty">No matching research found.</div>}</div>
           <footer><span><kbd>↑↓</kbd> Navigate</span><span><kbd>↵</kbd> Open</span><span><kbd>ESC</kbd> Close</span></footer>
         </section>

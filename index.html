@@ -1,1 +1,18 @@
-<script>try { const theme = localStorage.getItem('tradegate-theme') || (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'); document.documentElement.dataset.theme = theme; document.documentElement.style.colorScheme = theme; } catch {};</script><div id="root"></div><script type="module" src="/src/main.jsx"></script>
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="light dark" />
+    <meta name="description" content="Independent cross-asset market research: liquidity, macro regime, metals, FX, crypto and equities, with each model's own track record." />
+    <title>TradeGate</title>
+    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%23bff66a'/%3E%3Ctext x='16' y='23' text-anchor='middle' font-family='Georgia,serif' font-size='20' font-weight='700' fill='%2316201a'%3ET%3C/text%3E%3C/svg%3E" />
+    <link rel="alternate" type="application/atom+xml" title="TradeGate model alerts" href="/api/alerts/feed" />
+    <link rel="alternate" type="application/atom+xml" title="TradeGate news wire" href="/api/news/feed" />
+    <script>try { const theme = localStorage.getItem('tradegate-theme') || (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'); document.documentElement.dataset.theme = theme; document.documentElement.style.colorScheme = theme; } catch {};</script>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.jsx"></script>
+  </body>
+</html>
