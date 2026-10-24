@@ -35,6 +35,10 @@ test('currency decimals follow magnitude rather than sign', () => {
   // small-number branch no matter how large it was.
   assert.equal(formatUsd(1234.5), formatUsd(-1234.5).replace('-', ''));
   assert.equal(formatUsd(99.5), '$99.50');
+  // One column, one precision: no $127.3 beside $87.40.
+  assert.equal(formatUsd(127.3), '$127.30');
+  assert.equal(formatUsd(600), '$600.00');
+  assert.equal(formatUsd(67432.1), '$67,432.10');
   assert.equal(formatUsd(-99.5), '-$99.50');
   assert.equal(formatUsd(0), '$0.00');
 });

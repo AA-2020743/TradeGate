@@ -809,3 +809,19 @@ html[data-theme='dark'] .watch-card-note { color: #9aa79b; }
 html[data-theme='dark'] .screener-symbol { color: #dce5dc; }
 html[data-theme='dark'] .screener-symbol i { color: #9aa79b; }
 html[data-theme='dark'] .screener-symbol.listed i { color: #e8c547; }
+
+/* Print and save-as-PDF: the content alone, in the light theme, with a
+   provenance header, and panels kept whole across pages where they fit. */
+.print-header { display: none; }
+@media print {
+  @page { margin: 14mm 12mm; }
+  .sidebar, .topbar, .mobile-nav, .command-overlay, .liquidity-dialog-backdrop, .focus-watch, .chart-expand-button, .strip-more, .watchlist-actions, .screener-search, .watch-sync-pill, .snapshot-actions, .watchlist-row > button, .range-selector { display: none !important; }
+  html, body, .app-shell, .content, .dashboard { background: #fff !important; }
+  .app-shell { display: block; min-height: 0; }
+  .dashboard { padding: 0 !important; }
+  .panel, .data-disclosure, .scorecard-row, .lag-row, .watchlist-row, .screener-row { break-inside: avoid; }
+  .panel { box-shadow: none !important; }
+  .print-header { display: grid; grid-template-columns: 1fr 1fr; gap: 2px 18px; margin: 0 0 14px; padding-bottom: 8px; border-bottom: 1px solid #c9ccc4; font: 9px 'DM Mono', monospace; color: #333; }
+  .print-header b { grid-column: 1 / -1; font: 700 13px 'Libre Baskerville', serif; color: #111; }
+  a { color: inherit; text-decoration: none; }
+}

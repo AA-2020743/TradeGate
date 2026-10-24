@@ -15,8 +15,13 @@ async function requestJson(path) {
     } catch {
       detail = '';
     }
-    const error = new Error(detail ? `Request failed with ${response.status}: ${detail}` : `Request failed with ${response.status}`);
+    // The request id matches the server's log line, so a reported error can
+    // be traced; the first block of it is enough to find the line.
+    const requestId = response.headers?.get?.('x-request-id') ?? null;
+    const reference = requestId ? ` (ref ${requestId.split('-')[0]})` : '';
+    const error = new Error(`${detail ? `Request failed with ${response.status}: ${detail}` : `Request failed with ${response.status}`}${reference}`);
     error.status = response.status;
+    error.requestId = requestId;
     throw error;
   }
   return response.json();
@@ -271,13 +276,13 @@ export function useEquityResearch(symbol) {
 
 export function formatUsd(value) {
   if (!Number.isFinite(value)) return 'Unavailable';
-  // Magnitude, not sign, decides whether cents are worth showing: keying off
-  // the raw value gave -1234.5 two decimals and +1234.5 one.
-  const small = Math.abs(value) < 100;
+  // Always two decimals. Allowing zero above $100 printed $127.3 beside
+  // $87.40 and $600 beside $153.09 in the same column, which reads as a
+  // data fault rather than a style.
   return new Intl.NumberFormat('en-US', {
     style: 'currency',
     currency: 'USD',
-    minimumFractionDigits: small ? 2 : 0,
+    minimumFractionDigits: 2,
     maximumFractionDigits: 2,
   }).format(value);
 }

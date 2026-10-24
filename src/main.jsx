@@ -459,6 +459,19 @@ function App() {
   const matchingCommands = tickerCommand ? [...filteredCommands, tickerCommand] : filteredCommands;
 
   React.useEffect(() => {
+    // Printed or saved as PDF, the page is drawn in the light theme whatever
+    // is on screen: dark panels waste toner and lose contrast on paper.
+    const toPaper = () => { document.documentElement.dataset.theme = 'light'; };
+    const toScreen = () => { document.documentElement.dataset.theme = theme; };
+    window.addEventListener('beforeprint', toPaper);
+    window.addEventListener('afterprint', toScreen);
+    return () => {
+      window.removeEventListener('beforeprint', toPaper);
+      window.removeEventListener('afterprint', toScreen);
+    };
+  }, [theme]);
+
+  React.useEffect(() => {
     // Tabs and history entries name the workspace, not just the app.
     document.title = activeNav === 'Overview' ? 'TradeGate' : `${activeNav} · TradeGate`;
   }, [activeNav]);
@@ -580,6 +593,16 @@ function App() {
       </aside>
 
       <section className="content">
+        {/* Printed pages carry their provenance: which workspace, when, from
+            which build, and the server's own as-of for the data. */}
+        <div className="print-header" aria-hidden="true">
+          <b>TradeGate · {activeNav}</b>
+          <span>Printed {new Date().toISOString().slice(0, 16).replace('T', ' ')} UTC</span>
+          <span>Build {platformData.health?.build?.shortCommit ?? 'unknown'}</span>
+          <span>Server data as of {platformData.health?.asOf ? new Date(platformData.health.asOf).toISOString().slice(0, 16).replace('T', ' ') : 'unknown'} UTC</span>
+          <span>{window.location.href}</span>
+          <span>Independent research, not investment advice. Each panel states its own source and date.</span>
+        </div>
         <header className="topbar">
           <div className="crumb"><span>Research</span><b>/</b><strong>{activeNav}</strong></div>
           <div className="top-actions"><DataStatus data={platformData} /><button className="search" onClick={openSearch} aria-label="Search research"><span>⌕</span><span>Search anything</span><kbd>⌘ K</kbd></button><button className="icon-button theme-toggle" onClick={toggleTheme} aria-label={`Switch to ${theme === 'light' ? 'dark' : 'light'} mode`} title={`Switch to ${theme === 'light' ? 'dark' : 'light'} mode`}>{theme === 'light' ? '☾' : '☼'}</button><button className="icon-button" aria-label="Help" title="Help" onClick={() => setHelpOpen(true)}>?</button></div>
@@ -615,7 +638,7 @@ function App() {
           <section className="focus-grid">
             <article className="chart-card panel">
               <div className="chart-top"><div><p className="quote">{formatUsd(selectedQuote?.price)} <span>USD</span></p><p className={`gain ${selectedQuote?.changePercent < 0 ? 'negative' : ''}`}>{formatPercent(selectedQuote?.changePercent)} <small>{selectedQuote ? `${selectedQuote.source} · ${formatTimestamp(selectedQuote.asOf)}` : 'Configure a market provider'}</small></p></div><div className="range-selector">{['1D', '5D', '1M', '6M', 'YTD', '1Y', 'All'].map(item => <button className={period === item ? 'selected' : ''} key={item} onClick={() => setPeriod(item)}>{item}</button>)}</div></div>
-              <div className="chart-area">{chartGeometry ? <><div className="price-line" style={{ top: `${chartGeometry.currentY}px` }}><span>{formatUsd(chartGeometry.latest)}</span><span className="price-tag">{chartGeometry.latest.toFixed(chartGeometry.latest < 100 ? 2 : 0)}</span></div><svg viewBox="0 0 640 220" preserveAspectRatio="none" aria-label={`${selectedTicker} ${period} price history from ${history.data.source}`}><defs><linearGradient id="fill" x1="0" x2="0" y1="0" y2="1"><stop offset="0" stopColor="#7dff77" stopOpacity=".25"/><stop offset="1" stopColor="#7dff77" stopOpacity="0"/></linearGradient></defs><path d={chartGeometry.area} fill="url(#fill)"/><polyline points={chartGeometry.polyline} fill="none" stroke="#83ec69" strokeWidth="3" vectorEffect="non-scaling-stroke"/></svg><div className="chart-times">{historyLabels.map((label, index) => <span key={`${label}-${index}`}>{label}</span>)}</div></> : <div className="chart-unavailable"><span>{history.status === 'loading' ? 'Loading history' : 'Historical feed unavailable'}</span><p>{selectedTicker === 'BTC' ? 'The public crypto provider did not return history.' : 'Add `TWELVE_DATA_API_KEY` on the server to enable this chart.'}</p></div>}</div>
+              <div className="chart-area">{chartGeometry ? <><div className="price-line" style={{ top: `${chartGeometry.currentY}px` }}><span>{formatUsd(chartGeometry.latest)}</span><span className="price-tag">{chartGeometry.latest.toFixed(2)}</span></div><svg viewBox="0 0 640 220" preserveAspectRatio="none" aria-label={`${selectedTicker} ${period} price history from ${history.data.source}`}><defs><linearGradient id="fill" x1="0" x2="0" y1="0" y2="1"><stop offset="0" stopColor="#7dff77" stopOpacity=".25"/><stop offset="1" stopColor="#7dff77" stopOpacity="0"/></linearGradient></defs><path d={chartGeometry.area} fill="url(#fill)"/><polyline points={chartGeometry.polyline} fill="none" stroke="#83ec69" strokeWidth="3" vectorEffect="non-scaling-stroke"/></svg><div className="chart-times">{historyLabels.map((label, index) => <span key={`${label}-${index}`}>{label}</span>)}</div></> : <div className="chart-unavailable"><span>{history.status === 'loading' ? 'Loading history' : 'Historical feed unavailable'}</span><p>{selectedTicker === 'BTC' ? 'The public crypto provider did not return history.' : 'Add `TWELVE_DATA_API_KEY` on the server to enable this chart.'}</p></div>}</div>
               <div className="chart-footer">{chartGeometry ? <><span>Open <b>{formatUsd(chartGeometry.open)}</b></span><span>High <b>{formatUsd(chartGeometry.high)}</b></span><span>Low <b>{formatUsd(chartGeometry.low)}</b></span><span>Latest <b>{formatUsd(chartGeometry.latest)}</b></span><span>Source <b>{history.data.source}</b></span></> : <span>Historical market statistics will appear when the feed is available.</span>}</div>
             </article>
 
