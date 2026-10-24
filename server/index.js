@@ -39,7 +39,13 @@ const rateLimiter = createRateLimiter({ limit: config.apiRateLimit, windowMs: co
 
 app.disable('x-powered-by');
 app.set('trust proxy', 'loopback');
-app.use(express.json({ limit: '64kb' }));
+// Compressed request bodies are refused (415) rather than inflated. Nothing
+// here sends one - the page posts plain JSON - and inflating them put any
+// anonymous request's payload through zlib's decoders before a route or its
+// write check ever ran; that is how the October 2026 Node.js Brotli flaw
+// (CVE-2026-111497) would have been reached. Refusing them closes the path
+// on any Node version.
+app.use(express.json({ limit: '64kb', inflate: false }));
 // The policy hashes the inline scripts in the HTML actually being served, so it
 // is read from the built page rather than restated here.
 const servedHtml = existsSync(distIndexFile) ? readFileSync(distIndexFile, 'utf8') : '';

@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { after, before } from 'node:test';
+import { brotliCompressSync, gzipSync } from 'node:zlib';
 import { app } from './index.js';
 
 let server;
@@ -198,4 +199,20 @@ test('watchlist rows reject malformed or oversized symbol lists before any provi
     assert.equal(body.kind, 'bad-request');
     assert.equal(typeof body.error, 'string');
   }
+});
+
+test('a compressed request body is refused, never inflated', async () => {
+  // Inflating request bodies sent any anonymous payload through zlib's
+  // decoders before a route or its write check ran; the October 2026 Node
+  // Brotli flaw (CVE-2026-111497) was reachable that way.
+  const json = Buffer.from(JSON.stringify({ Probe: ['AAPL'] }));
+  for (const [encoding, body] of [['br', brotliCompressSync(json)], ['gzip', gzipSync(json)], ['deflate', json]]) {
+    const response = await fetch(`${origin}/api/watchlists`, { method: 'PUT', headers: { 'Content-Type': 'application/json', 'Content-Encoding': encoding }, body });
+    assert.equal(response.status, 415, `${encoding} body answered ${response.status}`);
+    const payload = await response.json();
+    assert.equal(typeof payload.error, 'string');
+  }
+  // A plain body is still read.
+  const plain = await putJson('/api/watchlists', { Core: ['AAPL'] });
+  assert.notEqual(plain.status, 415);
 });
