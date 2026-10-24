@@ -1,0 +1,12 @@
+[Unit]
+Description=Daily TradeGate database backup
+
+[Timer]
+# Off the hour, so it does not land on the ingestion runs that start on it.
+OnCalendar=*-*-* 03:17:00 UTC
+RandomizedDelaySec=10min
+# A backup missed while the machine was off runs at the next boot.
+Persistent=true
+
+[Install]
+WantedBy=timers.target

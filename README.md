@@ -563,6 +563,42 @@ sudo certbot --nginx -d research.example.com
 
 Only ports 80 and 443 need to be public. Do not expose port 8787 through the VPS firewall.
 
+## Backups and Restore
+
+Most of what PostgreSQL holds can be fetched again, but not all of it. Stored model outputs are the record of what each model said at the time, and the alert-outcome and track-record panels are scored against them; alert history and watchlists are the same. Back the database up daily.
+
+`deploy/backup.sh` writes a compressed `pg_dump` to `/home/tradegate/backups` (readable only by the service account), keeps the newest 14, and only names a dump once `pg_restore` can read it, so a dump cut short never passes for a backup. It reads `DATABASE_URL` from `.env`. `BACKUP_DIR`, `KEEP` and `ENV_FILE` override the defaults.
+
+Run it once by hand, then install the daily timer:
+
+```bash
+sudo -u tradegate -H /home/tradegate/TradeGate/deploy/backup.sh
+sudo cp /home/tradegate/TradeGate/deploy/tradegate-backup.service /home/tradegate/TradeGate/deploy/tradegate-backup.timer /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now tradegate-backup.timer
+systemctl list-timers tradegate-backup.timer
+```
+
+A backup nobody has restored is a hope rather than a backup. Restore the newest dump into a scratch database now and then, and compare a few counts with the live one. The dumps are readable only by the service account, so it reads the file and `pg_restore` takes it on standard input:
+
+```bash
+sudo -u postgres createdb -O tradegate_app tradegate_restore_test
+latest="$(sudo -u tradegate bash -c 'ls -1t /home/tradegate/backups/tradegate-*.dump | head -n 1')"
+sudo -u tradegate cat "$latest" | sudo -u postgres pg_restore --no-owner --role=tradegate_app --dbname=tradegate_restore_test
+sudo -u postgres psql -d tradegate_restore_test -c "SELECT count(*) FROM model_outputs" -c "SELECT count(*) FROM model_alerts"
+sudo -u postgres dropdb tradegate_restore_test
+```
+
+To restore production from a dump, stop the service first so nothing writes while the tables are replaced:
+
+```bash
+sudo systemctl stop tradegate
+sudo -u tradegate cat "$latest" | sudo -u postgres pg_restore --clean --if-exists --no-owner --role=tradegate_app --dbname=tradegate
+sudo systemctl start tradegate
+```
+
+Keep a copy of the backup directory off the machine as well; a backup on the same disk does not survive the disk.
+
 ## Updating Production
 
 ```bash
