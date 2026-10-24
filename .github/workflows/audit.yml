@@ -1,0 +1,30 @@
+name: Dependency audit
+
+# Advisories land on dependencies nobody has touched, so this runs weekly as
+# well as on every push: the October 2026 body-parser and Vite advisories
+# were found only because someone happened to run npm audit by hand.
+on:
+  push:
+    branches: [main]
+  pull_request:
+  schedule:
+    - cron: '13 6 * * 1'
+  workflow_dispatch:
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: npm ci
+      # What runs in production: a high or critical advisory fails the job.
+      - name: Production dependencies
+        run: npm audit --omit=dev --audit-level=high
+      # The dev server and build tools only run on a developer's machine or
+      # in CI, so their advisories are reported without failing the job.
+      - name: All dependencies (report only)
+        run: npm audit
+        continue-on-error: true
