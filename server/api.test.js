@@ -83,7 +83,9 @@ test('a malformed JSON body is rejected as a client error', async () => {
   assert.equal(response.status, 400);
   // `kind` travels with every error now so a caller can tell a bad request
   // from an upstream outage without parsing prose.
-  assert.deepEqual(await response.json(), { error: 'Request body is not valid JSON.', kind: 'bad-request' });
+  const body = await response.json();
+  assert.deepEqual({ error: body.error, kind: body.kind }, { error: 'Request body is not valid JSON.', kind: 'bad-request' });
+  assert.equal(body.requestId, response.headers.get('x-request-id'));
 });
 
 test('watchlist writes reject shapes that are not a map of lists', async () => {
@@ -215,4 +217,18 @@ test('a compressed request body is refused, never inflated', async () => {
   // A plain body is still read.
   const plain = await putJson('/api/watchlists', { Core: ['AAPL'] });
   assert.notEqual(plain.status, 415);
+});
+
+test('every response names its request, and an error body carries the same id', async () => {
+  const health = await get('/api/health');
+  assert.match(health.headers.get('x-request-id') ?? '', /^[0-9a-f-]{36}$/);
+  // An id handed in by the proxy is kept when it is a plain token...
+  const proxied = await get('/api/health', { headers: { 'X-Request-Id': 'nginx0123456789abcdef' } });
+  assert.equal(proxied.headers.get('x-request-id'), 'nginx0123456789abcdef');
+  // ...and replaced when it is not, so nothing arbitrary reaches the log.
+  const hostile = await get('/api/health', { headers: { 'X-Request-Id': 'a b"}{injected' } });
+  assert.match(hostile.headers.get('x-request-id') ?? '', /^[0-9a-f-]{36}$/);
+  const failed = await get('/api/markets/history/NOTATICKER');
+  const body = await failed.json();
+  assert.equal(body.requestId, failed.headers.get('x-request-id'));
 });

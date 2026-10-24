@@ -279,6 +279,16 @@ export async function insertModelAlerts(modelId, entries, ingestionRunId = null)
  * Every alert in a window, oldest first, for scoring against what followed.
  * The feed reads the newest 50; a record needs all of them.
  */
+/**
+ * Screener breakout alerts were written with a mis-encoded separator, "Â·"
+ * for "·", until the source string was fixed; rows stored before then are
+ * repaired as they are read, so the panel, the feed and the webhook all show
+ * the separator rather than the mojibake.
+ */
+function alertFromRow(row) {
+  return { modelId: row.model_id, key: row.entry_key, text: String(row.text ?? '').replaceAll('\u00c2\u00b7', '\u00b7'), detectedAt: row.detected_at };
+}
+
 export async function getModelAlertsSince(sinceDays = 730, limit = 5000) {
   if (!pool) return [];
   const result = await pool.query(
@@ -287,7 +297,7 @@ export async function getModelAlertsSince(sinceDays = 730, limit = 5000) {
      ORDER BY detected_at ASC, id ASC LIMIT $2`,
     [sinceDays, limit],
   );
-  return result.rows.map((row) => ({ modelId: row.model_id, key: row.entry_key, text: row.text, detectedAt: row.detected_at }));
+  return result.rows.map(alertFromRow);
 }
 
 export async function getRecentModelAlerts(limit = 50) {
@@ -296,7 +306,7 @@ export async function getRecentModelAlerts(limit = 50) {
     `SELECT model_id, entry_key, text, detected_at FROM model_alerts ORDER BY detected_at DESC, id DESC LIMIT $1`,
     [limit],
   );
-  return result.rows.map((row) => ({ modelId: row.model_id, key: row.entry_key, text: row.text, detectedAt: row.detected_at }));
+  return result.rows.map(alertFromRow);
 }
 
 /**

@@ -1,6 +1,6 @@
 import express from 'express';
 import { existsSync, readFileSync } from 'node:fs';
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import { config } from './config.js';
@@ -39,6 +39,26 @@ const rateLimiter = createRateLimiter({ limit: config.apiRateLimit, windowMs: co
 
 app.disable('x-powered-by');
 app.set('trust proxy', 'loopback');
+/**
+ * Every response names the request that produced it. An error a reader sees
+ * carries the same id as the server's log line for it, so a report can be
+ * traced without timestamps and guesswork. An id passed in by the proxy is
+ * kept when it is a plain token (nginx's $request_id is), so one request has
+ * one id end to end; anything else is replaced rather than written into the
+ * log. Requests slow enough to matter are logged with their duration.
+ */
+export const SLOW_REQUEST_MS = 10_000;
+app.use((request, response, next) => {
+  const incoming = request.get('x-request-id');
+  request.id = typeof incoming === 'string' && /^[A-Za-z0-9._-]{8,64}$/.test(incoming) ? incoming : randomUUID();
+  response.setHeader('X-Request-Id', request.id);
+  const started = process.hrtime.bigint();
+  response.on('finish', () => {
+    const durationMs = Number(process.hrtime.bigint() - started) / 1e6;
+    if (durationMs >= SLOW_REQUEST_MS) logger.warn('Slow request', { requestId: request.id, method: request.method, path: request.path, status: response.statusCode, durationMs: Math.round(durationMs) });
+  });
+  next();
+});
 // Compressed request bodies are refused (415) rather than inflated. Nothing
 // here sends one - the page posts plain JSON - and inflating them put any
 // anonymous request's payload through zlib's decoders before a route or its
@@ -562,7 +582,7 @@ app.get('/api/analytics/screener', async (_request, response, next) => {
             const bySymbol = new Map((payload.rows ?? []).map((row) => [row.symbol, row]));
             alertsRaised = await insertModelAlerts('screener-v1', fresh.map((symbol) => {
               const row = bySymbol.get(symbol);
-              return { key: symbol, text: `${symbol}${row?.sector ? ` (${row.sector})` : ''} cleared its 200-day average Â· screener score ${row?.score ?? 'n/a'}` };
+              return { key: symbol, text: `${symbol}${row?.sector ? ` (${row.sector})` : ''} cleared its 200-day average · screener score ${row?.score ?? 'n/a'}` };
             }));
           }
         }
@@ -986,16 +1006,16 @@ app.use((error, request, response, _next) => {
   const { status, body } = classifyRequestError(error);
   // A 4xx is the caller's business and does not belong in the server log.
   if (status >= 500) {
-    logger.error('Request failed', { method: request.method, path: request.path, status, kind: body.kind, error });
+    logger.error('Request failed', { requestId: request.id, method: request.method, path: request.path, status, kind: body.kind, error });
   }
-  response.status(status).json(body);
+  response.status(status).json({ ...body, requestId: request.id });
 });
 
 export { classifyRequestError };
 
 export { app };
 
-// Importing this module â€” the API tests do â€” must not bind a port or start
+// Importing this module - the API tests do - must not bind a port or start
 // ingestion; only running it as a program should.
 const startedDirectly = process.argv[1] !== undefined
   && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url);

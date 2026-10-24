@@ -775,3 +775,12 @@ describe('the alert feed dates stored alerts in RFC 3339', async () => {
     await new Promise((resolve) => { server.close(resolve); });
   }
 });
+
+describe('alerts stored with the old mis-encoded separator read back with a clean one', async () => {
+  await reset();
+  await database.insertModelAlerts('screener-v1', [{ key: 'NVDA', text: 'NVDA (Technology) cleared its 200-day average Â· screener score 72' }]);
+  const [recent] = await database.getRecentModelAlerts(5);
+  assert.equal(recent.text, 'NVDA (Technology) cleared its 200-day average · screener score 72');
+  const [since] = await database.getModelAlertsSince(30, 5);
+  assert.equal(since.text, recent.text);
+});
