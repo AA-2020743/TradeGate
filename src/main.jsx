@@ -4,6 +4,7 @@ import './styles.css';
 import { changeOverSpan, formatPercent, formatSpanLabel, formatTimestamp, formatUsd, useEquityResearch, useLazyResource, useMarketHistory, usePlatformData, useTechnicalAnalytics } from './liveData.js';
 import { buildRoute, parseRoute } from './routing.js';
 import { providerDegradation } from './platformStatus.js';
+import { downloadCsv } from './csv.js';
 import { MAX_LISTS, addSymbolToList, nextListName, normalizeWatchlists, reconcileWatchlists, renameList, sameWatchlists, sanitizeSymbol } from './watchlistRules.js';
 import { SCREENER_COLUMNS, ariaSortFor, nextSortState, sortRows } from './screenerSort.js';
 import { compareSnapshots } from './snapshotDiff.js';
@@ -308,6 +309,7 @@ function LiquidityChartDialog({ history, title, description, label, onClose }) {
     <section ref={dialogRef} className="liquidity-dialog panel" role="dialog" aria-modal="true" aria-labelledby="liquidity-dialog-title">
       <header><div><p className="section-kicker">HISTORICAL MODEL INSPECTOR</p><h2 id="liquidity-dialog-title">{title}</h2><p>{description}</p></div><button className="liquidity-dialog-close" onClick={onClose} aria-label="Close liquidity chart">×</button></header>
       <LiquidityHistoryChart history={history} range={range} onRangeChange={setRange} expanded label={label} />
+      {history.length ? <div className="dialog-actions"><button className="watch-button" onClick={() => downloadCsv(`tradegate ${label ?? 'net US liquidity'}`, ['Date', `${label ?? 'net US liquidity'} (USD millions)`], history.filter((point) => Number.isFinite(point.value)).map((point) => [point.date, point.value]))}>Download CSV ({history.length} points)</button></div> : null}
     </section>
   </div>;
 }
@@ -643,7 +645,7 @@ function App() {
             <article className="chart-card panel">
               <div className="chart-top"><div><p className="quote">{formatUsd(selectedQuote?.price)} <span>USD</span></p><p className={`gain ${selectedQuote?.changePercent < 0 ? 'negative' : ''}`}>{formatPercent(selectedQuote?.changePercent)} <small>{selectedQuote ? `${selectedQuote.source} · ${formatTimestamp(selectedQuote.asOf)}` : 'Configure a market provider'}</small></p></div><div className="range-selector">{['1D', '5D', '1M', '6M', 'YTD', '1Y', 'All'].map(item => <button className={period === item ? 'selected' : ''} key={item} onClick={() => setPeriod(item)}>{item}</button>)}</div></div>
               <div className="chart-area">{chartGeometry ? <><div className="price-line" style={{ top: `${chartGeometry.currentY}px` }}><span>{formatUsd(chartGeometry.latest)}</span><span className="price-tag">{chartGeometry.latest.toFixed(2)}</span></div><svg viewBox="0 0 640 220" preserveAspectRatio="none" aria-label={`${selectedTicker} ${period} price history from ${history.data.source}`}><defs><linearGradient id="fill" x1="0" x2="0" y1="0" y2="1"><stop offset="0" stopColor="#7dff77" stopOpacity=".25"/><stop offset="1" stopColor="#7dff77" stopOpacity="0"/></linearGradient></defs><path d={chartGeometry.area} fill="url(#fill)"/><polyline points={chartGeometry.polyline} fill="none" stroke="#83ec69" strokeWidth="3" vectorEffect="non-scaling-stroke"/></svg><div className="chart-times">{historyLabels.map((label, index) => <span key={`${label}-${index}`}>{label}</span>)}</div></> : <div className="chart-unavailable"><span>{history.status === 'loading' ? 'Loading history' : 'Historical feed unavailable'}</span><p>{selectedTicker === 'BTC' ? 'The public crypto provider did not return history.' : 'Add `TWELVE_DATA_API_KEY` on the server to enable this chart.'}</p></div>}</div>
-              <div className="chart-footer">{chartGeometry ? <><span>Open <b>{formatUsd(chartGeometry.open)}</b></span><span>High <b>{formatUsd(chartGeometry.high)}</b></span><span>Low <b>{formatUsd(chartGeometry.low)}</b></span><span>Latest <b>{formatUsd(chartGeometry.latest)}</b></span><span>Source <b>{history.data.source}</b></span></> : <span>Historical market statistics will appear when the feed is available.</span>}</div>
+              <div className="chart-footer">{chartGeometry ? <><span>Open <b>{formatUsd(chartGeometry.open)}</b></span><span>High <b>{formatUsd(chartGeometry.high)}</b></span><span>Low <b>{formatUsd(chartGeometry.low)}</b></span><span>Latest <b>{formatUsd(chartGeometry.latest)}</b></span><span>Source <b>{history.data.source}</b></span><button className="chart-csv" onClick={() => downloadCsv(`tradegate ${selectedTicker} ${period}`, ['Timestamp', `${selectedTicker} close (USD)`, 'Source'], history.data.points.map((point) => [point.timestamp, point.value, history.data.source]))} aria-label={`Download ${selectedTicker} ${period} history as CSV`}>CSV</button></> : <span>Historical market statistics will appear when the feed is available.</span>}</div>
             </article>
 
             <article className="thesis-card panel"><div className="thesis-heading"><div><StatusKicker label="TECHNICAL STATE" published={Boolean(technicalModel)} /><h3>Where the trend stands</h3></div><span className="data-pill">{technicalModel?.version ?? 'Awaiting data'}</span></div><div className={`signal ${technicalModel?.regime === 'Guarded' ? 'guarded' : technicalModel?.regime === 'Neutral' ? 'neutral-signal' : ''}`}><span className="signal-icon">{technicalModel?.regime === 'Guarded' ? '↘' : '↗'}</span><div><strong>{technicalModel?.regime ?? (technical.status === 'loading' ? 'Calculating' : 'Unavailable')}</strong><p>{technicalModel ? `Score ${technicalModel.score}/100 from ${technicalModel.observations} provider observations. RSI ${technicalModel.indicators.rsi14?.toFixed(1) ?? 'n/a'}.` : selectedTicker === 'BTC' ? 'The public history provider did not return enough observations.' : 'Configure Twelve Data history to calculate this state.'}</p></div></div><div className="factor"><span>Trend alignment</span><div className="factor-bar"><i style={{ width: `${technicalModel?.components.trend ?? 0}%` }}></i></div><b>{technicalModel?.components.trend ?? '—'}</b></div><div className="factor"><span>Momentum</span><div className="factor-bar neutral"><i style={{ width: `${technicalModel?.components.momentum ?? 0}%` }}></i></div><b>{technicalModel?.components.momentum ?? '—'}</b></div><div className="factor"><span>Volatility quality</span><div className="factor-bar"><i style={{ width: `${technicalModel?.components.volatilityQuality ?? 0}%` }}></i></div><b>{technicalModel?.components.volatilityQuality ?? '—'}</b></div><p className="updated">{technicalModel ? `${technical.data.source}${technical.data.stale ? ' · stale fallback' : ''} · ${formatTimestamp(technicalModel.asOf)}` : 'No model output is being shown as a fallback.'}</p><p className="updated">Describes the trend so far, not what follows it; the technical track record on the Markets page measures whether these states have said anything about the months after.</p></article>
@@ -3491,15 +3493,10 @@ function ScreenerDashboard({ data, store, onNavigate }) {
   };
 
   const exportCsv = () => {
-    const header = 'Symbol,Sector,SectorRank,SectorSize,Last,Mom20,Mom60,VsIdx20,VsIdx60,VsSma200,Rsi14,Vol20,PctFrom52wHigh,TrendSlopePct,TrendR2,TrendQuality,QualityRank,Score';
-    const lines = matched.map((row) => [row.symbol, row.sector ?? '', row.sectorRank ?? '', row.sectorCount ?? '', row.last ?? '', row.mom20 ?? '', row.mom60 ?? '', row.vsIndexMom20 ?? '', row.vsIndexMom60 ?? '', row.vsSma200 ?? '', Number.isFinite(row.rsi14) ? row.rsi14.toFixed(1) : '', row.vol20 ?? '', row.pctFrom52wHigh ?? '', row.trendSlopePct ?? '', row.trendR2 ?? '', row.trendQuality ?? '', row.qualityRank ?? '', row.score ?? ''].join(','));
-    const blob = new Blob([[header].concat(lines).join('\n')], { type: 'text/csv' });
-    const url = URL.createObjectURL(blob);
-    const anchor = document.createElement('a');
-    anchor.href = url;
-    anchor.download = `tradegate-screener-${preset}.csv`;
-    anchor.click();
-    URL.revokeObjectURL(url);
+    const header = ['Symbol', 'Sector', 'SectorRank', 'SectorSize', 'Last', 'Mom20', 'Mom60', 'VsIdx20', 'VsIdx60', 'VsSma200', 'Rsi14', 'Vol20', 'PctFrom52wHigh', 'TrendSlopePct', 'TrendR2', 'TrendQuality', 'QualityRank', 'Score', 'ScreenedSession'];
+    const session = screener?.vintage?.screenedSession ?? '';
+    const rows = matched.map((row) => [row.symbol, row.sector, row.sectorRank, row.sectorCount, row.last, row.mom20, row.mom60, row.vsIndexMom20, row.vsIndexMom60, row.vsSma200, Number.isFinite(row.rsi14) ? row.rsi14.toFixed(1) : '', row.vol20, row.pctFrom52wHigh, row.trendSlopePct, row.trendR2, row.trendQuality, row.qualityRank, row.score, session]);
+    downloadCsv(`tradegate screener ${preset}`, header, rows);
   };
 
   return <div className="screener-dashboard">
@@ -3746,18 +3743,13 @@ function WatchlistsDashboard({ data, store }) {
     setLists((current) => ({ ...current, [activeList]: (current[activeList] ?? []).filter((item) => item !== symbol) }));
   };
   const exportListCsv = () => {
-    const header = 'Symbol,Last,Change3mPct,Score,Regime,PctFrom52wHigh';
-    const lines = symbols.map((symbol) => {
+    const header = ['Symbol', 'Last', 'Change3mPct', 'Score', 'Regime', 'PctFrom52wHigh', 'AsOf', 'Source'];
+    const rows = symbols.map((symbol) => {
       const snapshot = snapshots[symbol];
-      return [symbol, snapshot?.last ?? '', Number.isFinite(snapshot?.changePct) ? snapshot.changePct.toFixed(2) : '', snapshot?.score ?? '', snapshot?.regime ?? '', Number.isFinite(snapshot?.pctFrom52wHigh) ? snapshot.pctFrom52wHigh : ''].join(',');
+      const row = rowCache[symbol];
+      return [symbol, snapshot?.last, Number.isFinite(snapshot?.changePct) ? snapshot.changePct.toFixed(2) : '', snapshot?.score, snapshot?.regime, snapshot?.pctFrom52wHigh, row?.asOf ? String(row.asOf).slice(0, 10) : '', row?.source];
     });
-    const blob = new Blob([[header].concat(lines).join('\n')], { type: 'text/csv' });
-    const url = URL.createObjectURL(blob);
-    const anchor = document.createElement('a');
-    anchor.href = url;
-    anchor.download = `tradegate-watchlist-${activeList.toLowerCase().replace(/[^a-z0-9]+/g, '-')}.csv`;
-    anchor.click();
-    URL.revokeObjectURL(url);
+    downloadCsv(`tradegate watchlist ${activeList}`, header, rows);
   };
   const createList = () => {
     if (Object.keys(lists).length >= MAX_LISTS) return;

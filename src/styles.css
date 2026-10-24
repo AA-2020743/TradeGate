@@ -830,3 +830,8 @@ button.data-status { font-family: inherit; cursor: pointer; }
 .source-table .lag-row { grid-template-columns: minmax(0, 1.3fr) minmax(0, 2.4fr) minmax(0, 0.9fr) minmax(0, 0.8fr); }
 .source-table .lag-row small { font-family: inherit; }
 .source-subhead { margin: 22px 0 0; font: 700 14px 'Libre Baskerville', serif; }
+
+.dialog-actions { display: flex; justify-content: flex-end; margin-top: 12px; }
+.chart-csv { margin-left: auto; border: 1px solid #dfe2d9; border-radius: 5px; background: transparent; color: #4d554f; font: 600 10px 'DM Mono', monospace; padding: 3px 8px; cursor: pointer; }
+html[data-theme='dark'] .chart-csv { border-color: #303b34; color: #dce5dc; }
+@media print { .chart-csv, .dialog-actions { display: none !important; } }
