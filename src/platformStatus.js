@@ -34,7 +34,8 @@ export function derivePlatformStatus({ health = null, markets = null, liquidity 
   const reasons = [];
   const degraded = [];
   for (const [name, provider] of Object.entries(health.providers ?? {})) {
-    const reason = providerDegradation(name, provider);
+    // Named for the reader ("Twelve Data needs a key"), not by its key.
+    const reason = providerDegradation(provider?.name ?? name, provider);
     if (reason) {
       degraded.push(name);
       reasons.push(reason);

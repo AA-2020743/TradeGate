@@ -153,3 +153,35 @@ test('every chart range the app asks for is served as itself', async () => {
   assert.equal(normalizeHistoryRange('10Y'), '1M');
   assert.equal(normalizeHistoryRange(undefined), '1M');
 });
+
+test('every external host the server calls is listed, named, as a provider', async () => {
+  const { readdirSync, readFileSync } = await import('node:fs');
+  const { getProviderHealth } = await import('./providers.js');
+  const providers = getProviderHealth();
+  for (const [key, provider] of Object.entries(providers)) {
+    assert.ok(provider.name && provider.purpose && provider.mode, `${key} needs a name, purpose and mode`);
+  }
+  // The list once covered eleven of eighteen hosts. A new source has to be
+  // added here and to the provider list, or this fails.
+  const owner = {
+    'query1.finance.yahoo.com': 'yahooSpark', 'publicreporting.cftc.gov': 'cftc', 'api.coingecko.com': 'coingecko',
+    'pro-api.coingecko.com': 'coingecko', 'stablecoins.llama.fi': 'defiLlama', 'fapi.binance.com': 'binanceBybit',
+    'www.okx.com': 'binanceBybit', 'api.bybit.com': 'binanceBybit', 'shillerdata.com': 'shiller', 'bitcoin-data.com': 'bitcoinData',
+    'api.twelvedata.com': 'twelveData', 'api.stlouisfed.org': 'fred', 'fred.stlouisfed.org': 'fred', 'www.multpl.com': 'multpl',
+    'www.federalreserve.gov': 'rssWires', 'search.cnbc.com': 'rssWires', 'feeds.content.dowjones.io': 'rssWires',
+    'www.deribit.com': 'deribit', 'stats.bis.org': 'bis', 'api.db.nomics.world': 'bis', 'production.dataviz.cnn.io': 'cnnFearGreed',
+    'edition.cnn.com': 'cnnFearGreed', 'mba.tuck.dartmouth.edu': 'frenchLibrary', 'en.wikipedia.org': 'wikipedia',
+    'api.fiscaldata.treasury.gov': 'treasuryFiscal',
+  };
+  const ignored = new Set(['example.com', 'evil.example', 'research.example.com', 'fonts.googleapis.com', 'fonts.gstatic.com']);
+  const directory = new URL('.', import.meta.url);
+  const hosts = new Set();
+  for (const file of readdirSync(directory).filter((name) => name.endsWith('.js') && !name.endsWith('.test.js'))) {
+    for (const match of readFileSync(new URL(file, directory), 'utf8').matchAll(/https:\/\/([a-zA-Z0-9.-]+)/g)) hosts.add(match[1]);
+  }
+  for (const host of hosts) {
+    if (ignored.has(host)) continue;
+    assert.ok(owner[host], `${host} is called but not attributed to a provider`);
+    assert.ok(providers[owner[host]], `${host} belongs to ${owner[host]}, which the provider list does not have`);
+  }
+});

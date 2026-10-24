@@ -3920,24 +3920,38 @@ export function calculateDollarTransmission(liquidity, dxyBtc) {
   };
 }
 
+/**
+ * Every external source the platform reads, named, with what it feeds and how
+ * it is accessed. The list once covered eleven of the eighteen hosts the
+ * server actually calls; the Shiller workbook, Deribit, the BIS and DBnomics,
+ * Treasury Fiscal Data, CNN's Fear & Greed index and the Kenneth French
+ * library were all in use and missing from it.
+ */
 export function getProviderHealth() {
   return {
-    fred: { configured: Boolean(config.fredApiKey), mode: config.fredApiKey ? 'credentialed' : 'keyless-public-csv', purpose: 'Official U.S. macro and liquidity series' },
+    fred: { name: 'FRED (St. Louis Fed)', configured: Boolean(config.fredApiKey), mode: config.fredApiKey ? 'credentialed' : 'keyless-public-csv', purpose: 'Official U.S. macro and liquidity series' },
     twelveData: {
+      name: 'Twelve Data',
       configured: Boolean(config.twelveDataApiKey),
       mode: config.twelveDataApiKey ? 'credentialed' : 'not-configured',
       purpose: 'Equities, ETFs, FX, and metals proxies',
       limits: { creditsPerMinute: config.twelveMinuteCreditLimit, creditsPerDay: config.twelveDailyCreditLimit },
     },
-    yahooSpark: { configured: true, mode: 'keyless-public', purpose: 'Batch daily and intraday closes for the screener, breadth, sectors, crypto pairs, and VIX term structure' },
-    wikipedia: { configured: true, mode: 'keyless-public', purpose: 'S&P 500 constituent universe' },
-    coingecko: { configured: true, mode: config.coingeckoApiKey ? `credentialed-${config.coingeckoPlan}` : 'keyless-public', purpose: 'Bitcoin on-chain proxies and global market aggregates (dominance, total capitalization)' },
-    defiLlama: { configured: true, mode: 'keyless-public', purpose: 'Aggregate stablecoin supply history for the issuance liquidity leg' },
-    binanceBybit: { configured: true, mode: 'keyless-public', purpose: 'Perpetual funding rates (Binance, Bybit, OKX), open-interest history (Binance, OKX fallback), and BTC cycle derivatives legs' },
-    bitcoinData: { configured: true, mode: 'keyless-public', serialized: true, purpose: 'MVRV Z-score and short-term holder realized price' },
-    cftc: { configured: true, mode: config.cftcAppToken ? 'app-token' : 'keyless-public', purpose: 'Commitments of Traders positioning for equities, FX, and metals' },
-    multpl: { configured: true, mode: 'keyless-public', purpose: 'Trailing S&P 500 earnings yield for the equity risk-premium proxy' },
-    rssWires: { configured: true, mode: 'keyless-public', purpose: 'Federal Reserve, CNBC, and MarketWatch headlines for the news wire' },
+    yahooSpark: { name: 'Yahoo Finance', configured: true, mode: 'keyless-public', purpose: 'Batch daily and intraday closes for the screener, breadth, sectors, watchlists, crypto pairs, and VIX term structure' },
+    wikipedia: { name: 'Wikipedia', configured: true, mode: 'keyless-public', purpose: 'S&P 500 constituent universe' },
+    coingecko: { name: 'CoinGecko', configured: true, mode: config.coingeckoApiKey ? `credentialed-${config.coingeckoPlan}` : 'keyless-public', purpose: 'Bitcoin on-chain proxies and global market aggregates (dominance, total capitalization)' },
+    defiLlama: { name: 'DefiLlama', configured: true, mode: 'keyless-public', purpose: 'Aggregate stablecoin supply history for the issuance liquidity leg' },
+    binanceBybit: { name: 'Binance, Bybit and OKX', configured: true, mode: 'keyless-public', purpose: 'Perpetual funding rates (Binance, Bybit, OKX), open-interest history (Binance, OKX fallback), and BTC cycle derivatives legs' },
+    bitcoinData: { name: 'bitcoin-data.com', configured: true, mode: 'keyless-public', serialized: true, purpose: 'MVRV Z-score and short-term holder realized price' },
+    deribit: { name: 'Deribit', configured: true, mode: 'keyless-public', purpose: 'Bitcoin and ether option surfaces for implied volatility, skew and term structure' },
+    cftc: { name: 'CFTC', configured: true, mode: config.cftcAppToken ? 'app-token' : 'keyless-public', purpose: 'Commitments of Traders positioning for equities, FX, and metals' },
+    bis: { name: 'BIS via DBnomics', configured: true, mode: 'keyless-public', purpose: "People's Bank of China total assets (BIS WS_CBTA) for the global liquidity pool" },
+    treasuryFiscal: { name: 'U.S. Treasury Fiscal Data', configured: true, mode: 'keyless-public', purpose: 'Daily Treasury statement, auctions and debt maturities for Treasury funding' },
+    shiller: { name: 'Shiller data (shillerdata.com)', configured: true, mode: 'keyless-public', purpose: 'Monthly S&P Composite prices, earnings and CAPE since 1871 for index valuation' },
+    frenchLibrary: { name: 'Kenneth French Data Library', configured: true, mode: 'keyless-public', purpose: 'Fama-French factor returns' },
+    cnnFearGreed: { name: 'CNN Fear & Greed', configured: true, mode: 'keyless-public', purpose: 'Equity sentiment composite' },
+    multpl: { name: 'multpl', configured: true, mode: 'keyless-public', purpose: 'Trailing S&P 500 earnings yield for the equity risk-premium proxy' },
+    rssWires: { name: 'News wires (Federal Reserve, CNBC, MarketWatch)', configured: true, mode: 'keyless-public', purpose: 'Federal Reserve, CNBC, and MarketWatch headlines for the news wire' },
   };
 }
 

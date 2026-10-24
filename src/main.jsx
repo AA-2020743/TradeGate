@@ -3,6 +3,7 @@ import { createRoot } from 'react-dom/client';
 import './styles.css';
 import { changeOverSpan, formatPercent, formatSpanLabel, formatTimestamp, formatUsd, useEquityResearch, useLazyResource, useMarketHistory, usePlatformData, useTechnicalAnalytics } from './liveData.js';
 import { buildRoute, parseRoute } from './routing.js';
+import { providerDegradation } from './platformStatus.js';
 import { MAX_LISTS, addSymbolToList, nextListName, normalizeWatchlists, reconcileWatchlists, renameList, sameWatchlists, sanitizeSymbol } from './watchlistRules.js';
 import { SCREENER_COLUMNS, ariaSortFor, nextSortState, sortRows } from './screenerSort.js';
 import { compareSnapshots } from './snapshotDiff.js';
@@ -261,7 +262,7 @@ function HelpDialog({ onClose }) {
         <li><b>Calculated</b> means the panel was computed from provider data on this load.</li>
         <li><b>Unavailable</b> means its inputs did not arrive, and nothing is estimated in their place.</li>
         <li><b>Stored</b> beside a price means it came from the database copy because the live provider did not answer.</li>
-        <li>The pill at the top right says whether the data feeds are live, partial or offline. Hover over it to see which providers are serving.</li>
+        <li>The pill at the top right says whether the data feeds are live, partial or offline. Select it, or search for Data sources, to see every source, what it feeds and whether it is ready.</li>
       </ul></section>
       <section><h3>Track records</h3><ul>
         <li>Each model is replayed on its own history. The older 70% is where it was developed, and the newest 30% is held out to test it.</li>
@@ -357,6 +358,8 @@ function App() {
   const watchlistStore = useWatchlistStore();
   const [helpOpen, setHelpOpen] = React.useState(false);
   const closeHelp = React.useCallback(() => setHelpOpen(false), []);
+  const [sourcesOpen, setSourcesOpen] = React.useState(false);
+  const closeSources = React.useCallback(() => setSourcesOpen(false), []);
   const [pendingAnchor, setPendingAnchor] = React.useState(null);
   const navigateTo = React.useCallback((nav, anchor = null) => { setActiveNav(nav); setPendingAnchor(anchor); }, []);
   const [watchNote, setWatchNote] = React.useState(null);
@@ -431,6 +434,7 @@ function App() {
     { label: 'Watchlists', detail: 'Local lists with live signals', action: () => setActiveNav('Watchlists') },
     { label: 'Model scorecard', detail: 'Which signals held up out of sample', action: () => navigateTo('Markets', 'model-scorecard') },
     { label: 'Help', detail: 'Shortcuts, status labels and track records', action: () => setHelpOpen(true) },
+    { label: 'Data sources', detail: 'Every source, its state and what it feeds', action: () => setSourcesOpen(true) },
     { label: `Switch to ${theme === 'light' ? 'dark' : 'light'} mode`, detail: 'Theme', action: () => setTheme((current) => (current === 'light' ? 'dark' : 'light')) },
     ...watchlist.map((asset) => ({ label: asset.ticker, detail: asset.name, action: () => { setSelectedTicker(asset.ticker); setActiveNav('Overview'); } })),
   ];
@@ -605,7 +609,7 @@ function App() {
         </div>
         <header className="topbar">
           <div className="crumb"><span>Research</span><b>/</b><strong>{activeNav}</strong></div>
-          <div className="top-actions"><DataStatus data={platformData} /><button className="search" onClick={openSearch} aria-label="Search research"><span>⌕</span><span>Search anything</span><kbd>⌘ K</kbd></button><button className="icon-button theme-toggle" onClick={toggleTheme} aria-label={`Switch to ${theme === 'light' ? 'dark' : 'light'} mode`} title={`Switch to ${theme === 'light' ? 'dark' : 'light'} mode`}>{theme === 'light' ? '☾' : '☼'}</button><button className="icon-button" aria-label="Help" title="Help" onClick={() => setHelpOpen(true)}>?</button></div>
+          <div className="top-actions"><DataStatus data={platformData} onOpen={() => setSourcesOpen(true)} /><button className="search" onClick={openSearch} aria-label="Search research"><span>⌕</span><span>Search anything</span><kbd>⌘ K</kbd></button><button className="icon-button theme-toggle" onClick={toggleTheme} aria-label={`Switch to ${theme === 'light' ? 'dark' : 'light'} mode`} title={`Switch to ${theme === 'light' ? 'dark' : 'light'} mode`}>{theme === 'light' ? '☾' : '☼'}</button><button className="icon-button" aria-label="Help" title="Help" onClick={() => setHelpOpen(true)}>?</button></div>
         </header>
         {/* Phones hide the sidebar, and nothing replaced it: until the page had a
             viewport tag phones laid it out 980px wide and kept the icon rail, so
@@ -659,6 +663,7 @@ function App() {
         </div>
       </section>
       {helpOpen && <HelpDialog onClose={closeHelp} />}
+      {sourcesOpen && <SourcesDialog data={platformData} onClose={closeSources} />}
       {searchOpen && <div className="command-overlay" onMouseDown={(event) => { if (event.target === event.currentTarget) setSearchOpen(false); }}>
         <section ref={paletteRef} className="command-palette" role="dialog" aria-modal="true" aria-label="Search research">
           <div className="command-input-wrap"><span>⌕</span><input ref={searchInputRef} value={searchQuery} onChange={(event) => { setSearchQuery(event.target.value); setCommandIndex(0); }} placeholder="Search research, markets, or symbols" aria-label="Search research, markets, or symbols" /><kbd>ESC</kbd></div>
@@ -670,17 +675,76 @@ function App() {
   );
 }
 
-function DataStatus({ data }) {
+const ACCESS_LABELS = [
+  [/^credentialed/, 'API key'],
+  [/public-csv/, 'Public files, no key'],
+  [/^keyless/, 'Public, no key'],
+  [/^app-token/, 'App token'],
+  [/^not-configured/, 'Needs a key'],
+];
+const accessLabel = (mode) => ACCESS_LABELS.find(([pattern]) => pattern.test(String(mode ?? '')))?.[1] ?? (mode ? String(mode) : '\u2014');
+
+/**
+ * Every source the platform reads, its state, and what it feeds. The status
+ * pill opens it: "Partial data" with nothing to click left a reader to guess
+ * which provider was missing.
+ */
+function SourcesDialog({ data, onClose }) {
+  const providers = Object.entries(data.health?.providers ?? {}).map(([key, provider]) => {
+    const name = provider.name ?? (key === 'database' ? 'PostgreSQL (stored history)' : key);
+    const problem = providerDegradation(name, provider);
+    return {
+      key,
+      name,
+      purpose: provider.purpose ?? (key === 'database' ? 'Stored price history, model outputs, alerts and watchlists' : ''),
+      access: key === 'database' ? (provider.configured ? 'Configured' : 'Not configured') : accessLabel(provider.mode),
+      // Ready means set up with nothing missing, not that its last request
+      // succeeded: the health check does not call every provider.
+      state: problem ? 'Degraded' : key === 'database' && !provider.configured ? 'Not configured' : 'Ready',
+      problem,
+    };
+  }).sort((left, right) => (left.state === 'Ready') - (right.state === 'Ready') || left.name.localeCompare(right.name));
+  const blocked = data.health?.blockedSources ?? [];
+  const ready = providers.filter((provider) => provider.state === 'Ready').length;
+  const summary = !data.health ? 'The data API did not answer, so provider status is unknown.'
+    : data.status === 'live' ? `All ${providers.length} sources are ready.`
+      : `${ready} of ${providers.length} sources are ready. ${data.error ?? ''}`.trim();
+  return <InfoDialog id="sources-dialog" kicker="DATA SOURCES" title="Where the numbers come from" description={summary} closeLabel="Close data sources" onClose={onClose}>
+    {providers.length ? <div className="lag-table source-table" role="table" aria-label="Each data source, its state and what it feeds">
+      <div className="lag-row lag-head" role="row"><span role="columnheader">Source</span><span role="columnheader">Feeds</span><span role="columnheader">Access</span><span role="columnheader">State</span></div>
+      {providers.map((provider) => <div className="lag-row" role="row" key={provider.key}>
+        <span role="cell"><b>{provider.name}</b></span>
+        <span role="cell" data-label="Feeds">{provider.purpose}</span>
+        <span role="cell" data-label="Access">{provider.access}</span>
+        <span role="cell" data-label="State" title={provider.problem ?? undefined}><i className={provider.state === 'Ready' ? 'positive' : 'negative'}>{provider.state}</i>{provider.problem ? <small>{provider.problem}</small> : null}</span>
+      </div>)}
+    </div> : null}
+    {blocked.length ? <>
+      <h3 className="source-subhead">Blocked upstream</h3>
+      <div className="lag-table source-table" role="table" aria-label="Sources blocked upstream">
+        {blocked.map((entry) => <div className="lag-row" role="row" key={entry.source}>
+          <span role="cell"><b>{entry.source}</b></span>
+          <span role="cell" data-label="Would feed">{entry.preview}</span>
+          <span role="cell" data-label="Why">{entry.reason}</span>
+          <span role="cell" data-label="State"><i className="neutral">Not used</i></span>
+        </div>)}
+      </div>
+    </> : null}
+    <p className="model-footnote">Ready means a source is set up with nothing missing, such as a key; whether its latest request succeeded is shown on each panel that uses it, with that panel's source and date, and in check:sources. Publication lags for the official macro series are on the Macro page, under Explore sources and lags. Build {data.health?.build?.shortCommit ?? 'unknown'}.</p>
+  </InfoDialog>;
+}
+
+function DataStatus({ data, onOpen }) {
   const labels = { loading: 'Connecting', live: 'Live data', partial: 'Partial data', offline: 'Offline' };
   const providers = Object.values(data.health?.providers ?? {}).length;
   const serving = providers - (data.platform?.degraded?.length ?? 0);
   const blocked = data.platform?.blocked ?? [];
   const title = [
-    providers ? `${serving} of ${providers} providers serving` : null,
+    providers ? `${serving} of ${providers} sources ready` : null,
     data.error,
     blocked.length ? `Blocked upstream: ${blocked.join(', ')}` : null,
   ].filter(Boolean).join('\n');
-  return <span className={`data-status ${data.status}`} title={title || labels[data.status]}><i></i>{labels[data.status]}</span>;
+  return <button type="button" className={`data-status ${data.status}`} title={title || labels[data.status]} onClick={onOpen} aria-haspopup="dialog" aria-label={`${labels[data.status]}: show data sources`}><i></i>{labels[data.status]}</button>;
 }
 
 function DataDisclosure({ data, message }) {

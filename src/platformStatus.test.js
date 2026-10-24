@@ -98,3 +98,13 @@ test('an empty health payload does not throw', () => {
   assert.equal(result.status, 'live');
   assert.deepEqual(result.degraded, []);
 });
+
+test('a degraded provider is named for the reader, not by its key', async () => {
+  const { derivePlatformStatus } = await import('./platformStatus.js');
+  const status = derivePlatformStatus({
+    health: { providers: { twelveData: { name: 'Twelve Data', configured: false, mode: 'not-configured' } } },
+    markets: { assets: [{ key: 'SPY' }] },
+  });
+  assert.match(status.reasons[0], /^Twelve Data needs a key/);
+  assert.deepEqual(status.degraded, ['twelveData']);
+});

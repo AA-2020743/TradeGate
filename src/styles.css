@@ -825,3 +825,8 @@ html[data-theme='dark'] .screener-symbol.listed i { color: #e8c547; }
   .print-header b { grid-column: 1 / -1; font: 700 13px 'Libre Baskerville', serif; color: #111; }
   a { color: inherit; text-decoration: none; }
 }
+
+button.data-status { font-family: inherit; cursor: pointer; }
+.source-table .lag-row { grid-template-columns: minmax(0, 1.3fr) minmax(0, 2.4fr) minmax(0, 0.9fr) minmax(0, 0.8fr); }
+.source-table .lag-row small { font-family: inherit; }
+.source-subhead { margin: 22px 0 0; font: 700 14px 'Libre Baskerville', serif; }
