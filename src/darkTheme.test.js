@@ -115,8 +115,9 @@ test('the real stylesheet parses completely and every derived text colour clears
   }
 });
 
-// The badge sits on the asset's own bright colour, set inline.
-const INTENTIONAL_DARK_TEXT = new Set([".asset-badge"]);
+// Badges that sit on the asset's own bright colour, set inline: gold, silver,
+// platinum and palladium on the Metals strip read near-black at 5:1 or more.
+const INTENTIONAL_DARK_TEXT = new Set(['.asset-badge', '.metal-asset .metal-symbol']);
 
 test('hand-written dark text colours read at 4.5:1 on their own background or the dark panel', () => {
   const failures = [];
