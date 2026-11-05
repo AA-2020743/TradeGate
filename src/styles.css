@@ -242,9 +242,83 @@ html[data-theme='dark'] .screener-search { background: #1a221d; border-color: #3
   border: 1px solid currentColor;
   white-space: nowrap;
 }
-.verdict-confidence-high { color: #6fbf5e; }
-.verdict-confidence-moderate { color: #d8b45f; }
-.verdict-confidence-low { color: #d2705f; }
+/* Light-theme values hold 4.5:1 on the panel; dark keeps the original hues. */
+.verdict-confidence-high { color: #2a7a40; }
+.verdict-confidence-moderate { color: #7a5d12; }
+.verdict-confidence-low { color: #a14a39; }
+html[data-theme='dark'] .verdict-confidence-high { color: #8fd47e; }
+html[data-theme='dark'] .verdict-confidence-moderate { color: #e0be70; }
+html[data-theme='dark'] .verdict-confidence-low { color: #e3998a; }
+
+/* The answer first: a stance word, then the sentence that explains it. */
+.verdict-lead { flex: 1 1 28rem; min-width: 0; }
+.verdict-stance-row { display: flex; align-items: center; gap: 0.6rem; flex-wrap: wrap; margin: 0.55rem 0 0; }
+.verdict-stance {
+  padding: 0.22rem 0.6rem;
+  border-radius: 4px;
+  font-size: 0.74rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+.verdict-stance-tailwind { background: #e3f1dc; color: #255f2c; }
+.verdict-stance-mixed { background: #eeefe9; color: #4a524b; }
+.verdict-stance-headwind { background: #f6e3de; color: #8a3a2b; }
+html[data-theme='dark'] .verdict-stance-tailwind { background: #29402a; color: #a8dd9f; }
+html[data-theme='dark'] .verdict-stance-mixed { background: #333b35; color: #d3dad1; }
+html[data-theme='dark'] .verdict-stance-headwind { background: #452d29; color: #eba79a; }
+.verdict-stance-note { font-size: 0.8rem; color: #5b645c; }
+html[data-theme='dark'] .verdict-stance-note { color: #b3beb2; }
+.verdict-scale { flex-basis: 100%; font-size: 0.72rem; color: #5b645c; }
+html[data-theme='dark'] .verdict-scale { color: #b3beb2; }
+
+/* How sure, has it worked, what would change it: one short answer each. */
+.verdict-facts {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 0.9rem 1.4rem;
+  margin-top: 1.1rem;
+  padding: 0.9rem 0 0.2rem;
+  border-top: 1px solid var(--hairline, rgba(127, 127, 127, 0.18));
+}
+.verdict-fact > span {
+  display: block;
+  font-size: 0.72rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: #5b645c;
+}
+html[data-theme='dark'] .verdict-fact > span { color: #b3beb2; }
+.verdict-fact p { margin: 0.35rem 0 0; font-size: 0.88rem; line-height: 1.5; }
+.verdict-fact .verdict-confidence { margin: 0 0.3rem 0 0; }
+.verdict-grade {
+  margin-right: 0.3rem;
+  padding: 0.12rem 0.5rem;
+  border-radius: 4px;
+  font-size: 0.74rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+.verdict-grade-positive { background: #e3f1dc; color: #255f2c; }
+.verdict-grade-neutral { background: #f4efdf; color: #6b5414; }
+.verdict-grade-negative { background: #f6e3de; color: #8a3a2b; }
+html[data-theme='dark'] .verdict-grade-positive { background: #29402a; color: #a8dd9f; }
+html[data-theme='dark'] .verdict-grade-neutral { background: #413a25; color: #e6c97f; }
+html[data-theme='dark'] .verdict-grade-negative { background: #452d29; color: #eba79a; }
+.verdict-legend { margin: 0.6rem 0 0; font-size: 0.76rem; color: #5b645c; }
+html[data-theme='dark'] .verdict-legend { color: #b3beb2; }
+
+/* The working, one click away rather than in the reader's path. */
+.verdict-details { margin-top: 0.9rem; padding-top: 0.7rem; border-top: 1px solid var(--hairline, rgba(127, 127, 127, 0.18)); }
+.verdict-details > summary { cursor: pointer; font-size: 0.82rem; font-weight: 600; color: #3f6a3a; width: fit-content; }
+html[data-theme='dark'] .verdict-details > summary { color: #a8dd9f; }
+.verdict-details > summary:focus-visible { outline: 2px solid currentColor; outline-offset: 2px; border-radius: 2px; }
+.verdict-details[open] > summary { margin-bottom: 0.3rem; }
+/* Solid colour rather than the banner's 0.82 opacity, which took the
+   caution highlight inside it below 4.5:1 on the light panel. */
+.verdict-details .verdict-reason { opacity: 1; color: #434c45; }
+html[data-theme='dark'] .verdict-details .verdict-reason { color: #c3cdc1; }
 
 .verdict-meters { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 0.9rem; margin: 1.1rem 0 0.4rem; }
 .verdict-meters > div { display: grid; grid-template-columns: auto 1fr auto; gap: 0.6rem; align-items: center; font-size: 0.82rem; }
@@ -272,10 +346,8 @@ html[data-theme='dark'] .screener-search { background: #1a221d; border-color: #3
 .verdict-row small { opacity: 0.6; font-size: 0.76em; }
 .verdict-none { opacity: 0.55; font-size: 0.85rem; margin: 0.3rem 0 0; }
 
-.verdict-margin, .verdict-reason { margin: 0.85rem 0 0; font-size: 0.85rem; line-height: 1.5; opacity: 0.82; }
+.verdict-reason { margin: 0.85rem 0 0; font-size: 0.85rem; line-height: 1.5; opacity: 0.82; }
 .verdict-missing-line { opacity: 0.65; }
-/* The call's own replayed record, kept beside the call. */
-.verdict-record-line { opacity: 0.92; padding-top: 0.75rem; border-top: 1px solid var(--hairline, rgba(127, 127, 127, 0.18)); }
 .verdict-record-caution { color: #7a5d12; font-weight: 600; }
 html[data-theme='dark'] .verdict-record-caution { color: #e0be70; }
 .verdict-missing { margin: 0.7rem 0 0; padding-left: 1.1rem; font-size: 0.85rem; line-height: 1.6; opacity: 0.75; }

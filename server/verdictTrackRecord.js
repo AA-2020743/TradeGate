@@ -411,6 +411,42 @@ function bannerPhrase(verdict, replay) {
 }
 
 /**
+ * The record as an investor would want it: a grade and one sentence. The
+ * technical line ("the calls ran against their order after the cutoff") is
+ * kept for the details; this says what it means for using the verdict.
+ */
+export function plainRecord(returns, falls, replay, holdoutFrom) {
+  const days = returns.horizonDays ?? READ_DAYS;
+  const subject = replay.assetLabel;
+  const measure = replay.measureLabel ?? 'return';
+  const fallsHeld = ['held', 'held-recent'].includes(falls.verdict);
+  switch (returns.verdict) {
+    case 'held':
+      return { grade: 'Proven', tone: 'positive', sentence: `Tested on data it was not built on, its readings ranked ${subject}'s next ${days}-day ${measure} in the order they implied.` };
+    case 'held-recent':
+      return { grade: 'Promising', tone: 'positive', sentence: `Its readings have ranked ${subject}'s next ${days}-day ${measure} in the order they implied since ${holdoutFrom}, though not before.` };
+    default:
+      break;
+  }
+  if (fallsHeld) {
+    return { grade: 'Risk gauge', tone: 'neutral', sentence: `It has not predicted ${subject}'s ${measure}, but its weaker readings came before bigger falls. Use it to gauge risk, not to forecast.` };
+  }
+  switch (returns.verdict) {
+    case 'faded':
+      return { grade: 'Weakening', tone: 'neutral', sentence: `It ranked ${subject}'s ${measure} in order before ${holdoutFrom}, and only loosely since.` };
+    case 'reversed':
+      return { grade: 'Unreliable', tone: 'negative', sentence: `Tested on data it was not built on, its readings pointed the wrong way for ${subject}'s next ${days}-day ${measure}. Read it as a description of conditions, not a forecast.` };
+    case 'no-order':
+      return { grade: 'Not proven', tone: 'negative', sentence: `Tested on data it was not built on, it showed no reliable link to ${subject}'s next ${days}-day ${measure}. Read it as a description of conditions, not a forecast.` };
+    case 'untested':
+    case 'thin':
+      return { grade: 'Too early to tell', tone: 'neutral', sentence: `There is too little history since ${holdoutFrom} to tell whether it works.` };
+    default:
+      return { grade: 'No record', tone: 'neutral', sentence: 'No track record is available.' };
+  }
+}
+
+/**
  * One line for the verdict banner: how the call's own replay has done on
  * returns and on worst falls, in the scorecard's terms. A call shown without
  * its record reads as a forecast; this keeps the evidence beside it.
@@ -432,6 +468,7 @@ export function summarizeForBanner(result, replay) {
     returns: pick(returns),
     falls: pick(falls),
     caution,
+    plain: plainRecord(returns, falls, replay, result.record.holdoutFrom),
     holdoutFrom: result.record.holdoutFrom,
     text: `Replayed every two weeks since ${result.from}${replay.omitted.length ? ` (without ${replay.omitted.join(' and ').toLowerCase()})` : ''}: on ${subject}’s ${returns.horizonDays ?? READ_DAYS}-day ${replay.measureLabel ?? 'return'}, ${bannerPhrase(returns.verdict, replay)}; on its worst ${falls.horizonDays ?? READ_DAYS}-day fall, ${bannerPhrase(falls.verdict, replay)}. The cutoff is ${result.record.holdoutFrom}.`,
   };

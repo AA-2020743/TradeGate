@@ -884,33 +884,17 @@ function DriverChange({ driver }) {
 }
 
 /**
- * A section kicker whose status word comes from the panel's own model.
- *
- * These were hardcoded, so eighteen panels announced "CALCULATED" while their
- * bodies explained they had nothing - the same contradiction reported on the
- * FX positioning panel. A label that cannot be wrong is worth less than one
- * that can.
+ * The verdict's own replayed record, graded in a word an investor can act on
+ * ("Proven", "Unreliable") with one sentence on what that means for them. The
+ * statistics behind the grade sit in the banner's details.
  */
-/**
- * The conclusion a section is trying to deliver, stated plainly.
- *
- * A verdict box is easy to fill with confident-sounding filler, so this one
- * shows its working: how much of the evidence reported, what carries the call,
- * what argues against it, and how far the call is from being a different call.
- * Dissent is given the same visual weight as support - a panel that lists only
- * agreeing evidence is an advertisement, not research.
- */
-/**
- * The verdict's own replayed record, in one line at the foot of its banner,
- * so the call is never read without the evidence on how such calls have done.
- */
-function VerdictRecordLine({ section }) {
-  const { data: payload } = useLazyResource('/api/analytics/verdict-records');
-  const summary = payload?.records?.[section]?.status === 'calculated' ? payload.records[section].summary : null;
-  if (!summary) return null;
-  return <p className="verdict-reason verdict-record-line">
-    <b>Track record:</b> {summary.text}{summary.caution ? <> <b className="verdict-record-caution">{summary.caution}</b></> : null}
-  </p>;
+function VerdictRecordFact({ record }) {
+  const plain = record?.plain;
+  if (!plain) return null;
+  return <div className="verdict-fact">
+    <span>Has it worked?</span>
+    <p><b className={`verdict-grade verdict-grade-${plain.tone}`}>{plain.grade}</b> {plain.sentence}</p>
+  </div>;
 }
 
 /**
@@ -920,13 +904,37 @@ function VerdictRecordLine({ section }) {
  */
 const leanTone = (score) => (score > 50 ? 'positive' : score < 50 ? 'negative' : 'neutral');
 
+const STANCE_LABEL = { tailwind: 'Tailwind', mixed: 'Mixed', headwind: 'Headwind' };
+const STANCE_TONE = { tailwind: 'positive', mixed: 'neutral', headwind: 'negative' };
+
+function VerdictEvidence({ title, entries, empty }) {
+  return <div>
+    <h4>{title}</h4>
+    {entries.length ? entries.slice(0, 4).map((item) => <div className="verdict-row" key={item.key}>
+      <span><b>{item.name}</b>{item.detail ? <small>{item.detail}</small> : null}</span>
+      <strong className={leanTone(item.score)}>{item.score}</strong>
+    </div>) : <p className="verdict-none">{empty}</p>}
+  </div>;
+}
+
+/**
+ * A section's conclusion, in the order an investor asks for it: what is the
+ * answer, why, how sure is it, has it worked, and what would change it.
+ *
+ * The working is still shown - what reported, how far the readings agree, the
+ * technical wording of the call and its record - but behind a disclosure, so
+ * the first thing read is a sentence rather than a dashboard. Dissent keeps
+ * the same visual weight as support: a panel that lists only agreeing
+ * evidence is an advertisement, not research.
+ */
 function VerdictBanner({ verdict, recordSection = null }) {
+  const records = useLazyResource(recordSection && verdict && verdict.status !== 'unavailable' ? '/api/analytics/verdict-records' : null);
   if (!verdict) return null;
   if (verdict.status === 'unavailable') {
     return <section className="verdict-banner verdict-unavailable panel">
       <div className="verdict-head">
         <p className="section-kicker">{(verdict.title ?? 'VERDICT').toUpperCase()} · UNAVAILABLE</p>
-        <h2>Not enough reported to reach a conclusion</h2>
+        <h2>{verdict.bottomLine ?? 'Not enough reported to reach a conclusion'}</h2>
       </div>
       <p className="verdict-reason">{verdict.reason}</p>
       {verdict.missing?.length ? <ul className="verdict-missing">
@@ -935,54 +943,82 @@ function VerdictBanner({ verdict, recordSection = null }) {
     </section>;
   }
 
-  const tone = verdict.meaning === 'supportive of risk' || verdict.meaning === 'supportive' ? 'positive'
-    : verdict.meaning === 'restrictive' ? 'negative' : 'neutral';
+  const stance = STANCE_LABEL[verdict.stance] ? verdict.stance : null;
+  const tone = stance ? STANCE_TONE[stance]
+    : verdict.meaning === 'supportive of risk' || verdict.meaning === 'supportive' ? 'positive'
+      : verdict.meaning === 'restrictive' ? 'negative' : 'neutral';
+  const subject = verdict.subject ?? 'it';
+  const state = verdict.presentation === 'state';
+  const record = recordSection && records.data?.records?.[recordSection]?.status === 'calculated' ? records.data.records[recordSection].summary : null;
+  // Older payloads (a cached response from before the plain fields) still
+  // render: the technical headline and columns stand in for them.
+  const tailwinds = verdict.tailwinds ?? verdict.supporting ?? [];
+  const headwinds = verdict.headwinds ?? verdict.opposing ?? [];
+  const plain = Boolean(verdict.tailwinds);
+  const confidenceWord = { high: 'High', moderate: 'Moderate', low: 'Low' }[verdict.confidence] ?? verdict.confidence;
 
   return <section className={`verdict-banner panel verdict-${tone}`}>
     <div className="verdict-head">
-      <div>
+      <div className="verdict-lead">
         <p className="section-kicker">{(verdict.title ?? 'VERDICT').toUpperCase()} · {verdict.status.toUpperCase()}</p>
-        <h2>{verdict.headline}</h2>
+        {stance ? <p className="verdict-stance-row">
+          <span className={`verdict-stance verdict-stance-${stance}`}>{STANCE_LABEL[stance]}</span>
+          <span className="verdict-stance-note">{state ? 'Describes conditions today; not a forecast' : `Model call: ${verdict.call}`}</span>
+        </p> : null}
+        <h2>{verdict.bottomLine ?? verdict.headline}</h2>
       </div>
-      <div className="verdict-score">
-        <b>{verdict.score}</b><small>/100{verdict.presentation === 'state' ? ' composite' : ''}</small>
-        <span className={`verdict-confidence verdict-confidence-${verdict.confidence}`}>{verdict.confidence} confidence</span>
+      <div className="verdict-score" aria-label={`Score ${verdict.score} out of 100, where 50 is neutral`}>
+        <b>{verdict.score}</b><small>/100</small>
+        <span className="verdict-scale">50 is neutral · higher helps {subject}</span>
       </div>
     </div>
 
-    <div className="verdict-meters">
-      <div><span>Evidence reported</span><i><b style={{ width: `${verdict.coverage}%` }} /></i><strong>{verdict.coverage}%</strong></div>
-      <div><span>Readings agreeing</span><i><b style={{ width: `${verdict.agreement}%` }} /></i><strong>{verdict.agreement}%</strong></div>
+    <div className="verdict-facts">
+      <div className="verdict-fact">
+        <span>How sure?</span>
+        <p><b className={`verdict-confidence verdict-confidence-${verdict.confidence}`}>{confidenceWord}</b> {verdict.confidenceWhy ?? verdict.confidenceReason}</p>
+      </div>
+      <VerdictRecordFact record={record} />
+      {verdict.margin ? <div className="verdict-fact">
+        <span>What would change it?</span>
+        <p>A {verdict.margin.points}-point {verdict.margin.direction === 'up' ? 'rise' : 'fall'} in the score would make this <b>{verdict.margin.becomes}</b>.</p>
+      </div> : null}
     </div>
 
     <div className="verdict-columns">
-      <div>
-        <h4>{verdict.columns?.[0] ?? 'What carries it'}</h4>
-        {verdict.supporting.length ? verdict.supporting.slice(0, 4).map((item) => <div className="verdict-row" key={item.key}>
-          <span><b>{item.name}</b>{item.detail ? <small>{item.detail}</small> : null}</span>
-          <strong className={leanTone(item.score)}>{item.score}</strong>
-        </div>) : <p className="verdict-none">{verdict.presentation === 'state' ? 'No reading sits here.' : 'Nothing is pushing in this direction.'}</p>}
-      </div>
-      <div>
-        <h4>{verdict.columns?.[1] ?? 'What argues against it'}</h4>
-        {verdict.opposing.length ? verdict.opposing.slice(0, 4).map((item) => <div className="verdict-row" key={item.key}>
-          <span><b>{item.name}</b>{item.detail ? <small>{item.detail}</small> : null}</span>
-          <strong className={leanTone(item.score)}>{item.score}</strong>
-        </div>) : <p className="verdict-none">{verdict.presentation === 'state' ? 'No reading sits here.' : 'Nothing argues the other way.'}</p>}
-      </div>
+      <VerdictEvidence title={plain ? `Helping ${subject}` : (verdict.columns?.[0] ?? 'What carries it')} entries={tailwinds}
+        empty={plain ? `Nothing is helping ${subject} right now.` : 'Nothing is pushing in this direction.'} />
+      <VerdictEvidence title={plain ? `Holding ${subject} back` : (verdict.columns?.[1] ?? 'What argues against it')} entries={headwinds}
+        empty={plain ? `Nothing is holding ${subject} back right now.` : 'Nothing argues the other way.'} />
     </div>
+    {plain ? <p className="verdict-legend">Each reading is scored 0–100: above 50 helps {subject}, below 50 holds it back.</p> : null}
 
-    {verdict.margin ? <p className="verdict-margin">
-      <b>What would change it:</b> a {verdict.margin.points}-point move {verdict.margin.direction} makes this <b>{verdict.margin.becomes}</b>.
-    </p> : null}
-    <p className="verdict-reason">{verdict.confidenceReason}</p>
     {verdict.missing?.length ? <p className="verdict-reason verdict-missing-line">
-      <b>Not counted:</b> {verdict.missing.map((entry) => entry.name).join(', ')}.
+      <b>Not counted (no data):</b> {verdict.missing.map((entry) => entry.name).join(', ')}.
     </p> : null}
-    {recordSection ? <VerdictRecordLine section={recordSection} /> : null}
+
+    <details className="verdict-details">
+      <summary>How this verdict was reached</summary>
+      <div className="verdict-meters">
+        <div><span>Evidence reported</span><i><b style={{ width: `${verdict.coverage}%` }} /></i><strong>{verdict.coverage}%</strong></div>
+        {Number.isFinite(verdict.agreement) ? <div><span>Readings agreeing</span><i><b style={{ width: `${verdict.agreement}%` }} /></i><strong>{verdict.agreement}%</strong></div> : null}
+      </div>
+      {plain ? <p className="verdict-reason"><b>Model reading:</b> {verdict.headline}</p> : null}
+      {verdict.confidenceReason ? <p className="verdict-reason"><b>Confidence, in full:</b> {verdict.confidenceReason}</p> : null}
+      {record ? <p className="verdict-reason"><b>Track record, in full:</b> {record.text}{record.caution ? <> <b className="verdict-record-caution">{record.caution}</b></> : null}</p> : null}
+      {verdict.methodology ? <p className="verdict-reason"><b>Method:</b> {verdict.methodology}</p> : null}
+    </details>
   </section>;
 }
 
+/**
+ * A section kicker whose status word comes from the panel's own model.
+ *
+ * These were hardcoded, so eighteen panels announced "CALCULATED" while their
+ * bodies explained they had nothing - the same contradiction reported on the
+ * FX positioning panel. A label that cannot be wrong is worth less than one
+ * that can.
+ */
 function StatusKicker({ label, published }) {
   return <p className="section-kicker">{label} · {published ? 'CALCULATED' : 'UNAVAILABLE'}</p>;
 }

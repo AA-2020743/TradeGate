@@ -43,6 +43,24 @@ function withArticle(count) {
   return `${needsAn ? 'an' : 'a'} ${count}`;
 }
 
+/**
+ * A reading's name as an investor reads it. Inputs are oriented so that a
+ * higher score is better for the asset, and "(inverted)" was how names used
+ * to record that the dollar is flipped for gold or bitcoin; it means nothing
+ * to a reader, and the reading's own detail ("Firm dollar") says the rest.
+ * The verdicts' own inputs no longer carry it; this strips it from any model
+ * driver that still does.
+ */
+export function plainName(name) {
+  return String(name ?? '').replace(/\s*\(inverted\)/gi, '').trim();
+}
+
+/** "a", "a and b", "a, b and c". */
+function joinNames(names) {
+  if (names.length <= 1) return names.join('');
+  return `${names.slice(0, -1).join(', ')} and ${names.at(-1)}`;
+}
+
 function bandFor(score, bands) {
   return bands.find((band) => score <= band.max) ?? bands.at(-1);
 }
@@ -80,6 +98,9 @@ export function buildVerdict({
   // computed, because the record that justifies the choice is built from it.
   presentation = 'call',
   stateNote = null,
+  // What the verdict is about, as a reader would name it mid-sentence:
+  // "bitcoin", "gold", "the dollar". Used by the bottom line.
+  subject = null,
 } = {}) {
   const scored = signals.filter((signal) => Number.isFinite(signal?.score));
   const totalWeight = signals.reduce((total, signal) => total + (signal?.weight ?? 1), 0);
@@ -117,6 +138,12 @@ export function buildVerdict({
       read: null,
       supporting: [],
       opposing: [],
+      tailwinds: [],
+      headwinds: [],
+      stance: null,
+      bottomLine: `Not enough evidence has reported to say anything about ${subject ?? 'this'} yet.`,
+      confidenceText: null,
+      confidenceWhy: null,
       missing,
     };
   }
@@ -148,9 +175,18 @@ export function buildVerdict({
   const supporting = byPull.filter((signal) => signal.lean === callLean && signal.lean !== 'flat');
   const opposing = byPull.filter((signal) => signal.lean !== callLean && signal.lean !== 'flat');
 
-  const agreement = withLean.length
-    ? Math.round((withLean.filter((signal) => signal.lean === callLean).length / withLean.length) * 100)
-    : 0;
+  // A call in the band that holds the midpoint says the evidence roughly
+  // offsets, and readings either side are what that means, not dissent. At
+  // exactly neutral there is no side to dissent from, so every reading used to
+  // count against the call: "100% of the weight argues the other way" at low
+  // confidence for a plainly balanced picture. In that band only readings that
+  // pull meaningfully count as disagreement; outside it, every reading does.
+  const neutralCall = bandFor(neutral, bands).label === call;
+  const meaningful = (signal) => !neutralCall || Math.abs(signal.score - neutral) >= 10;
+  const counted = callLean === 'flat' ? [] : withLean.filter(meaningful);
+  const agreement = callLean === 'flat' ? 100 : counted.length
+    ? Math.round((counted.filter((signal) => signal.lean === callLean).length / counted.length) * 100)
+    : 100;
   const scores = withLean.map((signal) => signal.score);
   const spread = Math.max(...scores) - Math.min(...scores);
   const dated = withLean.filter((signal) => signal.ageDays !== null);
@@ -161,33 +197,71 @@ export function buildVerdict({
   // Counting readings understates a single heavy dissenter: with three signals
   // one of them opposing is a 67% "majority" that still leaves a third of the
   // verdict arguing the other way.
-  const dissentWeight = availableWeight > 0
-    ? opposing.reduce((total, signal) => total + signal.weight, 0) / availableWeight
+  const dissentWeight = availableWeight > 0 && callLean !== 'flat'
+    ? opposing.filter(meaningful).reduce((total, signal) => total + signal.weight, 0) / availableWeight
     : 0;
 
   const limits = [];
-  if (coverage < 0.75) limits.push(`only ${Math.round(coverage * 100)}% of the evidence reported`);
-  if (dissentWeight >= 0.2) limits.push(`${Math.round(dissentWeight * 100)}% of the weight ${presentation === 'state' ? 'leans' : 'argues'} the other way`);
-  if (agreement < 60) limits.push(`the readings are split ${agreement}/${100 - agreement}`);
-  if (spread >= 45) limits.push(`they span ${spread} points`);
-  if (presentation !== 'state' && margin && margin.points <= 3) limits.push(`the call sits ${margin.points} ${margin.points === 1 ? 'point' : 'points'} from ${margin.becomes}`);
-  if (stalest && stalest.ageDays >= 30) limits.push(`${stalest.name} is ${stalest.ageDays} days old`);
+  const plainLimits = [];
+  if (coverage < 0.75) { limits.push(`only ${Math.round(coverage * 100)}% of the evidence reported`); plainLimits.push('some of the evidence has not reported'); }
+  if (dissentWeight >= 0.2) { limits.push(`${Math.round(dissentWeight * 100)}% of the weight ${presentation === 'state' ? 'leans' : 'argues'} the other way`); plainLimits.push(`about ${Math.round(dissentWeight * 10) * 10}% of the evidence points the other way`); }
+  if (agreement < 60) { limits.push(`the readings are split ${agreement}/${100 - agreement}`); plainLimits.push('the readings disagree'); }
+  if (spread >= 45) { limits.push(`they span ${spread} points`); plainLimits.push(neutralCall ? 'strong readings pull in opposite directions and cancel out' : 'the readings are far apart'); }
+  if (presentation !== 'state' && margin && margin.points <= 3) { limits.push(`the call sits ${margin.points} ${margin.points === 1 ? 'point' : 'points'} from ${margin.becomes}`); plainLimits.push(`it is ${margin.points} ${margin.points === 1 ? 'point' : 'points'} from turning ${margin.becomes}`); }
+  if (stalest && stalest.ageDays >= 30) { limits.push(`${stalest.name} is ${stalest.ageDays} days old`); plainLimits.push(`${midSentence(plainName(stalest.name))} has not updated for ${stalest.ageDays} days`); }
   const confidence = limits.length === 0 ? 'high' : limits.length === 1 ? 'moderate' : 'low';
   // "A, and B, and C" reads as a stammer; one "and", before the last item.
   const listed = limits.length <= 1
     ? limits.join('')
     : `${limits.slice(0, -1).join(', ')}${limits.length > 2 ? ',' : ''} and ${limits.at(-1)}`;
 
+  // At exactly neutral every reading is "against" the call, so naming two of
+  // them read as "balanced against dollar and funding" - balanced, not
+  // opposed, is the point.
   const leadPhrase = callLean === 'flat'
     ? 'the evidence is balanced'
-    : `${supporting.slice(0, 2).map((signal) => midSentence(signal.name)).join(' and ')} ${supporting.length === 1 ? 'carries' : 'carry'} it`;
-  const againstPhrase = opposing.length
-    ? ` against ${opposing.slice(0, 2).map((signal) => midSentence(signal.name)).join(' and ')}`
-    : ', with nothing arguing the other way';
+    : `${supporting.slice(0, 2).map((signal) => midSentence(plainName(signal.name))).join(' and ')} ${supporting.length === 1 ? 'carries' : 'carry'} it`;
+  const againstPhrase = callLean === 'flat' ? ''
+    : opposing.length
+      ? ` against ${opposing.slice(0, 2).map((signal) => midSentence(plainName(signal.name))).join(' and ')}`
+      : ', with nothing arguing the other way';
+
+  // What helps the asset and what holds it back, by which side of neutral a
+  // reading sits on. Every input is oriented so higher is better for the
+  // asset, so this needs no knowledge of the call and never puts a supportive
+  // reading under "argues against".
+  const plainEntry = ({ pull, ...rest }) => ({ ...rest, name: plainName(rest.name) });
+  const tailwinds = byPull.filter((signal) => signal.lean === 'high').map(plainEntry);
+  const headwinds = byPull.filter((signal) => signal.lean === 'low').map(plainEntry);
+  const who = subject ?? midSentence(String(title).replace(/\s+(conditions|regime)$/i, ''));
+  const names = (entries, count) => joinNames(entries.slice(0, count).map((entry) => midSentence(entry.name)));
+  const stance = neutralCall ? 'mixed' : callLean === 'high' ? 'tailwind' : callLean === 'low' ? 'headwind' : 'mixed';
+  const bottomLine = stance === 'tailwind'
+    ? `Supportive for ${who}: ${names(tailwinds, 2)} ${tailwinds.length > 1 ? 'outweigh' : 'outweighs'} ${headwinds.length ? names(headwinds, 1) : 'anything holding it back'}.`
+    : stance === 'headwind'
+      ? `A headwind for ${who}: ${names(headwinds, 2)} ${headwinds.length > 1 ? 'outweigh' : 'outweighs'} ${tailwinds.length ? names(tailwinds, 1) : 'anything in its favour'}.`
+      : tailwinds.length && headwinds.length
+        ? `No clear signal for ${who}: ${names(tailwinds, 2)} ${tailwinds.length > 1 ? 'help' : 'helps'}, ${names(headwinds, 2)} ${headwinds.length > 1 ? 'hold' : 'holds'} it back, and they roughly offset.`
+        : `No clear signal for ${who}: the readings sit close to neutral.`;
+  // The reason on its own, for a banner that already shows the confidence
+  // word in a chip, and the full sentence for anywhere that does not.
+  const confidenceWhy = plainLimits.length
+    ? `${joinNames(plainLimits).replace(/^./, (letter) => letter.toUpperCase())}.`
+    : neutralCall ? 'Conditions are balanced: no reading is pulling hard either way.' : 'The readings agree.';
+  const confidenceText = plainLimits.length
+    ? `${confidence === 'low' ? 'Low' : 'Moderate'} confidence: ${joinNames(plainLimits)}.`
+    : neutralCall ? 'High confidence that conditions are balanced: no reading is pulling hard either way.' : 'High confidence: the readings agree.';
 
   const base = {
     version,
     title,
+    subject: who,
+    stance,
+    bottomLine,
+    confidenceText,
+    confidenceWhy,
+    tailwinds,
+    headwinds,
     status: coverage >= 0.75 && !missing.length ? 'calculated' : 'provisional',
     score,
     call,
@@ -224,6 +298,9 @@ export function buildVerdict({
     presentation: 'state',
     meaning: 'state',
     headline: `${described}.`,
+    // Still a description, not a call: these sections show conditions
+    // because their replayed calls did not rank what followed.
+    bottomLine: `${stance === 'tailwind' ? 'Conditions favour' : stance === 'headwind' ? 'Conditions lean against' : 'Conditions are mixed for'} ${who}: ${midSentence(described)}.`,
     margin: null,
     // Named by the composite's own scale: an inverted input (the dollar for
     // gold) sits below the midpoint when the dollar itself is firm.
@@ -272,6 +349,7 @@ export function buildCryptoVerdict({ bitcoin, globalLiquidity, usdStrength } = {
   return buildVerdict({
     title: 'Bitcoin conditions',
     version: 'crypto-verdict-v1',
+    subject: 'bitcoin',
     signals: [
       {
         key: 'technicals',
@@ -285,7 +363,7 @@ export function buildCryptoVerdict({ bitcoin, globalLiquidity, usdStrength } = {
         // Funding is what leveraged longs pay to stay long. An extreme is
         // crowding, and crowding is fragile, so the axis inverts it.
         key: 'funding',
-        name: 'Perpetual funding (inverted)',
+        name: 'Perpetual funding',
         score: fundingPercentile === null ? null : 100 - fundingPercentile,
         weight: 0.18,
         detail: Number.isFinite(leverage?.annualizedPercent) ? `${leverage.annualizedPercent}% annualized, ${ordinal(fundingPercentile)} percentile` : null,
@@ -311,7 +389,7 @@ export function buildCryptoVerdict({ bitcoin, globalLiquidity, usdStrength } = {
       },
       {
         key: 'dollar',
-        name: 'Dollar (inverted)',
+        name: 'Dollar',
         score: Number.isFinite(dollar?.score) ? 100 - dollar.score : null,
         weight: 0.17,
         detail: dollar?.regime ? `${dollar.regime} dollar` : null,
@@ -356,6 +434,7 @@ export function buildFxVerdict({ usdStrength, usdBreadth, rateDivergence } = {})
   return buildVerdict({
     title: 'Dollar conditions',
     version: 'fx-verdict-v1',
+    subject: 'the dollar',
     bands: [
       { max: 35, label: 'Soft dollar' },
       { max: 65, label: 'Rangebound dollar' },
@@ -419,6 +498,7 @@ export function buildMetalsVerdict({ goldTechnical, usdStrength, globalLiquidity
   return buildVerdict({
     title: 'Gold conditions',
     version: 'metals-verdict-v1',
+    subject: 'gold',
     signals: [
       {
         key: 'technicals',
@@ -433,7 +513,7 @@ export function buildMetalsVerdict({ goldTechnical, usdStrength, globalLiquidity
         // Gold is priced in dollars and competes with the real yield a dollar
         // earns, both of which this model already carries.
         key: 'dollar',
-        name: 'Dollar (inverted)',
+        name: 'Dollar',
         score: dollarScore === null ? null : 100 - dollarScore,
         weight: 0.3,
         detail: usdStrength?.regime ? `${usdStrength.regime} dollar` : null,
@@ -474,7 +554,7 @@ export function buildMetalsVerdict({ goldTechnical, usdStrength, globalLiquidity
  * available weight the same way, so the score is identical by construction
  * rather than by coincidence.
  */
-export function buildVerdictFromModel(model, { title, version, bands, meaning, details = {}, reasons = {} } = {}) {
+export function buildVerdictFromModel(model, { title, version, bands, meaning, subject = null, details = {}, reasons = {} } = {}) {
   const signals = (model?.drivers ?? []).map((driver) => ({
     key: driver.key,
     name: driver.name,
@@ -483,5 +563,5 @@ export function buildVerdictFromModel(model, { title, version, bands, meaning, d
     detail: details[driver.key] ?? null,
     reason: reasons[driver.key] ?? driver.source ?? null,
   }));
-  return buildVerdict({ title, version, bands, meaning, signals });
+  return buildVerdict({ title, version, bands, meaning, subject, signals });
 }

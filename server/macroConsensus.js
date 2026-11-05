@@ -812,16 +812,17 @@ export function calculateConsensusHistory(outputs = [], { minimumObservations = 
 export function calculateMacroVerdict(models = {}) {
   const { macroRegime } = models;
   if (!macroRegime || macroRegime.status === 'unavailable') {
-    return buildVerdict({ title: 'Macro conditions', version: 'macro-verdict-v1', signals: [] });
+    return buildVerdict({ title: 'Macro conditions', version: 'macro-verdict-v1', subject: 'risk assets', signals: [] });
   }
   return buildVerdictFromModel(macroRegime, {
     title: 'Macro conditions',
     version: 'macro-verdict-v1',
+    subject: 'risk assets',
     meaning: { high: 'supportive of risk', low: 'restrictive' },
     details: {
       liquidity: models.liquidity?.regime ?? null,
       globalLiquidity: models.globalLiquidity?.regime ?? null,
-      dollar: models.usdStrength?.regime ? `${models.usdStrength.regime} dollar, inverted` : 'inverted',
+      dollar: models.usdStrength?.regime ? `${models.usdStrength.regime} dollar` : null,
     },
   });
 }

@@ -273,3 +273,56 @@ test('a state headline leaves out a reading that did not report', async () => {
   // Two of three inputs is below the three-reading minimum: no state either.
   assert.equal(gold.status, 'unavailable');
 });
+
+test('a balanced verdict reads as balanced, not as contradicted', () => {
+  // Scores exactly at neutral used to count every reading as dissent:
+  // "100% of the weight argues the other way", low confidence, for a calm,
+  // offsetting picture.
+  const verdict = buildVerdict({
+    subject: 'bitcoin',
+    signals: [
+      signal('technicals', 'Price technicals', 52, 0.3),
+      signal('funding', 'Perpetual funding (inverted)', 60, 0.18),
+      signal('stablecoins', 'Stablecoin supply', 53, 0.15),
+      signal('liquidity', 'Global liquidity impulse', 45, 0.2),
+      signal('dollar', 'Dollar (inverted)', 38, 0.17),
+    ],
+  });
+  assert.equal(verdict.score, 50);
+  assert.equal(verdict.stance, 'mixed');
+  assert.equal(verdict.dissentWeight, 0);
+  assert.equal(verdict.confidence, 'high');
+  assert.match(verdict.confidenceText, /^High confidence that conditions are balanced/);
+  // The banner shows the word in a chip, so the reason also stands alone.
+  assert.equal(verdict.confidenceWhy, 'Conditions are balanced: no reading is pulling hard either way.');
+  // Balanced is the finding; nothing is "against" a call at the midpoint.
+  assert.equal(verdict.headline, 'Neutral: the evidence is balanced.');
+  // Ranked by pull (distance from neutral times weight), as the lists are.
+  assert.equal(verdict.bottomLine, 'No clear signal for bitcoin: perpetual funding and price technicals help, dollar and global liquidity impulse hold it back, and they roughly offset.');
+  // Inputs are oriented so higher helps the asset; the reader sees which
+  // help and which hold back, with no "(inverted)".
+  assert.deepEqual(verdict.tailwinds.map((entry) => entry.name), ['Perpetual funding', 'Price technicals', 'Stablecoin supply']);
+  assert.deepEqual(verdict.headwinds.map((entry) => entry.name), ['Dollar', 'Global liquidity impulse']);
+});
+
+test('a decisive verdict names what carries it and what it outweighs, in plain words', () => {
+  const up = buildVerdict({ subject: 'gold', signals: [signal('a', 'Gold technicals', 82, 0.4), signal('b', 'Dollar (inverted)', 70, 0.3), signal('c', 'Global liquidity impulse', 44, 0.3)] });
+  assert.equal(up.stance, 'tailwind');
+  assert.equal(up.bottomLine, 'Supportive for gold: gold technicals and dollar outweigh global liquidity impulse.');
+  const down = buildVerdict({ subject: 'gold', signals: [signal('a', 'Gold technicals', 18, 0.4), signal('b', 'Dollar (inverted)', 25, 0.3), signal('c', 'Global liquidity impulse', 30, 0.3)] });
+  assert.equal(down.stance, 'headwind');
+  assert.equal(down.bottomLine, 'A headwind for gold: gold technicals and dollar outweigh anything in its favour.');
+  assert.equal(down.confidenceText, 'High confidence: the readings agree.');
+  assert.equal(down.confidenceWhy, 'The readings agree.');
+});
+
+test('strong readings cancelling in a neutral verdict still hold confidence back, said plainly', () => {
+  const verdict = buildVerdict({
+    signals: [signal('a', 'Price trend', 88, 0.3), signal('b', 'Market breadth', 22, 0.25), signal('c', 'Liquidity impulse', 70, 0.25), signal('d', 'Credit conditions', 30, 0.2)],
+  });
+  assert.equal(verdict.stance, 'mixed');
+  assert.equal(verdict.confidence, 'low');
+  assert.match(verdict.confidenceText, /^Low confidence: .*the readings disagree/);
+  assert.doesNotMatch(verdict.confidenceText, /weight|split/);
+  assert.match(verdict.confidenceWhy, /^[A-Z].*the readings disagree.*\.$/);
+});

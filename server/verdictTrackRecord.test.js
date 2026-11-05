@@ -230,3 +230,20 @@ test('a reversed record is explained in the terms of how the section presents it
   assert.equal(summarizeForBanner({ ...base, record: recordWith(1), falls: recordWith(1) }, VERDICT_REPLAYS.crypto).caution, null);
   assert.match(summarizeForBanner({ ...base, record: recordWith(1), falls: recordWith(1) }, VERDICT_REPLAYS.crypto).text, /\(without perpetual funding and stablecoin supply\)/);
 });
+
+test('the record is graded in plain words an investor can act on', () => {
+  const recordWith = (heldOut, development = heldOut) => ({ status: 'calculated', holdoutFrom: '2024-01-16', readHorizonDays: 90, horizons: [{ days: 90, development: { ordering: development, all: { effective: 30 } }, heldOut: { ordering: heldOut, all: { effective: 12 } }, states: [] }] });
+  const base = { from: '2017-08-22' };
+  const plain = (returns, falls, replay = VERDICT_REPLAYS.crypto) => summarizeForBanner({ ...base, record: returns, falls }, replay).plain;
+  assert.equal(plain(recordWith(1), recordWith(-1)).grade, 'Proven');
+  // Reversed on returns but ranking the falls: use it for risk, not forecasts.
+  const risk = plain(recordWith(-1, -0.33), recordWith(1));
+  assert.equal(risk.grade, 'Risk gauge');
+  assert.match(risk.sentence, /^It has not predicted bitcoin's return, but its weaker readings came before bigger falls\. Use it to gauge risk, not to forecast\.$/);
+  const wrongWay = plain(recordWith(-1, -0.33), recordWith(-1), VERDICT_REPLAYS.metals);
+  assert.equal(wrongWay.grade, 'Unreliable');
+  assert.match(wrongWay.sentence, /pointed the wrong way for gold's next 90-day return\. Read it as a description of conditions, not a forecast\.$/);
+  assert.equal(plain(recordWith(0), recordWith(0)).grade, 'Not proven');
+  // Nothing in the plain sentence speaks the replay's own jargon.
+  for (const entry of [risk, wrongWay]) assert.doesNotMatch(entry.sentence, /cutoff|ordering|bands|held-out/);
+});

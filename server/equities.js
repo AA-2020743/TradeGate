@@ -148,6 +148,7 @@ export async function getEquityDashboard(requestedSymbol = 'SPY') {
   const verdict = buildVerdictFromModel(regime, {
     title: `${index.name} regime`,
     version: 'equity-verdict-v1',
+    subject: index.name,
     meaning: { high: 'supportive of risk', low: 'restrictive' },
     details: {
       trend: usableTechnical?.components?.trendAveragesUsed ? `${usableTechnical.components.trendAveragesUsed} of 3 moving averages` : null,
