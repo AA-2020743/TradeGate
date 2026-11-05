@@ -185,3 +185,23 @@ test('every external host the server calls is listed, named, as a provider', asy
     assert.ok(providers[owner[host]], `${host} belongs to ${owner[host]}, which the provider list does not have`);
   }
 });
+
+test('the Fear & Greed percentile reads CNN\'s nested history', async () => {
+  const { getSentimentSnapshot } = await import('./providers.js');
+  // CNN's graphdata nests the history under fear_and_greed_historical.data as
+  // { x: epoch ms, y: score }; reading only a bare array left it empty.
+  const now = Date.now();
+  const data = Array.from({ length: 200 }, (_unused, index) => ({ x: now - (200 - index) * 86_400_000, y: 20 + (index % 60) }));
+  const original = globalThis.fetch;
+  globalThis.fetch = async () => new Response(JSON.stringify({
+    fear_and_greed: { score: 71, rating: 'greed', previous_close: 69 },
+    fear_and_greed_historical: { timestamp: now, score: 71, rating: 'greed', data },
+  }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+  try {
+    const snapshot = await getSentimentSnapshot();
+    assert.equal(snapshot.fearGreed.observations, 200);
+    assert.ok(Number.isFinite(snapshot.fearGreed.percentile1y));
+  } finally {
+    globalThis.fetch = original;
+  }
+});

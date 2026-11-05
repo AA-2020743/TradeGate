@@ -857,7 +857,11 @@ export async function getSentimentSnapshot() {
     const current = payload?.fear_and_greed;
     const score = asNumber(current?.score);
     if (!Number.isFinite(score)) throw new Error('CNN Fear & Greed payload missing current score');
-    const historical = Array.isArray(payload?.fear_and_greed_historical) ? payload.fear_and_greed_historical : [];
+    // CNN nests the history: fear_and_greed_historical is an object whose
+    // `data` holds { x: epoch ms, y: score } points. Reading only a bare array
+    // left the history empty, so the one-year percentile was never computed.
+    const rawHistory = payload?.fear_and_greed_historical;
+    const historical = Array.isArray(rawHistory) ? rawHistory : Array.isArray(rawHistory?.data) ? rawHistory.data : [];
     const historicalScores = historical.map((entry) => asNumber(entry?.y)).filter((value) => Number.isFinite(value));
     const oneYearAgoCutoff = Date.now() - 365 * 86_400_000;
     const yearScores = historicalScores.filter((value, index) => Number(historical[index]?.x ?? 0) >= oneYearAgoCutoff);
