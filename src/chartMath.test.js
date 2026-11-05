@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { divergingPosition, divergingTicks, heatShare, niceLimit, pullBar, scalePosition } from './chartMath.js';
+import { divergingPosition, divergingTicks, heatShare, niceLimit, ordinal, pullBar, scalePosition } from './chartMath.js';
 
 test('a reading pulls from the neutral line toward the side it favours', () => {
   assert.deepEqual(pullBar(72), { side: 'pos', left: 50, width: 22 });
@@ -39,4 +39,9 @@ test('a heat cell tints toward the side its value leans, more for stronger value
   assert.deepEqual(heatShare(-1.4), { side: 'opp', percent: 55 });
   assert.deepEqual(heatShare(0), { side: 'flat', percent: 0 });
   assert.equal(heatShare(null), null);
+});
+
+test('ordinals read as English, and a missing number is a dash', () => {
+  assert.deepEqual([1, 2, 3, 4, 11, 12, 13, 21, 22, 93, 100, 101].map(ordinal), ['1st', '2nd', '3rd', '4th', '11th', '12th', '13th', '21st', '22nd', '93rd', '100th', '101st']);
+  assert.equal(ordinal(null), '\u2014');
 });

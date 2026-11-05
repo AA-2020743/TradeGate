@@ -1224,3 +1224,26 @@ html[data-theme='dark'] .method-note > summary { color: #a8dd9f; }
   .diverging-axis > span:first-child { display: none; }
 }
 .range-center { z-index: 1; }
+
+/* Percentile strip: each row's place in its own history. */
+.percentile-chart { margin: 4px 0 14px; container-type: inline-size; }
+.percentile-ends, .percentile-row { display: grid; grid-template-columns: min(34%, 200px) minmax(0, 1fr) 40px; gap: 12px; align-items: center; }
+.percentile-ends > span:nth-child(2) { display: flex; justify-content: space-between; font-size: 11px; color: var(--viz-ink-2); }
+.percentile-rows { list-style: none; margin: 6px 0 0; padding: 0; }
+.percentile-row { padding: 5px 4px; border-radius: 6px; outline: none; }
+.percentile-row:hover, .percentile-row:focus-visible { background: rgba(127, 127, 127, 0.08); }
+.percentile-row:focus-visible { box-shadow: inset 0 0 0 2px var(--viz-pos); }
+.percentile-name { display: flex; flex-direction: column; font-size: 12.5px; font-weight: 600; min-width: 0; }
+.percentile-name small { font-weight: 400; font-size: 11px; color: var(--viz-ink-2); }
+.percentile-track { position: relative; height: 8px; border-radius: 999px; background: var(--viz-mid); }
+.percentile-zone { position: absolute; top: 0; bottom: 0; width: 10%; background: color-mix(in srgb, var(--viz-opp) 35%, var(--viz-mid)); }
+.percentile-zone-low { left: 0; border-radius: 999px 0 0 999px; }
+.percentile-zone-high { right: 0; border-radius: 0 999px 999px 0; }
+.percentile-dot { position: absolute; top: 50%; width: 12px; height: 12px; margin: -6px 0 0 -6px; border-radius: 50%; background: var(--viz-pos); box-shadow: 0 0 0 2px var(--viz-ring); }
+.percentile-extreme { background: var(--viz-ink); }
+.percentile-value { text-align: right; font: 600 12px 'DM Mono', monospace; color: var(--viz-ink); }
+@container (max-width: 340px) {
+  .percentile-row, .percentile-ends { grid-template-columns: minmax(0, 1fr) 36px; row-gap: 3px; }
+  .percentile-name { grid-column: 1 / -1; }
+  .percentile-ends > span:first-child { display: none; }
+}

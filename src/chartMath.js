@@ -61,3 +61,12 @@ export function heatShare(value, limit = 1, maximumPercent = 55) {
   const share = Math.min(1, Math.abs(value) / limit);
   return { side: value > 0 ? 'pos' : value < 0 ? 'opp' : 'flat', percent: Math.round(share * maximumPercent) };
 }
+
+/** 1st, 2nd, 3rd, 11th, 93rd - and an em-dash, never "nullth", when there is no number. */
+export function ordinal(value) {
+  if (!Number.isFinite(value)) return '\u2014';
+  const rounded = Math.round(value);
+  const lastTwo = Math.abs(rounded) % 100;
+  if (lastTwo >= 11 && lastTwo <= 13) return `${rounded}th`;
+  return `${rounded}${{ 1: 'st', 2: 'nd', 3: 'rd' }[Math.abs(rounded) % 10] ?? 'th'}`;
+}

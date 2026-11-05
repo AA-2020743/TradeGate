@@ -1,4 +1,5 @@
 import { describeTechnical } from './technicalSummary.js';
+import { ordinal } from './chartMath.js';
 
 /**
  * The equity section's answers to the questions an investor actually asks,
@@ -24,12 +25,6 @@ function joinParts(parts) {
   return `${parts.slice(0, -1).join(', ')} and ${parts.at(-1)}`;
 }
 
-function ordinal(value) {
-  const rounded = Math.round(value);
-  const lastTwo = Math.abs(rounded) % 100;
-  if (lastTwo >= 11 && lastTwo <= 13) return `${rounded}th`;
-  return `${rounded}${{ 1: 'st', 2: 'nd', 3: 'rd' }[Math.abs(rounded) % 10] ?? 'th'}`;
-}
 
 /**
  * Where the card's main reading sits between two named ends, for the scale

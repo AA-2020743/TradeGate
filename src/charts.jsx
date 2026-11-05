@@ -1,5 +1,5 @@
 import React from 'react';
-import { divergingPosition, divergingTicks, niceLimit, pullBar, scalePosition } from './chartMath.js';
+import { divergingPosition, divergingTicks, niceLimit, ordinal, pullBar, scalePosition } from './chartMath.js';
 
 /**
  * The app's charts, in plain HTML positioned by percentage so they reflow at
@@ -242,6 +242,34 @@ export function PointsLine({ points, low = 'Fear', high = 'Greed', label }) {
       </g>)}
       <text className="points-value" x={x(usable.length - 1) - 10} y={y(last.value) - 10} textAnchor="end">{Math.round(last.value)}</text>
     </svg>
+    {node}
+  </figure>;
+}
+
+/**
+ * Where each row sits in its own history, 0-100, with the outer tenths
+ * shaded as the extremes. Neither end is better: a crowded long and a crowded
+ * short are both extremes, so the marks are one neutral colour.
+ */
+export function PercentileStrip({ rows, lowLabel, highLabel, caption }) {
+  const { box, handlers, node } = useTooltip();
+  const usable = rows.filter((row) => Number.isFinite(row.value));
+  if (!usable.length) return null;
+  return <figure className="viz percentile-chart" ref={box}>
+    <div className="percentile-ends" aria-hidden="true"><span /><span><span>{lowLabel}</span><span>{highLabel}</span></span><span /></div>
+    <ul className="percentile-rows">
+      {usable.map((row) => {
+        const at = scalePosition(row.value, 0, 100);
+        const extreme = row.value <= 10 || row.value >= 90;
+        return <li key={row.key} className="percentile-row" tabIndex={0} aria-label={`${row.name}: ${ordinal(row.value)} percentile of its own history${row.note ? `, ${row.note}` : ''}`}
+          {...handlers(<TipBody value={`${ordinal(row.value)} percentile`} label={row.name} lines={[row.note, extreme ? 'An extreme: outside 90% of its own history' : null]} />)}>
+          <span className="percentile-name">{row.name}{row.sub ? <small>{row.sub}</small> : null}</span>
+          <span className="percentile-track"><i className="percentile-zone percentile-zone-low" /><i className="percentile-zone percentile-zone-high" /><b className={`percentile-dot ${extreme ? 'percentile-extreme' : ''}`} style={{ left: `${at}%` }} /></span>
+          <span className="percentile-value">{row.value}</span>
+        </li>;
+      })}
+    </ul>
+    {caption ? <figcaption>{caption}</figcaption> : null}
     {node}
   </figure>;
 }

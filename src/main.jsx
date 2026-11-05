@@ -3,7 +3,7 @@ import { createRoot } from 'react-dom/client';
 import './styles.css';
 import { describeTechnical } from './technicalSummary.js';
 import { buildEquityBrief } from './equityBrief.js';
-import { DivergingBars, MagnitudeBars, PointsLine, PullChart, RangeChart, ScaleMarker } from './charts.jsx';
+import { DivergingBars, MagnitudeBars, PercentileStrip, PointsLine, PullChart, RangeChart, ScaleMarker } from './charts.jsx';
 import { heatShare } from './chartMath.js';
 import { changeOverSpan, formatPercent, formatSpanLabel, formatTimestamp, formatUsd, useEquityResearch, useLazyResource, useMarketHistory, usePlatformData, useTechnicalAnalytics } from './liveData.js';
 import { buildRoute, parseRoute } from './routing.js';
@@ -2829,6 +2829,19 @@ function EquitiesDashboard({ platformData }) {
     <section className="equity-section-heading"><div><StatusKicker label="STYLE AND REGION ROTATION" published={sectorData?.styles?.status === 'calculated'} /><h2>Basket spreads across the cycle</h2></div><EquityStatus status={sectorData?.styles?.status} /></section>
     <section className="equity-macro-matrix">
       <article className="equity-rotation-panel panel wide">
+        <DivergingBars
+          rows={(sectorData?.styles?.pairs ?? []).filter((pair) => pair.status === 'calculated' && Number.isFinite(pair.spread60)).map((pair) => ({
+            key: pair.key,
+            name: `${pair.left} vs ${pair.right}`,
+            sub: pair.regime,
+            bar: pair.spread60,
+            dot: Number.isFinite(pair.spread20) ? pair.spread20 : null,
+            note: pair.read ?? (pair.leader ? `${pair.leader} leads` : null),
+          }))}
+          barLabel="Last 60 sessions"
+          dotLabel="Last 20 sessions"
+          caption="A blue bar means the first of the pair has beaten the second over 60 sessions, a red bar that it has trailed; the dot is the last 20 sessions on the same scale."
+        />
         <div className="equity-rotation-head styles-head"><span>Rotation pair</span><span>20D spread</span><span>60D spread</span><span>Leader</span><span>Regime</span></div>
         {(sectorData?.styles?.pairs ?? []).map((pair) => pair.status === 'calculated' ? <div className="equity-rotation-row styles-row" key={pair.key}><span><strong>{pair.left}</strong><small>vs {pair.right}</small></span><span className={pair.spread20 >= 0 ? 'positive' : 'negative'}>{formatPercent(pair.spread20)}</span><span className={pair.spread60 >= 0 ? 'positive' : 'negative'}>{formatPercent(pair.spread60)}</span><b>{pair.leader ?? '—'}</b><i className={pair.regime === 'Balanced' ? 'neutral' : pair.rotating ? 'caution' : 'leading'} title={pair.read ?? undefined}>{pair.regime}</i></div> : <div className="equity-rotation-row styles-row" key={pair.key}><span><strong>{pair.left}</strong><small>vs {pair.right}</small></span><span className="neutral">—</span><span className="neutral">—</span><b>Unavailable</b><small>{pair.missing?.join(', ') || 'History pending'}</small></div>)}
         {!(sectorData?.styles?.pairs ?? []).length && <div className="equity-empty">Stored basket histories are required before style rotation can publish.</div>}
@@ -2839,6 +2852,18 @@ function EquitiesDashboard({ platformData }) {
     <section id="equity-positioning" className="equity-section-heading"><div><p className="section-kicker">POSITIONING · CALCULATED</p><h2>Leveraged-fund exposure from CFTC commitments</h2></div><EquityStatus status={positioning?.status} label="CFTC pending" /></section>
     <section className="equity-macro-matrix">
       <article className="equity-rotation-panel panel wide">
+        <PercentileStrip
+          rows={(positioning?.contracts ?? []).filter((contract) => contract.key !== 'usdIndex' && Number.isFinite(contract.percentile)).map((contract) => ({
+            key: contract.key,
+            name: contract.name,
+            sub: contract.stance ?? null,
+            value: contract.percentile,
+            note: Number.isFinite(contract.netNoncomm) ? `Net speculative position ${contract.netNoncomm.toLocaleString()} contracts${Number.isFinite(contract.observations) ? `, ranked against ${contract.observations} weekly reports` : ''}` : null,
+          }))}
+          lowLabel="Most short"
+          highLabel="Most long"
+          caption="Where speculators' net position in each contract sits in its own history. The shaded tenths at each end are extremes, where positioning has often been crowded; a dark dot is a reading inside them."
+        />
         <div className="equity-rotation-head cot-head"><span>Contract</span><span>Net spec</span><span>WoW change</span><span>Percentile</span><span>Stance</span></div>
         {(positioning?.contracts ?? []).filter((contract) => contract.key !== 'usdIndex').map((contract) => <div className="equity-rotation-row cot-row" key={contract.key}><span><strong>{contract.name}</strong><small>{contract.asOf}{Number.isFinite(contract.openInterest) ? ` · OI ${contract.openInterest.toLocaleString()}` : ''}</small></span><b>{Number.isFinite(contract.netNoncomm) ? contract.netNoncomm.toLocaleString() : '—'}</b><b className={(contract.weeklyChange ?? 0) >= 0 ? 'positive' : 'negative'}>{Number.isFinite(contract.weeklyChange) ? `${contract.weeklyChange >= 0 ? '+' : ''}${contract.weeklyChange.toLocaleString()}` : '—'}</b><span className={contract.percentile >= 90 || contract.percentile <= 10 ? 'extreme' : ''} title={Number.isFinite(contract.observations) ? `Ranked against ${contract.observations} weekly reports` : undefined}>{Number.isFinite(contract.percentile) ? `${contract.percentile}%` : '—'}{contract.crowd && contract.crowd !== 'Unextended' ? <small> · {contract.crowd}</small> : null}</span><i>{contract.stance ?? '—'}</i></div>)}
         {!(positioning?.contracts ?? []).length && <div className="equity-empty">CFTC commitment histories are required before positioning can publish.</div>}
