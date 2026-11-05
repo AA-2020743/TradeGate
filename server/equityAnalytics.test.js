@@ -1292,3 +1292,33 @@ test('concentration refuses a history too short, and reports an alignment mismat
   assert.equal(result.alignmentDroppedSessions, 7);
   assert.equal(result.observations, 293);
 });
+
+test('each equity signal says what its label means and why, in plain words', () => {
+  const regime = calculateEquityRegime({
+    technical: technicalFixture(),
+    liquidity: { score: 70, version: 'liquidity-test' },
+    breadth: { status: 'calculated', score: 80, source: 'test' },
+  });
+  assert.equal(regime.regime, 'Low-volatility expansion');
+  assert.equal(regime.meaning, 'Prices are trending up steadily, with unusually little day-to-day turbulence.');
+  // The rule restated with the readings that met it, so the label can be checked.
+  assert.equal(regime.rule, `Price trend scores 100 (65 or more), the composite ${regime.score} (68 or more) and 20-day volatility is 12.0% (under 16%).`);
+
+  const top = calculateTopRisk({
+    technical: technicalFixture(),
+    breadth: { status: 'calculated', topRisk: 80, source: 'test' },
+    sentiment: { euphoria: 90, source: 'test' },
+  });
+  assert.match(top.read, /^(Several|Most|Some) warning signs of a market top/);
+  assert.match(top.read, /Strongest: .*breadth deterioration \(80\)/);
+  // These models have never been tested, and they say so.
+  assert.match(top.read, /Not tested on history/);
+
+  const bottom = calculateBottomSignal({
+    technical: technicalFixture({ latest: 90, indicators: { rsi14: 30, sma200: 100, annualizedVolatility20d: 25, macd: { histogram: -1 } } }),
+    breadth: { status: 'calculated', bottomScore: 20, source: 'test' },
+    sentiment: { pessimism: 70, source: 'test' },
+  });
+  assert.match(bottom.read, /bear-market-rally risk/);
+  assert.match(bottom.read, /Not tested on history/);
+});

@@ -118,6 +118,8 @@ export function calculateEquityRegime({ technical, liquidity, breadth, credit, s
   const trend = technical.components.trend;
   const momentum = technical.components.momentum;
   let regime = 'Neutral / transition';
+  // The rules below, restated in words with today's numbers, so the label can
+  // be checked rather than taken on trust.
   if (volatility >= 30 && model.score < 48) regime = 'High-volatility deleveraging';
   else if (model.score <= 35) regime = 'Risk-off contraction';
   else if (trend <= 45 && momentum >= 60 && model.score >= 50) regime = 'Recovery';
@@ -137,9 +139,67 @@ export function calculateEquityRegime({ technical, liquidity, breadth, credit, s
     regime,
     confidence: confidenceScore >= 75 ? 'High' : confidenceScore >= 55 ? 'Medium' : 'Low',
     confidenceScore,
+    meaning: REGIME_MEANINGS[regime],
+    rule: regimeRule(regime, { score: model.score, trend, momentum, volatility }),
     settings: REGIME_SETTINGS[regime],
   };
 }
+
+/** What each regime label says about the market, in one plain sentence. */
+export const REGIME_MEANINGS = {
+  'Risk-on expansion': 'Prices are trending up and the evidence behind the trend is broadly supportive.',
+  'Low-volatility expansion': 'Prices are trending up steadily, with unusually little day-to-day turbulence.',
+  Recovery: 'Prices are still below most of their averages, but momentum has turned up and the evidence leans supportive.',
+  'Neutral / transition': 'No clear direction: the evidence does not fit a trending, recovering or falling market.',
+  'Mean-reverting / choppy': 'Prices are moving sideways, with neither the trend nor momentum pulling hard either way.',
+  'High-volatility deleveraging': 'Prices are falling in a turbulent market, the pattern of investors cutting risk quickly.',
+  'Risk-off contraction': 'The evidence is clearly negative: trend, momentum and the other inputs point down together.',
+};
+
+/** The rule that put the market in its regime, with the readings that met it. */
+export function regimeRule(regime, { score, trend, momentum, volatility }) {
+  const vol = Number.isFinite(volatility) ? `${volatility.toFixed(1)}%` : 'unknown';
+  switch (regime) {
+    case 'High-volatility deleveraging': return `20-day volatility is ${vol} (30% or more) and the composite is ${score} (below 48).`;
+    case 'Risk-off contraction': return `The composite is ${score} (35 or less).`;
+    case 'Recovery': return `Price trend scores ${trend} (45 or less), momentum ${momentum} (60 or more) and the composite ${score} (50 or more).`;
+    case 'Low-volatility expansion': return `Price trend scores ${trend} (65 or more), the composite ${score} (68 or more) and 20-day volatility is ${vol} (under 16%).`;
+    case 'Risk-on expansion': return `Price trend scores ${trend} (65 or more) and the composite ${score} (62 or more).`;
+    case 'Mean-reverting / choppy': return `Price trend scores ${trend} (between 35 and 65) and momentum ${momentum} (within 18 points of neutral).`;
+    default: return `The composite is ${score}, price trend ${trend} and momentum ${momentum}, which meets none of the other regimes' rules.`;
+  }
+}
+
+/** "a", "a and b", "a, b and c". */
+function joinNames(names) {
+  if (names.length <= 1) return names.join('');
+  return `${names.slice(0, -1).join(', ')} and ${names.at(-1)}`;
+}
+
+/** The inputs carrying a warning model, strongest first, for its read. */
+function strongest(drivers, threshold = 50) {
+  return drivers
+    .filter((driver) => Number.isFinite(driver.score) && driver.score >= threshold)
+    .sort((left, right) => (right.score * right.weight) - (left.score * left.weight))
+    .slice(0, 2)
+    .map((driver) => `${driver.name.charAt(0).toLowerCase()}${driver.name.slice(1)} (${driver.score})`);
+}
+
+const TOP_RISK_MEANINGS = {
+  Low: 'Few of the usual warning signs of a market top are showing.',
+  Watch: 'Some warning signs of a market top are showing, not yet many.',
+  Elevated: 'Several warning signs of a market top are showing at once.',
+  Extreme: 'Most of the usual warning signs of a market top are showing at once.',
+};
+
+const BOTTOM_MEANINGS = {
+  Unconfirmed: 'There is no washout-and-turn pattern, so nothing here signals a market bottom.',
+  Stabilizing: 'Selling pressure is easing, but the turn that usually marks a bottom has not come.',
+  'Bottoming watch': 'Several parts of a washout-and-turn pattern are in place.',
+  'Capitulation reversal': 'A sharp washout followed by a turn: the pattern most often seen at market bottoms.',
+};
+
+const UNTESTED = 'Not tested on history: the breadth and sentiment it needs have no point-in-time record.';
 
 // At least two of the three legs, so a single indicator cannot carry the read.
 const MINIMUM_TECHNICAL_LEGS = 2;
@@ -297,6 +357,11 @@ export function calculateTopRisk({ technical, breadth, sentiment, positioning, c
     ...model,
     score,
     risk: score === null ? null : score >= 75 ? 'Extreme' : score >= 55 ? 'Elevated' : score >= 35 ? 'Watch' : 'Low',
+    read: score === null ? null : (() => {
+      const risk = score >= 75 ? 'Extreme' : score >= 55 ? 'Elevated' : score >= 35 ? 'Watch' : 'Low';
+      const carrying = strongest(model.drivers);
+      return `${TOP_RISK_MEANINGS[risk]}${carrying.length ? ` Strongest: ${joinNames(carrying)}.` : ''} ${UNTESTED}`;
+    })(),
   };
 }
 
@@ -325,6 +390,13 @@ export function calculateBottomSignal({ technical, breadth, sentiment, positioni
     score,
     signal: score === null ? null : score >= 75 ? 'Capitulation reversal' : score >= 55 ? 'Bottoming watch' : score >= 35 ? 'Stabilizing' : 'Unconfirmed',
     bearMarketRallyRisk: model.publishable && longTrendAvailable ? belowLongTrend && !breadthConfirmed ? 'Elevated' : 'Normal' : null,
+    read: score === null ? null : (() => {
+      const signal = score >= 75 ? 'Capitulation reversal' : score >= 55 ? 'Bottoming watch' : score >= 35 ? 'Stabilizing' : 'Unconfirmed';
+      const rally = longTrendAvailable && belowLongTrend && !breadthConfirmed
+        ? ' Price is below its 200-day average and breadth has not confirmed a turn, so any rally from here carries bear-market-rally risk.'
+        : '';
+      return `${BOTTOM_MEANINGS[signal]}${rally} ${UNTESTED}`;
+    })(),
   };
 }
 

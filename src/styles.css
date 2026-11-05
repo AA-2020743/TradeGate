@@ -1021,3 +1021,19 @@ html[data-theme='dark'] .equity-index-select select { background: #111714; borde
 .equities-pulse:has(.equity-index-select) { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: end; min-width: 300px; }
 .equity-index-select { min-width: 0; }
 @media (max-width: 700px) { .equities-pulse:has(.equity-index-select) { min-width: 0; } }
+
+/* Equities: the regime in words, with its untested template folded away. */
+.regime-meaning { margin: 12px 0 0; font-size: 14px; line-height: 1.5; font-weight: 600; }
+.regime-rule { margin: 8px 0 0; font-size: 12px; line-height: 1.5; }
+.regime-template { margin-top: 14px; }
+.regime-template > summary { cursor: pointer; font-size: 12px; font-weight: 600; color: #3f6a3a; width: fit-content; }
+html[data-theme='dark'] .regime-template > summary { color: #a8dd9f; }
+.regime-template[open] > summary { margin-bottom: 10px; }
+.equity-signal-card > small + small { display: block; margin-top: 4px; }
+.equity-settings-panel > p.regime-meaning { margin: 12px 0 0; font-size: 14px; line-height: 1.5; font-weight: 600; color: inherit; }
+.equity-settings-panel > p.regime-rule { margin: 8px 0 0; font-size: 12px; line-height: 1.5; color: #434c45; }
+html[data-theme='dark'] .equity-settings-panel > p.regime-rule { color: #c3cdc1; }
+.regime-template > summary { font-size: 12px; }
+.regime-template > p { margin: 10px 0 0; font-size: 11px; line-height: 1.5; color: #5b645c; }
+html[data-theme='dark'] .regime-template > p { color: #b3beb2; }
+html[data-theme='dark'] .equity-settings-panel > p.regime-meaning { color: #e1e9df; }

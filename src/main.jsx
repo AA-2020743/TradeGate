@@ -779,7 +779,8 @@ function EquitySignalCard({ kicker, title, model, empty, coverageLabel = 'driver
   return <article className="equity-signal-card panel">
     <div className="equity-signal-head"><div><p className="section-kicker">{kicker}</p><h3>{model?.risk ?? model?.signal ?? model?.regime ?? title}</h3></div><EquityStatus status={model?.status} /></div>
     <div className="equity-signal-score"><b>{Number.isFinite(model?.score) ? model.score : '—'}</b><span>/100</span><i><b style={{ width: `${model?.score ?? 0}%` }}></b></i></div>
-    <p>{model?.status === 'unavailable' || !model ? empty : `${model.version} · ${model.coverage}% ${coverageLabel}`}</p>
+    <p>{model?.status === 'unavailable' || !model ? empty : model.read ?? model.meaning ?? `${model.coverage}% ${coverageLabel}`}</p>
+    {model && model.status !== 'unavailable' && Number.isFinite(model.coverage) && (model.read || model.meaning) ? <small>{model.coverage}% of its inputs reported</small> : null}
     {model?.missing?.length ? <small>Missing: {model.missing.slice(0, 3).join(', ')}{model.missing.length > 3 ? ` +${model.missing.length - 3}` : ''}</small> : null}
   </article>;
 }
@@ -2679,7 +2680,18 @@ function EquitiesDashboard({ platformData }) {
 
     <section className="equity-regime-layout">
       <article className="equity-driver-panel panel"><div className="panel-title"><div><p className="section-kicker">REGIME INPUTS</p><h3>{regime?.regime ?? 'Waiting for minimum coverage'}</h3></div><EquityStatus status={regime?.status} label={Number.isFinite(regime?.coverage) ? `${regime.coverage}% coverage` : 'unavailable'} /></div><div className="equity-driver-list">{(regime?.drivers ?? []).map((driver) => <div key={driver.key}><span><b>{driver.name}</b><small>{driver.source ?? 'Source unavailable'}</small></span><i><b style={{ width: `${driver.score ?? 0}%` }}></b></i><strong>{driver.score ?? '—'}</strong></div>)}</div></article>
-      <article className="equity-settings-panel panel"><div className="panel-title"><div><p className="section-kicker">DYNAMIC PLAYBOOK</p><h3>Regime-dependent settings</h3></div><span className="data-pill">{regime?.version ?? 'No model'}</span></div>{regime?.settings ? <div className="equity-settings"><div><span>Alert threshold</span><b>{regime.settings.alertThreshold}/100</b></div><div><span>Holding period</span><b>{regime.settings.holdingPeriod}</b></div><div><span>Trend / momentum</span><b>{regime.settings.trend}% / {regime.settings.momentum}%</b></div><div><span>Mean reversion</span><b>{regime.settings.meanReversion}%</b></div><div><span>Defensive / macro</span><b>{regime.settings.defensive}% / {regime.settings.macro}%</b></div></div> : <div className="equity-empty">Settings are not published without a regime.</div>}<p>Weights, thresholds, and expected holding periods change with the classified regime; one static model is not applied across all conditions.</p></article>
+      <article className="equity-settings-panel panel">
+        <div className="panel-title"><div><p className="section-kicker">WHAT THIS REGIME MEANS</p><h3>{regime?.regime ?? 'No regime classified'}</h3></div>{regime?.confidence ? <span className="data-pill">{regime.confidence} confidence</span> : null}</div>
+        {regime?.meaning ? <>
+          <p className="regime-meaning">{regime.meaning}</p>
+          <p className="regime-rule"><b>Why this label:</b> {regime.rule}</p>
+          {regime.settings ? <details className="regime-template">
+            <summary>Hand-set strategy template for this regime (not tested)</summary>
+            <div className="equity-settings"><div><span>Alert threshold</span><b>{regime.settings.alertThreshold}/100</b></div><div><span>Holding period</span><b>{regime.settings.holdingPeriod}</b></div><div><span>Trend / momentum</span><b>{regime.settings.trend}% / {regime.settings.momentum}%</b></div><div><span>Mean reversion</span><b>{regime.settings.meanReversion}%</b></div><div><span>Defensive / macro</span><b>{regime.settings.defensive}% / {regime.settings.macro}%</b></div></div>
+            <p>These weights, thresholds and holding periods were set by hand for each regime, not derived from history, and have not been tested. Treat them as a starting template, not a recommendation.</p>
+          </details> : null}
+        </> : <div className="equity-empty">A regime is classified once price trend, momentum and volatility are all available.</div>}
+      </article>
     </section>
 
     {selectedSymbol === 'SPY' ? <div className="equity-record-wide"><VerdictRecordPanel section="equities" liveCall={dashboard?.verdict?.call ?? null} /></div> : null}
@@ -2798,12 +2810,12 @@ function EquitiesDashboard({ platformData }) {
       <article className="panel">
         <div className="panel-title"><div><p className="section-kicker">TOP RISK · PROXY BREADTH</p><h3>{sectorData?.topRisk?.risk ?? 'Unavailable'}</h3></div><span className="data-pill">{sectorData?.topRisk?.coverage ?? 0}% coverage</span></div>
         <div className="detail-score"><span>Breadth-deterioration composite</span><b>{sectorData?.topRisk?.score ?? '—'}</b><small>{sectorData?.topRisk?.missing?.length ? `Missing: ${sectorData.topRisk.missing.join(', ')}` : 'All available drivers contributing'}</small></div>
-        <p className="model-footnote"><code>{sectorData?.topRisk?.version ?? 'equity-top-risk-v1'}</code> publishes provisionally when constituent breadth is replaced by the ETF participation proxy.</p>
+        <p className="model-footnote">{sectorData?.topRisk?.read ? `${sectorData.topRisk.read} ` : ''}Uses the ETF participation proxy in place of constituent breadth, so it stays provisional.</p>
       </article>
       <article className="panel">
         <div className="panel-title"><div><p className="section-kicker">BOTTOM SIGNAL · PROXY BREADTH</p><h3>{sectorData?.bottomSignal?.signal ?? 'Unavailable'}</h3></div><span className="data-pill">{sectorData?.bottomSignal?.bearMarketRallyRisk ?? '—'} rally risk</span></div>
         <div className="detail-score"><span>Washout-and-turn composite</span><b>{sectorData?.bottomSignal?.score ?? '—'}</b><small>{sectorData?.bottomSignal?.missing?.length ? `Missing: ${sectorData.bottomSignal.missing.join(', ')}` : 'All available drivers contributing'}</small></div>
-        <p className="model-footnote"><code>{sectorData?.bottomSignal?.version ?? 'equity-bottom-signal-v1'}</code> confirms only with full constituent breadth; proxy readings stay provisional.</p>
+        <p className="model-footnote">{sectorData?.bottomSignal?.read ? `${sectorData.bottomSignal.read} ` : ''}Uses the ETF participation proxy in place of constituent breadth, so it can only confirm a bottom once full constituent breadth reports.</p>
       </article>
     </section>
 
