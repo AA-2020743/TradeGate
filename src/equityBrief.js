@@ -24,6 +24,20 @@ function joinParts(parts) {
   return `${parts.slice(0, -1).join(', ')} and ${parts.at(-1)}`;
 }
 
+function ordinal(value) {
+  const rounded = Math.round(value);
+  const lastTwo = Math.abs(rounded) % 100;
+  if (lastTwo >= 11 && lastTwo <= 13) return `${rounded}th`;
+  return `${rounded}${{ 1: 'st', 2: 'nd', 3: 'rd' }[Math.abs(rounded) % 10] ?? 'th'}`;
+}
+
+/**
+ * Where the card's main reading sits between two named ends, for the scale
+ * marker. `polarity` says which end is better for an investor ('pos-right',
+ * 'pos-left'), or that neither is ('none').
+ */
+const scaleOf = (value, left, right, polarity, label) => (Number.isFinite(value) ? { value, left, right, polarity, label } : null);
+
 const capitalize = (text) => text.replace(/^./, (letter) => letter.toUpperCase());
 
 const calculated = (model) => model?.status === 'calculated' || model?.status === 'provisional';
@@ -37,6 +51,7 @@ function trendCard(indexName, technical) {
     answer: technical.regime === 'Constructive' ? 'Up' : technical.regime === 'Guarded' ? 'Down' : 'Sideways',
     tone: summary.tone,
     sentence: capitalize(summary.sentence),
+    scale: scaleOf(technical.score, 'Down', 'Up', 'pos-right', `Trend score ${technical.score}`),
     anchor: 'equity-focus',
   };
 }
@@ -73,7 +88,8 @@ function riskCard(indexName, { drawdown, volatility, vixTerm }) {
   }
   if (shock) parts.push('the last few weeks have been much more violent than the past year');
   const sentence = `${joinParts(parts).replace(/^./, (letter) => letter.toUpperCase())}.`;
-  return { key: 'risk', question: 'How risky is it right now?', answer, tone: answer === 'Calm' ? 'positive' : answer === 'Stressed' ? 'negative' : 'neutral', sentence, anchor: 'equity-risk' };
+  const scale = scaleOf(short?.percentile, 'Calm', 'Turbulent', 'pos-left', Number.isFinite(short?.percentile) ? `Volatility ${ordinal(short.percentile)} pct.` : null);
+  return { key: 'risk', question: 'How risky is it right now?', answer, tone: answer === 'Calm' ? 'positive' : answer === 'Stressed' ? 'negative' : 'neutral', sentence, scale, anchor: 'equity-risk' };
 }
 
 function valuationCard(valuation) {
@@ -87,6 +103,7 @@ function valuationCard(valuation) {
     answer,
     tone: answer === 'Expensive' ? 'negative' : answer === 'Cheap' ? 'positive' : 'neutral',
     sentence: `Its cyclically adjusted P/E of ${valuation.cape} is higher than ${percentile}% of months${since}${Number.isFinite(valuation.medianCape) ? ` (median ${valuation.medianCape})` : ''}${Number.isFinite(valuation.earningsYield) ? `, an earnings yield of ${valuation.earningsYield}%` : ''}. Valuation has said little about the next year or two; it is a guide to returns over the coming decade.`,
+    scale: scaleOf(percentile, 'Cheap', 'Expensive', 'pos-left', `${ordinal(percentile)} percentile`),
     anchor: 'equity-valuation',
   };
 }
@@ -115,6 +132,7 @@ function breadthCard({ breadth, equalWeight, trendUp }) {
     answer,
     tone: answer === 'Broad' ? 'positive' : answer === 'Weak' ? 'negative' : 'neutral',
     sentence: `${joinParts(parts).replace(/^./, (letter) => letter.toUpperCase())}.`,
+    scale: scaleOf(share, 'Narrow', 'Broad', 'pos-right', `${share}% above 200-day`),
     anchor: 'equity-breadth',
   };
 }
@@ -148,6 +166,7 @@ function earningsCard(revisions) {
     answer,
     tone: answer === 'Rising' ? 'positive' : answer === 'Falling' ? 'negative' : 'neutral',
     sentence: `Analysts have raised more estimates than they cut for ${revisions.diffusion}% of the ${revisions.covered} S&P 500 companies sampled.${revisions.narrow ? ' A few heavily covered names are carrying the overall direction.' : ''}${revisions.status === 'provisional' ? ' Coverage is partial, so treat this as provisional.' : ''}`,
+    scale: scaleOf(revisions.diffusion, 'Cutting', 'Raising', 'pos-right', `${revisions.diffusion}% raising`),
     anchor: 'equity-revisions',
   };
 }
@@ -162,6 +181,7 @@ function sentimentCard(fearGreed) {
     answer,
     tone: 'neutral',
     sentence: `CNN's Fear & Greed index reads ${Math.round(fearGreed.score)} of 100${Number.isFinite(fearGreed.percentile1y) ? `, higher than ${fearGreed.percentile1y}% of the past year's readings` : ''}. Extremes are often read as contrarian signals; this platform has not tested whether that works.`,
+    scale: scaleOf(fearGreed.score, 'Extreme fear', 'Extreme greed', 'none', `${Math.round(fearGreed.score)} of 100`),
     anchor: 'equity-sentiment',
   };
 }

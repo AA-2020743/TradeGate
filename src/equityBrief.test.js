@@ -40,6 +40,12 @@ test('each question gets one word and one sentence, from the panels already on t
   assert.match(byKey.sentiment.sentence, /has not tested whether that works/);
   assert.equal(brief.summary, 'The S&P 500: trend up, risk calm, valuation expensive, breadth broad.');
   for (const card of brief.cards) assert.ok(card.anchor, `${card.key} links to its panel`);
+  // A scale marker where the answer is a position between two ends; none for
+  // the sector mix, which is not one number.
+  assert.deepEqual(byKey.valuation.scale, { value: 97, left: 'Cheap', right: 'Expensive', polarity: 'pos-left', label: '97th percentile' });
+  assert.equal(byKey.sentiment.scale.polarity, 'none');
+  assert.equal(byKey.risk.scale.label, 'Volatility 30th pct.');
+  assert.equal(byKey.leadership.scale, undefined);
 });
 
 test('stress, a narrow rally and defensive leadership read as such', () => {

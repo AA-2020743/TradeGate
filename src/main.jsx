@@ -3,6 +3,7 @@ import { createRoot } from 'react-dom/client';
 import './styles.css';
 import { describeTechnical } from './technicalSummary.js';
 import { buildEquityBrief } from './equityBrief.js';
+import { DivergingBars, PullChart, ScaleMarker } from './charts.jsx';
 import { changeOverSpan, formatPercent, formatSpanLabel, formatTimestamp, formatUsd, useEquityResearch, useLazyResource, useMarketHistory, usePlatformData, useTechnicalAnalytics } from './liveData.js';
 import { buildRoute, parseRoute } from './routing.js';
 import { providerDegradation } from './platformStatus.js';
@@ -790,6 +791,12 @@ function RequirementPanel({ title, dataset, requirements }) {
 }
 
 const SHORT_QUADRANT = { Leading: 'Lead', Improving: 'Improve', Weakening: 'Weaken', Lagging: 'Lag' };
+const QUADRANT_MEANINGS = {
+  Leading: 'Leading: ahead of the S&P 500 over both 60 and 20 sessions',
+  Weakening: 'Weakening: ahead over 60 sessions, but behind over the last 20',
+  Improving: 'Improving: behind over 60 sessions, but ahead over the last 20',
+  Lagging: 'Lagging: behind the S&P 500 over both 60 and 20 sessions',
+};
 
 function RotationCell({ rotation }) {
   if (!rotation) return <em className="rotation-cell rotation-flat" title="Needs 20 sessions of history beyond the 60-session window">—</em>;
@@ -935,6 +942,7 @@ function VerdictEvidence({ title, entries, empty }) {
  */
 function VerdictBanner({ verdict, recordSection = null }) {
   const records = useLazyResource(recordSection && verdict && verdict.status !== 'unavailable' ? '/api/analytics/verdict-records' : null);
+  const [asTable, setAsTable] = React.useState(false);
   if (!verdict) return null;
   if (verdict.status === 'unavailable') {
     return <section className="verdict-banner verdict-unavailable panel">
@@ -962,6 +970,16 @@ function VerdictBanner({ verdict, recordSection = null }) {
   const headwinds = verdict.headwinds ?? verdict.opposing ?? [];
   const plain = Boolean(verdict.tailwinds);
   const confidenceWord = { high: 'High', moderate: 'Moderate', low: 'Low' }[verdict.confidence] ?? verdict.confidence;
+  // Every scored reading, with its plain name and detail where the verdict
+  // carries them; the chart draws all of them, including any sitting at 50.
+  const described = new Map([...(verdict.supporting ?? []), ...(verdict.opposing ?? []), ...(verdict.tailwinds ?? []), ...(verdict.headwinds ?? [])].map((entry) => [entry.key, entry]));
+  const pullRows = (verdict.readings ?? []).filter((reading) => Number.isFinite(reading.score)).map((reading) => ({
+    key: reading.key,
+    name: String(described.get(reading.key)?.name ?? reading.name ?? reading.key).replace(/\s*\(inverted\)/i, ''),
+    detail: described.get(reading.key)?.detail ?? null,
+    score: reading.score,
+    weight: reading.weight,
+  }));
 
   return <section className={`verdict-banner panel verdict-${tone}`}>
     <div className="verdict-head">
@@ -991,13 +1009,16 @@ function VerdictBanner({ verdict, recordSection = null }) {
       </div> : null}
     </div>
 
-    <div className="verdict-columns">
-      <VerdictEvidence title={plain ? `Helping ${subject}` : (verdict.columns?.[0] ?? 'What carries it')} entries={tailwinds}
-        empty={plain ? `Nothing is helping ${subject} right now.` : 'Nothing is pushing in this direction.'} />
-      <VerdictEvidence title={plain ? `Holding ${subject} back` : (verdict.columns?.[1] ?? 'What argues against it')} entries={headwinds}
-        empty={plain ? `Nothing is holding ${subject} back right now.` : 'Nothing argues the other way.'} />
-    </div>
-    {plain ? <p className="verdict-legend">Each reading is scored 0–100: above 50 helps {subject}, below 50 holds it back.</p> : null}
+    {pullRows.length && !asTable ? <PullChart rows={pullRows} subject={subject} /> : <>
+      <div className="verdict-columns">
+        <VerdictEvidence title={plain ? `Helping ${subject}` : (verdict.columns?.[0] ?? 'What carries it')} entries={tailwinds}
+          empty={plain ? `Nothing is helping ${subject} right now.` : 'Nothing is pushing in this direction.'} />
+        <VerdictEvidence title={plain ? `Holding ${subject} back` : (verdict.columns?.[1] ?? 'What argues against it')} entries={headwinds}
+          empty={plain ? `Nothing is holding ${subject} back right now.` : 'Nothing argues the other way.'} />
+      </div>
+      {plain ? <p className="verdict-legend">Each reading is scored 0–100: above 50 helps {subject}, below 50 holds it back.</p> : null}
+    </>}
+    {pullRows.length ? <button type="button" className="verdict-view-toggle" onClick={() => setAsTable((value) => !value)} aria-pressed={asTable}>{asTable ? 'Show as chart' : 'Show as table'}</button> : null}
 
     {verdict.missing?.length ? <p className="verdict-reason verdict-missing-line">
       <b>Not counted (no data):</b> {verdict.missing.map((entry) => entry.name).join(', ')}.
@@ -2568,6 +2589,7 @@ function EquityPicture({ brief }) {
       {brief.cards.map((card) => <article className="equity-answer" key={card.key}>
         <p className="equity-question">{card.question}</p>
         <p className={`equity-answer-word equity-answer-${card.tone}`}>{card.answer}</p>
+        {card.scale ? <ScaleMarker scale={card.scale} /> : null}
         <p className="equity-answer-sentence">{card.sentence}</p>
         <button type="button" className="equity-answer-link" onClick={() => open(card.anchor)}>See the evidence <span aria-hidden="true">↓</span></button>
       </article>)}
@@ -2698,6 +2720,21 @@ function EquitiesDashboard({ platformData }) {
 
     <section id="equity-sectors" className="equity-section-heading"><div><p className="section-kicker">SECTOR AND SUBSECTOR ROTATION</p><h2>Relative strength with stored history</h2></div><EquityStatus status={rotation?.status} /></section>
     {(rotation?.enteringLeadership?.length || rotation?.leavingLeadership?.length) ? <p className="watchlist-summary">Over the last {rotation.rotationLookbackSessions} sessions {rotation.enteringLeadership.length ? `${rotation.enteringLeadership.join(', ')} rotated into leadership` : 'no sector rotated into leadership'}{rotation.leavingLeadership.length ? ` · ${rotation.leavingLeadership.join(', ')} rolled out of it` : ' · none rolled out of it'}</p> : null}
+    {rotation?.sectors?.some((sector) => Number.isFinite(sector.relative60)) ? <div className="panel">
+      <DivergingBars
+        rows={[...rotation.sectors].filter((sector) => Number.isFinite(sector.relative60)).sort((left, right) => right.relative60 - left.relative60).map((sector) => ({
+          key: sector.symbol,
+          name: sector.name,
+          sub: sector.quadrant ? `${sector.quadrant} · ${sector.symbol}` : sector.symbol,
+          bar: sector.relative60,
+          dot: Number.isFinite(sector.relative20) ? sector.relative20 : null,
+          note: QUADRANT_MEANINGS[sector.quadrant] ?? null,
+        }))}
+        barLabel="Last 60 sessions vs the S&P 500"
+        dotLabel="Last 20 sessions"
+        caption="Blue bars beat the S&P 500 over 60 sessions, red bars trailed it; the dot is the last 20 sessions on the same scale. Ahead on both is Leading, ahead on 60 but behind on 20 is Weakening, behind on 60 but ahead on 20 is Improving, behind on both is Lagging."
+      />
+    </div> : null}
     <section className="equity-sector-layout">
       <article className="equity-rotation-panel panel"><div className="equity-rotation-head"><span>Rank</span><span>Sector</span><span>Quadrant</span><span>Rotation 20D</span><span>20D vs SPY</span><span>60D vs SPY</span><span>Score</span></div>{rotation?.sectors?.length ? rotation.sectors.map((sector) => <div className="equity-rotation-row" key={sector.symbol}><b>{sector.rank}</b><span><strong>{sector.name}</strong><small>{sector.symbol} · {sector.sensitivity}</small></span><i className={sector.quadrant ? sector.quadrant.toLowerCase() : 'neutral'}>{sector.quadrant ?? '—'}</i><RotationCell rotation={sector.rotation} /><span className={sector.relative20 >= 0 ? 'positive' : 'negative'}>{formatPercent(sector.relative20)}</span><span className={sector.relative60 >= 0 ? 'positive' : 'negative'}>{formatPercent(sector.relative60)}</span><b>{sector.score}</b></div>) : <div className="equity-empty">{sectorData?.storage?.configured ? 'Run the daily history ingestion to calculate sector rotation.' : 'PostgreSQL history is required for sector rotation.'}</div>}<p className="equity-source-line">{sectorData?.methodology ?? 'Awaiting sector API.'}</p></article>
       <article className="equity-sector-coverage panel"><div className="panel-title"><div><p className="section-kicker">HISTORY READINESS</p><h3>Sectors and subsectors</h3></div><span className="data-pill">Twelve Data</span></div><div className="equity-coverage-list">{(sectorData?.sectors ?? []).map((sector) => <div key={sector.symbol}><span><b>{sector.symbol}</b><small>{sector.name}</small></span><EquityStatus status={sector.coverage.status} label={`${sector.coverage.observations} obs.`} /></div>)}</div><details><summary>Subsector coverage ({sectorData?.subsectors?.length ?? 0})</summary><div className="equity-subsector-list">{(sectorData?.subsectors ?? []).map((sector) => <div key={sector.symbol}><span>{sector.symbol}</span><b>{sector.name}</b><small>{sector.coverage.status}</small></div>)}</div></details></article>
