@@ -2,6 +2,7 @@ import React, { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 import './styles.css';
 import { describeTechnical } from './technicalSummary.js';
+import { buildEquityBrief } from './equityBrief.js';
 import { changeOverSpan, formatPercent, formatSpanLabel, formatTimestamp, formatUsd, useEquityResearch, useLazyResource, useMarketHistory, usePlatformData, useTechnicalAnalytics } from './liveData.js';
 import { buildRoute, parseRoute } from './routing.js';
 import { providerDegradation } from './platformStatus.js';
@@ -837,10 +838,10 @@ function SectorDispersionSection({ dispersion }) {
 }
 
 /** Where the index sits inside its own drawdown history. */
-function DrawdownProfilePanel({ drawdown }) {
+function DrawdownProfilePanel({ drawdown, id }) {
   const status = drawdown?.status ?? 'unavailable';
   const published = status === 'calculated';
-  return <article className={`panel ${published ? '' : 'preview-section'}`}>
+  return <article id={id} className={`panel ${published ? '' : 'preview-section'}`}>
     <div className="panel-title"><div><p className="section-kicker">DRAWDOWN PROFILE · {status.toUpperCase()}</p><h3>{published ? drawdown.state : 'Awaiting a multi-year close history'}</h3></div>{published ? <span className="data-pill">{drawdown.observations} sessions</span> : null}</div>
     {published ? <>
       <div className="detail-score"><span>Below the running peak</span><b>{drawdown.drawdownPercent}%</b><small>{drawdown.inDrawdown ? `${drawdown.sessionsSincePeak} sessions since the ${drawdown.peakDate} peak of ${drawdown.peak}` : `New high — this history spent ${drawdown.underwaterSharePercent}% of its sessions below a prior peak`}</small></div>
@@ -2379,12 +2380,12 @@ function RecessionProbabilityPanel() {
   </article>;
 }
 
-function IndexValuationPanel({ valuation }) {
+function IndexValuationPanel({ valuation, id }) {
   const status = valuation?.status ?? 'unavailable';
   const published = status === 'calculated' || status === 'provisional';
   const outlook = valuation?.outlook;
   const hasOutlook = outlook && outlook.status !== 'unavailable';
-  return <article className={`panel valuation-panel ${published ? '' : 'preview-section'}`}>
+  return <article id={id} className={`panel valuation-panel ${published ? '' : 'preview-section'}`}>
     <div className="panel-title">
       <div>
         <StatusKicker label="S&P 500 VALUATION · CAPE" published={published} />
@@ -2487,10 +2488,10 @@ function ExpectedMovePanel({ expectedMove }) {
  * fundamental reason. Diffusion is how broad the revision is, the aggregate how
  * large; when they part company a few heavily covered names are carrying it.
  */
-function RevisionBreadthPanel({ revisions }) {
+function RevisionBreadthPanel({ revisions, id }) {
   const status = revisions?.status ?? 'unavailable';
   const published = status !== 'unavailable';
-  return <article className={`panel ${published ? '' : 'preview-section'}`}>
+  return <article id={id} className={`panel ${published ? '' : 'preview-section'}`}>
     <div className="panel-title"><div><p className="section-kicker">EARNINGS REVISION BREADTH · {status.toUpperCase()}</p><h3>{published ? revisions.state : 'Awaiting analyst revision counts'}</h3></div>{published ? <span className="data-pill">{revisions.coverage}% of {revisions.universeRequested ?? revisions.universe} sampled</span> : null}</div>
     {published ? <>
       <div className="detail-score"><span>Aggregate revision balance</span><b>{revisions.aggregate > 0 ? '+' : ''}{revisions.aggregate}%</b><small>{`${revisions.totalUp} raises against ${revisions.totalDown} cuts across ${revisions.covered} names`}</small></div>
@@ -2553,6 +2554,27 @@ function CaptureProfileSection({ capture }) {
   </>;
 }
 
+/**
+ * The equity section's answers in plain words, each linking to the panel that
+ * backs it. See src/equityBrief.js for how each answer is read.
+ */
+function EquityPicture({ brief }) {
+  if (!brief?.cards?.length) return null;
+  const open = (anchor) => document.getElementById(anchor)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  return <section className="equity-picture panel" aria-labelledby="equity-picture-title">
+    <div className="panel-title"><div><p className="section-kicker">THE EQUITY PICTURE · {brief.cards.length} OF 7 ANSWERED</p><h3 id="equity-picture-title">{brief.summary ?? 'What the evidence says today'}</h3></div></div>
+    <div className="equity-picture-grid">
+      {brief.cards.map((card) => <article className="equity-answer" key={card.key}>
+        <p className="equity-question">{card.question}</p>
+        <p className={`equity-answer-word equity-answer-${card.tone}`}>{card.answer}</p>
+        <p className="equity-answer-sentence">{card.sentence}</p>
+        <button type="button" className="equity-answer-link" onClick={() => open(card.anchor)}>See the evidence <span aria-hidden="true">↓</span></button>
+      </article>)}
+    </div>
+    <p className="model-footnote">Each answer describes today from the panels below; none is a forecast. Trend and risk follow the index selected above; valuation, breadth, earnings, sectors and sentiment are measured on US stocks.</p>
+  </section>;
+}
+
 function EquitiesDashboard({ platformData }) {
   const [selectedSymbol, setSelectedSymbol] = React.useState('SPY');
   const research = useEquityResearch(selectedSymbol);
@@ -2568,6 +2590,21 @@ function EquitiesDashboard({ platformData }) {
     return groups;
   }, {}));
   const selectedIndex = dashboard?.index ?? catalog?.indices?.find((index) => index.symbol === selectedSymbol);
+  const usIndex = (selectedIndex?.region ?? 'United States') === 'United States';
+  const equityBrief = buildEquityBrief({
+    indexName: selectedIndex?.name ? `the ${selectedIndex.name}` : selectedSymbol,
+    technical: dashboard?.technical?.stale ? null : technical,
+    drawdown: dashboard?.drawdown,
+    volatility: dashboard?.volatility,
+    // US options pricing says nothing about a Japanese or German index.
+    vixTerm: usIndex ? platformData?.equityRisk?.vixTermStructure : null,
+    valuation: platformData?.indexValuation,
+    breadth: platformData?.equityRisk?.spxBreadth,
+    equalWeight: platformData?.equityRisk?.equalWeight,
+    rotation,
+    revisions: dashboard?.revisions,
+    fearGreed: platformData?.sentiment?.fearGreed,
+  });
 
   return <div className="equities-dashboard">
     <section className="equities-intro">
@@ -2582,7 +2619,7 @@ function EquitiesDashboard({ platformData }) {
         <div className="equity-region-list">{groupedIndices.length ? groupedIndices.map(([region, indices]) => <div className="equity-region" key={region}><p>{region}</p>{indices.map((index) => <button className={selectedSymbol === index.symbol ? 'selected' : ''} key={index.id} onClick={() => setSelectedSymbol(index.symbol)}><span><b>{index.name}</b><small>{index.symbol} · {index.instrument}</small></span><EquityStatus status={index.coverage.status} label={index.coverage.observations ? `${index.coverage.observations} obs.` : index.coverage.status} /></button>)}</div>) : <div className="equity-empty">{research.status === 'loading' ? 'Loading coverage catalog…' : 'Coverage catalog unavailable.'}</div>}</div>
       </article>
 
-      <article className="equity-focus-panel panel">
+      <article id="equity-focus" className="equity-focus-panel panel">
         <div className="panel-title"><div><p className="section-kicker">SELECTED INDEX PROXY</p><h3>{selectedIndex?.name ?? 'Awaiting selection'}</h3></div><EquityStatus status={dashboard?.technical?.stale ? 'stale' : dashboard?.technical?.model ? 'available' : 'unavailable'} /></div>
         <div className="equity-focus-price"><b>{formatUsd(technical?.latest)}</b><span>{selectedIndex?.symbol ?? '—'}</span><small>{selectedIndex?.instrument ?? 'Provider history unavailable'}</small></div>
         <div className="equity-technical-grid"><div><span>Technical score</span><b>{technical?.score ?? '—'}</b></div><div><span>20D momentum</span><b>{formatPercent(technical?.indicators?.momentum20d)}</b></div><div><span>RSI 14</span><b>{technical?.indicators?.rsi14?.toFixed(1) ?? '—'}</b></div><div><span>20D volatility</span><b>{Number.isFinite(technical?.indicators?.annualizedVolatility20d) ? `${technical.indicators.annualizedVolatility20d.toFixed(1)}%` : '—'}</b></div></div>
@@ -2594,6 +2631,7 @@ function EquitiesDashboard({ platformData }) {
     </section>
 
     <VerdictBanner verdict={dashboard?.verdict} />
+    <EquityPicture brief={equityBrief} />
 
     <section className="equity-section-heading"><div><p className="section-kicker">INDEX SIGNAL STACK</p><h2>What can be calculated now</h2></div><span className="data-pill">No synthetic fallbacks</span></section>
     <section className="equity-signal-grid">
@@ -2601,14 +2639,14 @@ function EquitiesDashboard({ platformData }) {
       <EquitySignalCard kicker="TOP-RISK DETECTION" title="Top risk unavailable" model={dashboard?.topRisk} empty="Top risk requires technical deterioration plus constituent breadth and independent confirmation." />
       <EquitySignalCard kicker="BOTTOM / RALLY DETECTION" title="Bottom signal unavailable" model={dashboard?.bottomSignal} empty="Bottom detection requires a breadth washout/thrust plus technical and macro confirmation." />
       <EquitySignalCard kicker="CONSTITUENT BREADTH" title={dashboard?.breadth?.status === 'calculated' ? 'Calculated breadth' : dashboard?.breadth?.status === 'partial' ? 'Partial breadth' : 'Breadth unavailable'} model={dashboard?.breadth} empty={dashboard?.breadth?.reason ?? 'Constituent histories are not connected.'} coverageLabel="constituent coverage" />
-      <DrawdownProfilePanel drawdown={dashboard?.drawdown} />
+      <DrawdownProfilePanel id="equity-risk" drawdown={dashboard?.drawdown} />
       <VolatilityTermPanel volatility={dashboard?.volatility} />
       <ExpectedMovePanel expectedMove={dashboard?.expectedMove} />
       <ConcentrationPanel concentration={platformData?.equityRisk?.equalWeight?.concentration} />
-      <IndexValuationPanel valuation={platformData?.indexValuation} />
+      <IndexValuationPanel id="equity-valuation" valuation={platformData?.indexValuation} />
       <AccumulationPanel accumulation={platformData?.accumulation} only="spx" title="S&amp;P 500 ACCUMULATION" />
       <FactorReturnsPanel factors={platformData?.factors} />
-      <RevisionBreadthPanel revisions={dashboard?.revisions} />
+      <RevisionBreadthPanel id="equity-revisions" revisions={dashboard?.revisions} />
       <ThrustLogPanel breadth={dashboard?.breadth} />
     </section>
 
@@ -2617,7 +2655,7 @@ function EquitiesDashboard({ platformData }) {
       <article className="equity-settings-panel panel"><div className="panel-title"><div><p className="section-kicker">DYNAMIC PLAYBOOK</p><h3>Regime-dependent settings</h3></div><span className="data-pill">{regime?.version ?? 'No model'}</span></div>{regime?.settings ? <div className="equity-settings"><div><span>Alert threshold</span><b>{regime.settings.alertThreshold}/100</b></div><div><span>Holding period</span><b>{regime.settings.holdingPeriod}</b></div><div><span>Trend / momentum</span><b>{regime.settings.trend}% / {regime.settings.momentum}%</b></div><div><span>Mean reversion</span><b>{regime.settings.meanReversion}%</b></div><div><span>Defensive / macro</span><b>{regime.settings.defensive}% / {regime.settings.macro}%</b></div></div> : <div className="equity-empty">Settings are not published without a regime.</div>}<p>Weights, thresholds, and expected holding periods change with the classified regime; one static model is not applied across all conditions.</p></article>
     </section>
 
-    <section className="equity-section-heading"><div><p className="section-kicker">SECTOR AND SUBSECTOR ROTATION</p><h2>Relative strength with stored history</h2></div><EquityStatus status={rotation?.status} /></section>
+    <section id="equity-sectors" className="equity-section-heading"><div><p className="section-kicker">SECTOR AND SUBSECTOR ROTATION</p><h2>Relative strength with stored history</h2></div><EquityStatus status={rotation?.status} /></section>
     {(rotation?.enteringLeadership?.length || rotation?.leavingLeadership?.length) ? <p className="watchlist-summary">Over the last {rotation.rotationLookbackSessions} sessions {rotation.enteringLeadership.length ? `${rotation.enteringLeadership.join(', ')} rotated into leadership` : 'no sector rotated into leadership'}{rotation.leavingLeadership.length ? ` · ${rotation.leavingLeadership.join(', ')} rolled out of it` : ' · none rolled out of it'}</p> : null}
     <section className="equity-sector-layout">
       <article className="equity-rotation-panel panel"><div className="equity-rotation-head"><span>Rank</span><span>Sector</span><span>Quadrant</span><span>Rotation 20D</span><span>20D vs SPY</span><span>60D vs SPY</span><span>Score</span></div>{rotation?.sectors?.length ? rotation.sectors.map((sector) => <div className="equity-rotation-row" key={sector.symbol}><b>{sector.rank}</b><span><strong>{sector.name}</strong><small>{sector.symbol} · {sector.sensitivity}</small></span><i className={sector.quadrant ? sector.quadrant.toLowerCase() : 'neutral'}>{sector.quadrant ?? '—'}</i><RotationCell rotation={sector.rotation} /><span className={sector.relative20 >= 0 ? 'positive' : 'negative'}>{formatPercent(sector.relative20)}</span><span className={sector.relative60 >= 0 ? 'positive' : 'negative'}>{formatPercent(sector.relative60)}</span><b>{sector.score}</b></div>) : <div className="equity-empty">{sectorData?.storage?.configured ? 'Run the daily history ingestion to calculate sector rotation.' : 'PostgreSQL history is required for sector rotation.'}</div>}<p className="equity-source-line">{sectorData?.methodology ?? 'Awaiting sector API.'}</p></article>
@@ -2671,7 +2709,7 @@ function EquitiesDashboard({ platformData }) {
       {(() => {
         const fearGreed = platformData?.sentiment?.fearGreed;
         const hasSentiment = Boolean(fearGreed && Number.isFinite(fearGreed.score));
-        return <article className={`equity-rotation-panel panel wide ${hasSentiment ? '' : 'preview-section'}`}>
+        return <article id="equity-sentiment" className={`equity-rotation-panel panel wide ${hasSentiment ? '' : 'preview-section'}`}>
           <div className="panel-title"><div><StatusKicker label="MARKET SENTIMENT" published={hasSentiment} /><h3>CNN Fear &amp; Greed composite</h3></div><span className="data-pill">{hasSentiment ? fearGreed.rating : 'Unconfigured'}</span></div>
           {hasSentiment ? <>
             <div className="sentiment-hero"><strong>{fearGreed.score}</strong><div><b>{fearGreed.rating}</b><small>{Number.isFinite(fearGreed.percentile1y) ? `${ordinal(fearGreed.percentile1y)} percentile of trailing-year readings · ${fearGreed.observations} observations` : 'Trailing-year history unavailable'}</small></div></div>
@@ -2686,7 +2724,7 @@ function EquitiesDashboard({ platformData }) {
       })()}
     </section>
 
-    <section className="equity-section-heading"><div><p className="section-kicker">RISK APPETITE · CALCULATED</p><h2>Breadth, credit, and the equity premium</h2></div><EquityStatus status={platformData?.equityRisk?.status} label="Inputs pending" /></section>
+    <section id="equity-breadth" className="equity-section-heading"><div><p className="section-kicker">RISK APPETITE · CALCULATED</p><h2>Breadth, credit, and the equity premium</h2></div><EquityStatus status={platformData?.equityRisk?.status} label="Inputs pending" /></section>
     <section className="equity-macro-matrix">
       {(() => {
         const risk = platformData?.equityRisk;

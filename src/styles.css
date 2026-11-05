@@ -973,3 +973,24 @@ html[data-theme='dark'] .reliance-positive { color: #a8dd9f; }
 html[data-theme='dark'] .reliance-negative { color: #eba79a; }
 html[data-theme='dark'] .reliance-neutral { color: #c3cdc1; }
 .scorecard-row .verdict-grade { display: inline-block; font-size: 0.66rem; }
+
+/* Equities: the section's answers in plain words. */
+.equity-picture { margin: 18px 0; padding: 20px 21px 14px; }
+.equity-picture h3 { font-size: 17px; }
+.equity-picture-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 12px; margin-top: 14px; }
+.equity-answer { display: flex; flex-direction: column; padding: 13px 14px 11px; border: 1px solid var(--hairline, rgba(127, 127, 127, 0.18)); border-radius: 7px; }
+.equity-question { margin: 0; font-size: 11px; letter-spacing: 0.05em; text-transform: uppercase; color: #5b645c; }
+.equity-answer-word { margin: 6px 0 0; font: 700 19px 'Libre Baskerville', serif; letter-spacing: -0.3px; }
+.equity-answer-positive { color: #255f2c; }
+.equity-answer-neutral { color: #6b5414; }
+.equity-answer-negative { color: #8a3a2b; }
+.equity-answer-sentence { flex: 1; margin: 6px 0 10px; font-size: 12.5px; line-height: 1.5; }
+.equity-answer-link { align-self: flex-start; border: 0; background: transparent; padding: 2px 0; font-size: 11px; font-weight: 600; color: #3f6a3a; cursor: pointer; }
+.equity-answer-link:hover { text-decoration: underline; }
+.equity-answer-link:focus-visible { outline: 2px solid currentColor; outline-offset: 2px; border-radius: 2px; }
+html[data-theme='dark'] .equity-question { color: #b3beb2; }
+html[data-theme='dark'] .equity-answer-positive { color: #a8dd9f; }
+html[data-theme='dark'] .equity-answer-neutral { color: #e6c97f; }
+html[data-theme='dark'] .equity-answer-negative { color: #eba79a; }
+html[data-theme='dark'] .equity-answer-link { color: #a8dd9f; }
+#equity-focus, #equity-risk, #equity-valuation, #equity-revisions, #equity-sectors, #equity-breadth, #equity-sentiment { scroll-margin-top: 80px; }
