@@ -31,6 +31,43 @@ export const SCORECARD_VERDICTS = {
   unavailable: 'No track record available',
 };
 
+/**
+ * The same verdicts as a grade an investor can act on. The verdict banners
+ * and this scorecard use one table, so a model graded "Unreliable" on its
+ * page is graded "Unreliable" here.
+ */
+export const PLAIN_GRADES = {
+  held: { grade: 'Proven', tone: 'positive' },
+  'held-recent': { grade: 'Promising', tone: 'positive' },
+  faded: { grade: 'Weakening', tone: 'neutral' },
+  reversed: { grade: 'Unreliable', tone: 'negative' },
+  'no-order': { grade: 'Not proven', tone: 'negative' },
+  untested: { grade: 'Too early to tell', tone: 'neutral' },
+  thin: { grade: 'Too early to tell', tone: 'neutral' },
+  unavailable: { grade: 'No record', tone: 'neutral' },
+};
+
+/**
+ * Which models to lean on, and for what. A record measured on
+ * the worst fall that followed is a risk gauge, not a forecast, even when it
+ * is proven, so it is listed apart from the return records.
+ */
+export function relianceGuide(rows) {
+  const risk = (row) => row.measure === 'Worst fall';
+  const groups = [
+    { key: 'forecast', heading: 'Proven: rely on as a forecast', tone: 'positive', test: (row) => row.verdict === 'held' && !risk(row) },
+    { key: 'risk', heading: 'Proven: rely on to gauge risk', tone: 'positive', test: (row) => row.verdict === 'held' && risk(row) },
+    { key: 'promising', heading: 'Promising: worked only in recent years', tone: 'positive', test: (row) => row.verdict === 'held-recent' },
+    { key: 'describe', heading: 'Read as a description, not a forecast', tone: 'negative', test: (row) => ['faded', 'reversed', 'no-order'].includes(row.verdict) },
+    { key: 'early', heading: 'Too early to tell', tone: 'neutral', test: (row) => ['untested', 'thin'].includes(row.verdict) },
+    // Not the same as too early: these have no record on this load at all.
+    { key: 'missing', heading: 'No record on this load', tone: 'neutral', test: (row) => row.verdict === 'unavailable' },
+  ];
+  return groups
+    .map(({ test, ...group }) => ({ ...group, items: rows.filter(test).map((row) => ({ key: row.key, name: row.name, page: row.page, grade: row.grade })) }))
+    .filter((group) => group.items.length);
+}
+
 function horizonFor(record, preferredDays) {
   const horizons = record.horizons ?? [];
   const preferred = horizons.find((entry) => entry.days === preferredDays);
@@ -229,6 +266,7 @@ export function buildScorecard(entries) {
       })),
     } : row;
   });
+  for (const row of rows) Object.assign(row, { grade: (PLAIN_GRADES[row.verdict] ?? PLAIN_GRADES.unavailable).grade, gradeTone: (PLAIN_GRADES[row.verdict] ?? PLAIN_GRADES.unavailable).tone });
   const counts = Object.fromEntries(Object.keys(SCORECARD_VERDICTS).map((key) => [key, rows.filter((row) => row.verdict === key).length]));
   const pairs = pairReturnsWithFalls(entries, rows);
   const judged = rows.filter((row) => !['untested', 'thin', 'unavailable'].includes(row.verdict));
@@ -248,6 +286,7 @@ export function buildScorecard(entries) {
     rows,
     counts,
     read: describe(),
+    guide: relianceGuide(rows),
     pairs,
     pairsRead: describePairs(pairs),
     methodology: `Each row is the model’s own track record from the shared evaluator, at the horizon its panel reads (or the longest with a held-out score). Ordering runs from -1, the states exactly reversed, to +1, exactly the order the model assumes. Held up means ${HOLDS} or more in both the development block and the held-out newest 30%; ${REVERSED} or less in the held-out block means the order ran the other way.`,

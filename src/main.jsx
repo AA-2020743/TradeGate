@@ -1632,10 +1632,16 @@ function ScorecardPanel() {
     <div className="panel-title">
       <div>
         <StatusKicker label="TRACK-RECORD SCORECARD" published={published} />
-        <h3>{published ? `${card.counts.held} of ${card.rows.length} track records held up out of sample` : loadStatus === 'loading' ? 'Gathering every track record\u2026' : 'Which models have held up out of sample'}</h3>
+        <h3>{published ? `${card.counts.held} of ${card.rows.length} track records proven on data they were not built on` : loadStatus === 'loading' ? 'Gathering every track record\u2026' : 'Which models have held up out of sample'}</h3>
       </div>
     </div>
     {published ? <>
+      {card.guide?.length ? <div className="reliance-guide" aria-label="What each model can be relied on for">
+        {card.guide.map((group) => <div className="reliance-group" key={group.key}>
+          <h4 className={`reliance-${group.tone}`}>{group.heading}</h4>
+          <p>{group.items.map((item) => item.name).join(' · ')}</p>
+        </div>)}
+      </div> : null}
       <p className="dca-read">{card.read}</p>
       {card.pairs?.length ? <>
         <p className="dca-read"><b>Returns or risk?</b> {card.pairsRead}</p>
@@ -1650,13 +1656,13 @@ function ScorecardPanel() {
         </div>
       </> : null}
       <div className="scorecard-table" role="table" aria-label="Track records and their held-out verdicts">
-        <div className="scorecard-row scorecard-head" role="row"><span role="columnheader">Model</span><span role="columnheader">What it assumes</span><span role="columnheader">Before</span><span role="columnheader">Held out</span><span role="columnheader">Verdict</span></div>
+        <div className="scorecard-row scorecard-head" role="row"><span role="columnheader">Model</span><span role="columnheader">What it assumes</span><span role="columnheader">Before</span><span role="columnheader">Held out</span><span role="columnheader">Grade</span></div>
         {card.rows.map((row) => <div className="scorecard-row" role="row" key={row.key}>
           <span role="cell"><b>{row.name}</b><small>{row.page} · {row.measure}{Number.isFinite(row.horizonDays) ? `, ${row.horizonDays} days` : ''}</small></span>
           <span role="cell" className="scorecard-assumption">{row.assumption}</span>
           <span role="cell" data-label="Before">{score(row.developmentOrdering)}</span>
           <span role="cell" data-label="Held out">{score(row.heldOutOrdering)}{row.holdoutFrom ? <small>since {row.holdoutFrom}</small> : null}</span>
-          <span role="cell" className={SCORECARD_TONE[row.verdict]}>{row.verdictLabel}{row.status !== 'calculated' && row.reason ? <small>{row.reason}</small> : null}</span>
+          <span role="cell">{row.grade ? <b className={`verdict-grade verdict-grade-${row.gradeTone}`}>{row.grade}</b> : null}<small>{row.verdictLabel}</small>{row.status !== 'calculated' && row.reason ? <small>{row.reason}</small> : null}</span>
         </div>)}
       </div>
       <p className="model-footnote">{card.methodology} {card.limits}</p>

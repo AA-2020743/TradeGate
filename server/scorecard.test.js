@@ -104,3 +104,27 @@ test('each state tested on both is classified by whether it ranked the returns, 
   // A card with no paired rows says nothing about pairs.
   assert.equal(buildScorecard([entry('vix', [[90, 1, 1]])]).pairsRead, null);
 });
+
+test('every record is graded in plain words, and grouped by what it can be relied on for', () => {
+  const entry = (key, measure, value) => ({ key, name: key.toUpperCase(), page: 'P', assumption: 'x', measure, result: { status: 'fulfilled', value }, pick: (payload) => payload });
+  const card = buildScorecard([
+    entry('a', 'Forward return', record([[90, 0.8, 0.8]])),
+    entry('b', 'Worst fall', record([[90, 0.8, 0.9]])),
+    entry('c', 'Forward return', record([[90, 0.1, 0.7]])),
+    entry('d', 'Forward return', record([[90, 0.7, -0.5]])),
+    entry('e', 'Forward return', record([[90, 0.9, null]])),
+    { ...entry('f', 'Forward return', null), result: { status: 'rejected', reason: new Error('timed out') } },
+  ]);
+  assert.deepEqual(card.rows.map((row) => row.grade), ['Proven', 'Proven', 'Promising', 'Unreliable', 'Too early to tell', 'No record']);
+  assert.equal(card.rows[3].gradeTone, 'negative');
+  // A proven worst-fall record is a risk gauge, not a forecast.
+  assert.deepEqual(card.guide.map((group) => [group.key, group.items.map((item) => item.key)]), [
+    ['forecast', ['a']],
+    ['risk', ['b']],
+    ['promising', ['c']],
+    ['describe', ['d']],
+    ['early', ['e']],
+    // A record that did not load is missing, not merely young.
+    ['missing', ['f']],
+  ]);
+});

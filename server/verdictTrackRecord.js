@@ -27,7 +27,7 @@
 import { calculateGlobalLiquidityModel, calculateTechnicalSnapshot, calculateUsdStrengthModel, calculateUsLiquidityModel, isPublished } from './analytics.js';
 import { calculateBitcoinTechnicals } from './bitcoinTechnicals.js';
 import { calculateRateDivergence } from './macroRates.js';
-import { componentRecords, describeComponents, scoreTrackRecord } from './scorecard.js';
+import { componentRecords, describeComponents, PLAIN_GRADES, scoreTrackRecord } from './scorecard.js';
 import { evaluateTrackRecord, ownHistoryBands } from './trackRecord.js';
 import { buildCryptoVerdict, buildFxVerdict, buildMetalsVerdict } from './verdict.js';
 
@@ -422,9 +422,9 @@ export function plainRecord(returns, falls, replay, holdoutFrom) {
   const fallsHeld = ['held', 'held-recent'].includes(falls.verdict);
   switch (returns.verdict) {
     case 'held':
-      return { grade: 'Proven', tone: 'positive', sentence: `Tested on data it was not built on, its readings ranked ${subject}'s next ${days}-day ${measure} in the order they implied.` };
+      return { ...PLAIN_GRADES.held, sentence: `Tested on data it was not built on, its readings ranked ${subject}'s next ${days}-day ${measure} in the order they implied.` };
     case 'held-recent':
-      return { grade: 'Promising', tone: 'positive', sentence: `Its readings have ranked ${subject}'s next ${days}-day ${measure} in the order they implied since ${holdoutFrom}, though not before.` };
+      return { ...PLAIN_GRADES['held-recent'], sentence: `Its readings have ranked ${subject}'s next ${days}-day ${measure} in the order they implied since ${holdoutFrom}, though not before.` };
     default:
       break;
   }
@@ -433,16 +433,16 @@ export function plainRecord(returns, falls, replay, holdoutFrom) {
   }
   switch (returns.verdict) {
     case 'faded':
-      return { grade: 'Weakening', tone: 'neutral', sentence: `It ranked ${subject}'s ${measure} in order before ${holdoutFrom}, and only loosely since.` };
+      return { ...PLAIN_GRADES.faded, sentence: `It ranked ${subject}'s ${measure} in order before ${holdoutFrom}, and only loosely since.` };
     case 'reversed':
-      return { grade: 'Unreliable', tone: 'negative', sentence: `Tested on data it was not built on, its readings pointed the wrong way for ${subject}'s next ${days}-day ${measure}. Read it as a description of conditions, not a forecast.` };
+      return { ...PLAIN_GRADES.reversed, sentence: `Tested on data it was not built on, its readings pointed the wrong way for ${subject}'s next ${days}-day ${measure}. Read it as a description of conditions, not a forecast.` };
     case 'no-order':
-      return { grade: 'Not proven', tone: 'negative', sentence: `Tested on data it was not built on, it showed no reliable link to ${subject}'s next ${days}-day ${measure}. Read it as a description of conditions, not a forecast.` };
+      return { ...PLAIN_GRADES['no-order'], sentence: `Tested on data it was not built on, it showed no reliable link to ${subject}'s next ${days}-day ${measure}. Read it as a description of conditions, not a forecast.` };
     case 'untested':
     case 'thin':
-      return { grade: 'Too early to tell', tone: 'neutral', sentence: `There is too little history since ${holdoutFrom} to tell whether it works.` };
+      return { ...PLAIN_GRADES.untested, sentence: `There is too little history since ${holdoutFrom} to tell whether it works.` };
     default:
-      return { grade: 'No record', tone: 'neutral', sentence: 'No track record is available.' };
+      return { ...PLAIN_GRADES.unavailable, sentence: 'No track record is available.' };
   }
 }
 

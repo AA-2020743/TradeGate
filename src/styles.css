@@ -961,3 +961,15 @@ html[data-theme='dark'] .brief-go { color: #b3beb2; }
 .signal p { font-size: 12px; }
 .signal-model { display: block; margin-top: 6px; font-size: 10px; color: #56645a; }
 html[data-theme='dark'] .signal-model { color: #a7b5a6; }
+
+/* Scorecard: which models to lean on, and for what. */
+.reliance-guide { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 0.8rem 1.4rem; margin: 0.9rem 0 0.4rem; padding: 0.8rem 0.9rem; border: 1px solid var(--hairline, rgba(127, 127, 127, 0.18)); border-radius: 6px; }
+.reliance-group h4 { margin: 0; font-size: 0.72rem; letter-spacing: 0.05em; text-transform: uppercase; }
+.reliance-group p { margin: 0.3rem 0 0; font-size: 0.82rem; line-height: 1.5; }
+.reliance-positive { color: #255f2c; }
+.reliance-negative { color: #8a3a2b; }
+.reliance-neutral { color: #4a524b; }
+html[data-theme='dark'] .reliance-positive { color: #a8dd9f; }
+html[data-theme='dark'] .reliance-negative { color: #eba79a; }
+html[data-theme='dark'] .reliance-neutral { color: #c3cdc1; }
+.scorecard-row .verdict-grade { display: inline-block; font-size: 0.66rem; }
