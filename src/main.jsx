@@ -3,7 +3,7 @@ import { createRoot } from 'react-dom/client';
 import './styles.css';
 import { describeTechnical } from './technicalSummary.js';
 import { buildEquityBrief } from './equityBrief.js';
-import { DivergingBars, MagnitudeBars, PercentileStrip, PointsLine, PullChart, RangeChart, ScaleMarker } from './charts.jsx';
+import { DivergingBars, MagnitudeBars, PairedBars, PercentileStrip, PointsLine, PullChart, RangeChart, ScaleMarker } from './charts.jsx';
 import { heatShare } from './chartMath.js';
 import { changeOverSpan, formatPercent, formatSpanLabel, formatTimestamp, formatUsd, useEquityResearch, useLazyResource, useMarketHistory, usePlatformData, useTechnicalAnalytics } from './liveData.js';
 import { buildRoute, parseRoute } from './routing.js';
@@ -833,6 +833,11 @@ function SectorDispersionSection({ dispersion }) {
     <section className="equity-macro-matrix">
       <article className="equity-rotation-panel panel wide">
         {published ? <>
+          {Number.isFinite(dispersion.correlationPercentile) ? <div className="dispersion-scale">
+            <p className="equity-question">Are sectors moving together or apart?</p>
+            <ScaleMarker scale={{ value: dispersion.correlationPercentile, left: 'Moving apart', right: 'Moving together', polarity: 'none', label: `Correlation ${ordinal(dispersion.correlationPercentile)} percentile` }} />
+            <p className="dispersion-note">When sectors move together, one macro force is driving the whole market and picking sectors adds little; when they move apart, sector choice matters more.</p>
+          </div> : null}
           <div className="equity-rotation-head styles-head"><span>Reading</span><span>Value</span></div>
           <div className="equity-rotation-row styles-row"><span><strong>Average pairwise correlation</strong><small>{Number.isFinite(dispersion.correlationPercentile) ? `${ordinal(dispersion.correlationPercentile)} percentile of ${dispersion.rankedAgainst} rolling readings` : `Ranked against fixed levels — only ${dispersion.rankedAgainst} rolling readings available`}</small></span><b>{dispersion.correlation.toFixed(2)}</b></div>
           <div className="equity-rotation-row styles-row"><span><strong>Return dispersion</strong><small>{`Standard deviation of ${dispersion.returnWindow}-session sector returns`}</small></span><b>{Number.isFinite(dispersion.dispersion) ? `${dispersion.dispersion}%` : '—'}</b></div>
@@ -846,13 +851,13 @@ function SectorDispersionSection({ dispersion }) {
   </>;
 }
 
-/** Where the index sits inside its own drawdown history. */
 /** A panel's methodology, folded under the reading it explains. */
 function MethodNote({ children }) {
   if (!children || !String(children).trim()) return null;
   return <details className="method-note"><summary>How it is measured</summary><p>{children}</p></details>;
 }
 
+/** Where the index sits inside its own drawdown history. */
 function DrawdownProfilePanel({ drawdown, id }) {
   const status = drawdown?.status ?? 'unavailable';
   const published = status === 'calculated';
@@ -2613,6 +2618,19 @@ function CaptureProfileSection({ capture }) {
     <section className="equity-macro-matrix">
       <article className="equity-rotation-panel panel wide">
         {rows.length ? <>
+          <PairedBars
+            rows={[...rows].sort((left, right) => (right.captureSpread ?? -Infinity) - (left.captureSpread ?? -Infinity)).map((row) => ({
+              key: row.symbol,
+              name: row.name,
+              sub: row.behaviour ?? row.symbol,
+              a: row.upCapture,
+              b: row.downCapture,
+              note: Number.isFinite(row.upCapture) && Number.isFinite(row.downCapture) ? `On days the S&P 500 rose it caught ${row.upCapture}% of the move; on days it fell, ${row.downCapture}%` : null,
+            }))}
+            aLabel="Up capture"
+            bLabel="Down capture"
+            caption="Sorted from the best trade-off down: a sector that keeps more of the up days than it suffers of the down days defends. A down bar short of the 100% line means it fell less than the index on the index's bad days."
+          />
           <div className="equity-rotation-head capture-head"><span>Sector</span><span>Up capture</span><span>Down capture</span><span>Spread</span><span>Beta</span><span>Rolling beta</span><span>Behaviour</span></div>
           {rows.map((row) => <div className="equity-rotation-row capture-row" key={row.symbol}>
             <span><strong>{row.name}</strong><small>{`${row.symbol} · ${row.upDays}↑ / ${row.downDays}↓ days`}</small></span>
@@ -2927,6 +2945,19 @@ function EquitiesDashboard({ platformData }) {
     <section className="equity-macro-matrix">
       <article className="equity-rotation-panel panel wide">
         {sectorData?.sectorBreadth?.status && sectorData.sectorBreadth.status !== 'unavailable' ? <>
+          <MagnitudeBars
+            tone="pos"
+            maximum={100}
+            reference={50}
+            referenceLabel="Half the universe"
+            label="Share of the ETF universe participating"
+            rows={[
+              { key: 'above50', label: 'Above 50-day average', value: sectorData.sectorBreadth.pctAbove50, display: `${sectorData.sectorBreadth.pctAbove50}%`, emphasis: true, note: 'Shorter-term trend participation' },
+              { key: 'above200', label: 'Above 200-day average', value: sectorData.sectorBreadth.pctAbove200, display: `${sectorData.sectorBreadth.pctAbove200}%`, emphasis: true, note: 'Long-cycle participation' },
+              { key: 'advancers', label: 'Up over 20 sessions', value: sectorData.sectorBreadth.advancersPct, display: `${sectorData.sectorBreadth.advancersPct}%`, emphasis: true, note: 'Short-term breadth' },
+            ]}
+            caption="Broad participation keeps most bars past the halfway line; a rising index with bars well short of it is being carried by a few."
+          />
           <div className="equity-rotation-head styles-head"><span>Universe of {sectorData.sectorBreadth.universeSize} ETFs</span><span>Reading</span></div>
           <div className="equity-rotation-row styles-row"><span><strong>Above 50-day average</strong><small>{`Trend participation · ${sectorData.sectorBreadth.eligible?.above50 ?? 0} of ${sectorData.sectorBreadth.universeSize} carry 50 sessions`}</small></span><b>{Number.isFinite(sectorData.sectorBreadth.pctAbove50) ? `${sectorData.sectorBreadth.pctAbove50}%` : '—'}</b></div>
           <div className="equity-rotation-row styles-row"><span><strong>Above 200-day average</strong><small>{Number.isFinite(sectorData.sectorBreadth.pctAbove200) ? `Long-cycle participation · ${sectorData.sectorBreadth.eligible?.above200} of ${sectorData.sectorBreadth.universeSize} carry 200 sessions` : 'No ETF carries 200 sessions yet — never computed from a shorter window'}</small></span><b>{Number.isFinite(sectorData.sectorBreadth.pctAbove200) ? `${sectorData.sectorBreadth.pctAbove200}%` : '—'}</b></div>

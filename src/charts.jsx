@@ -159,22 +159,24 @@ export function DivergingBars({ rows, barLabel, dotLabel, unit = '%', caption, f
  * a context grey, for charts where one bar is the point and the others are
  * there to judge it by ("today's fall against the typical and the worst").
  */
-export function MagnitudeBars({ rows, tone = 'neg', caption, label }) {
+export function MagnitudeBars({ rows, tone = 'neg', caption, label, maximum: fixedMaximum = null, reference = null, referenceLabel = null }) {
   const { box, handlers, node } = useTooltip();
   const usable = rows.filter((row) => Number.isFinite(row.value));
   if (!usable.length) return null;
-  const maximum = Math.max(...usable.map((row) => Math.abs(row.value))) || 1;
+  const maximum = fixedMaximum ?? (Math.max(...usable.map((row) => Math.abs(row.value))) || 1);
   return <figure className="viz magnitude-chart" ref={box} aria-label={label}>
     <ul className="magnitude-rows">
       {usable.map((row) => <li key={row.key} className="magnitude-row" tabIndex={0} aria-label={`${row.label}: ${row.display}${row.note ? `, ${row.note}` : ''}`}
         {...handlers(<TipBody value={row.display} label={row.label} lines={[row.note]} />)}>
         <span className="magnitude-name">{row.label}{row.sub ? <small>{row.sub}</small> : null}</span>
         <span className="magnitude-track">
+          {Number.isFinite(reference) ? <i className="magnitude-ref" style={{ left: `${(reference / maximum) * 100}%` }} /> : null}
           <b className={`magnitude-bar ${row.emphasis ? `magnitude-${tone}` : 'magnitude-context'}`} style={{ width: `${Math.max(1.5, (Math.abs(row.value) / maximum) * 100)}%` }} />
         </span>
         <span className="magnitude-value">{row.display}</span>
       </li>)}
     </ul>
+    {referenceLabel ? <p className="magnitude-ref-label"><i className="paired-ref-key" />{referenceLabel}</p> : null}
     {caption ? <figcaption>{caption}</figcaption> : null}
     {node}
   </figure>;
@@ -268,6 +270,38 @@ export function PercentileStrip({ rows, lowLabel, highLabel, caption }) {
           <span className="percentile-value">{row.value}</span>
         </li>;
       })}
+    </ul>
+    {caption ? <figcaption>{caption}</figcaption> : null}
+    {node}
+  </figure>;
+}
+
+/**
+ * Two measures per row on one shared axis from zero, with a reference line -
+ * up and down capture against the benchmark's 100%. The two measures are two
+ * series, so they take two identity colours and a legend.
+ */
+export function PairedBars({ rows, aLabel, bLabel, reference = 100, unit = '%', caption }) {
+  const { box, handlers, node } = useTooltip();
+  const usable = rows.filter((row) => Number.isFinite(row.a) || Number.isFinite(row.b));
+  if (!usable.length) return null;
+  const limit = niceLimit(Math.max(reference, ...usable.flatMap((row) => [row.a, row.b]).filter(Number.isFinite)));
+  const width = (value) => (Number.isFinite(value) ? Math.max(0, Math.min(100, (value / limit) * 100)) : 0);
+  const show = (value) => (Number.isFinite(value) ? `${value}${unit}` : '—');
+  return <figure className="viz paired-chart" ref={box}>
+    <div className="diverging-legend"><span><i className="viz-key viz-key-pos" />{aLabel}</span><span><i className="viz-key viz-key-opp" />{bLabel}</span><span><i className="paired-ref-key" />{reference}{unit}: moves one-for-one</span></div>
+    <ul className="paired-rows">
+      {usable.map((row) => <li key={row.key} className="paired-row" tabIndex={0}
+        aria-label={`${row.name}: ${aLabel} ${show(row.a)}, ${bLabel} ${show(row.b)}${row.note ? `, ${row.note}` : ''}`}
+        {...handlers(<TipBody value={`${show(row.a)} up · ${show(row.b)} down`} label={row.name} lines={[row.note]} />)}>
+        <span className="paired-name">{row.name}{row.sub ? <small>{row.sub}</small> : null}</span>
+        <span className="paired-track">
+          <i className="paired-ref" style={{ left: `${(reference / limit) * 100}%` }} />
+          <b className="paired-bar paired-a" style={{ width: `${width(row.a)}%` }} />
+          <b className="paired-bar paired-b" style={{ width: `${width(row.b)}%` }} />
+        </span>
+        <span className="paired-values"><span>{show(row.a)}</span><span>{show(row.b)}</span></span>
+      </li>)}
     </ul>
     {caption ? <figcaption>{caption}</figcaption> : null}
     {node}
