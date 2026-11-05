@@ -956,3 +956,8 @@ html[data-theme='dark'] .brief-go { color: #b3beb2; }
   .brief-meta { grid-column: 1 / -1; flex-direction: row; flex-wrap: wrap; align-items: center; justify-content: flex-start; }
   .brief-go { display: none; }
 }
+
+/* Overview trend card: the plain sentence leads, the model's numbers follow. */
+.signal p { font-size: 12px; }
+.signal-model { display: block; margin-top: 6px; font-size: 10px; color: #56645a; }
+html[data-theme='dark'] .signal-model { color: #a7b5a6; }
