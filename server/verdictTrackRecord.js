@@ -29,7 +29,8 @@ import { calculateBitcoinTechnicals } from './bitcoinTechnicals.js';
 import { calculateRateDivergence } from './macroRates.js';
 import { componentRecords, describeComponents, PLAIN_GRADES, scoreTrackRecord } from './scorecard.js';
 import { evaluateTrackRecord, ownHistoryBands } from './trackRecord.js';
-import { buildCryptoVerdict, buildFxVerdict, buildMetalsVerdict } from './verdict.js';
+import { buildCryptoVerdict, buildFxVerdict, buildMetalsVerdict, buildVerdictFromModel } from './verdict.js';
+import { calculateEquityRegime } from './equityAnalytics.js';
 
 export const VERDICT_RECORD_VERSION = 'verdict-record-v1';
 const DAY_MS = 86_400_000;
@@ -177,6 +178,8 @@ export function macroLegsAsOf(prepared, date, { trailingDays = MACRO_TRAILING_DA
   const divergence = calculateRateDivergence(list);
   const usdStrength = calculateUsdStrengthModel(list, isPublished(usLiquidity) ? usLiquidity : null, { rateDivergence: divergence });
   return {
+    // The equity regime reads the US liquidity model, as the live dashboard does.
+    usLiquidity: isPublished(usLiquidity) ? usLiquidity : null,
     globalLiquidity: isPublished(globalLiquidity) ? globalLiquidity : null,
     usdStrength: isPublished(usdStrength) ? usdStrength : null,
     rateDivergence: divergence.status === 'unavailable' ? null : divergence,
@@ -236,6 +239,23 @@ export const VERDICT_REPLAYS = {
       usdStrength: legs.usdStrength,
     }),
     omitted: ['Perpetual funding', 'Stablecoin supply'],
+  },
+  equities: {
+    name: 'S&P 500 verdict',
+    asset: 'spx',
+    assetLabel: 'the S&P 500',
+    verdictLabel: 'S&P 500 verdict',
+    order: [{ key: 'Constructive', label: 'Constructive' }, { key: 'Neutral', label: 'Neutral' }, { key: 'Guarded', label: 'Guarded' }],
+    // The Equities page scores SPY on a year of daily closes and weighs it
+    // with US liquidity and, when constituents load, breadth. Constituent
+    // breadth has no history to replay, so the record runs without it - the
+    // regime renormalises by the weight that reported, as it does live.
+    verdictAt: (legs, closesByAsset, date) => buildVerdictFromModel(calculateEquityRegime({
+      technical: calculateTechnicalSnapshot(asTimestamps(closesAsOf(closesByAsset.spx, date, 365)), { annualizationDays: 252 }),
+      liquidity: legs.usLiquidity,
+      breadth: null,
+    }), { title: 'S&P 500 regime', version: 'equity-verdict-v1', subject: 'the S&P 500', meaning: { high: 'supportive of risk', low: 'restrictive' } }),
+    omitted: ['Constituent breadth'],
   },
   fx: {
     name: 'Dollar composite',

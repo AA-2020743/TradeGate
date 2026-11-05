@@ -63,6 +63,7 @@ const macroSeries = () => [
 const fxPairs = Object.fromEntries(['eur', 'jpy', 'gbp', 'cad', 'aud', 'chf'].map((code, index) => [`fx:${code}`, dated(1, (day) => (1 + (index * 0.1)) * (1 + wave(day + (index * 20), 900, 0.07)) * (1 + (noise() * 0.004)), { weekdays: true })]));
 const gold = dated(1, (day) => 1300 * Math.exp(day / 3000) * (1 + wave(day + 90, 900, 0.12)) * (1 + (noise() * 0.01)), { weekdays: true });
 const bitcoin = dated(1, (day) => 600 * Math.exp(day / 900) * (1 + wave(day + 90, 900, 0.35)) * (1 + (noise() * 0.03)));
+const spx = dated(1, (day) => 1000 * Math.exp(day / 2500) * (1 + wave(day + 45, 500, 0.3)) * (1 + (noise() * 0.012)), { weekdays: true });
 
 test('a series is cut off at what had been published, observation date plus its lag', () => {
   const prepared = prepareSeriesList(macroSeries());
@@ -154,9 +155,9 @@ test('the replayed verdicts are scored on the dates their inputs allow', { timeo
   setTimeout(() => { ticked = true; }, 0);
   const seriesList = macroSeries();
   const dollar = seriesList.find((item) => item.key === 'dxy').history;
-  const records = await replayVerdicts({ seriesList, closes: { gold, bitcoin, dollar, ...fxPairs } });
+  const records = await replayVerdicts({ seriesList, closes: { gold, bitcoin, spx, dollar, ...fxPairs } });
   assert.equal(ticked, true);
-  for (const key of ['metals', 'crypto', 'fx']) {
+  for (const key of ['metals', 'crypto', 'fx', 'equities']) {
     const record = records[key];
     assert.equal(record.status, 'calculated', `${key}: ${record.reason}`);
     // The bitcoin technicals count only once fully backed - about four years

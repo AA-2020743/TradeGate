@@ -2200,17 +2200,21 @@ export async function getGoldRealYield() {
  */
 export async function getVerdictTrackRecords() {
   return withCache('analytics:verdict-records', 24 * 60 * 60_000, async () => {
-    const [snapshotResult, goldResult, bitcoinResult, pairsResult] = await Promise.allSettled([
+    const [snapshotResult, goldResult, bitcoinResult, pairsResult, spxResult] = await Promise.allSettled([
       getLiquiditySnapshot(),
       getYahooDailyHistory('GC=F', '2002-12-01'),
       getYahooDailyHistory('BTC-USD', '2014-09-17'),
       getLongDailyHistories(FX_PAIRS.map((pair) => pair.yahooSymbol), 10),
+      // SPY, the instrument the Equities page scores. Prices, not total
+      // return: the missing dividend is the same in every call's window.
+      getYahooDailyHistory('SPY', '2002-12-01'),
     ]);
     const errors = [
       snapshotResult.status === 'rejected' ? `Macro series: ${snapshotResult.reason?.message ?? 'failed'}` : null,
       goldResult.status === 'rejected' ? `Yahoo GC=F: ${goldResult.reason?.message ?? 'failed'}` : null,
       bitcoinResult.status === 'rejected' ? `Yahoo BTC-USD: ${bitcoinResult.reason?.message ?? 'failed'}` : null,
       pairsResult.status === 'rejected' ? `Yahoo FX pairs: ${pairsResult.reason?.message ?? 'failed'}` : null,
+      spxResult.status === 'rejected' ? `Yahoo SPY: ${spxResult.reason?.message ?? 'failed'}` : null,
     ].filter(Boolean);
     const seriesList = snapshotResult.status === 'fulfilled' ? (snapshotResult.value.series ?? []).filter((item) => !item.abandoned) : [];
     if (!seriesList.length) return { version: VERDICT_RECORD_VERSION, status: 'unavailable', reason: `The macro series every verdict reads did not load${errors.length ? ` (${errors.join('; ')})` : ''}.`, records: {}, errors };
@@ -2223,6 +2227,7 @@ export async function getVerdictTrackRecords() {
     const closes = {
       gold: goldResult.status === 'fulfilled' ? goldResult.value : [],
       bitcoin: bitcoinResult.status === 'fulfilled' ? bitcoinResult.value : [],
+      spx: spxResult.status === 'fulfilled' ? spxResult.value : [],
       // The dollar verdict is judged by the broad dollar index its model reads.
       dollar: (seriesList.find((item) => item.key === 'dxy')?.history ?? []).map((point) => ({ date: point.date, value: point.value })),
       ...pairs,

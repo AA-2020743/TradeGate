@@ -12,7 +12,7 @@
 
 export const BRIEF_SECTIONS = [
   { key: 'macro', label: 'Risk assets', subject: 'risk assets', page: 'Macro', recordKey: null },
-  { key: 'equities', label: 'S&P 500', subject: 'the S&P 500', page: 'Equities', recordKey: null },
+  { key: 'equities', label: 'S&P 500', subject: 'the S&P 500', page: 'Equities', recordKey: 'equities' },
   { key: 'metals', label: 'Gold', subject: 'gold', page: 'Metals', recordKey: 'metals' },
   { key: 'fx', label: 'US dollar', subject: 'the dollar', page: 'Forex', recordKey: 'fx' },
   { key: 'crypto', label: 'Bitcoin', subject: 'bitcoin', page: 'Crypto', recordKey: 'crypto' },

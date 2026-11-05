@@ -169,11 +169,11 @@ export const SOURCES = [
     ],
   },
   {
-    name: 'Section verdicts replayed (macro series + Yahoo gold, bitcoin and FX pairs)',
+    name: 'Section verdicts replayed (macro series + Yahoo gold, bitcoin, SPY and FX pairs)',
     endpoint: '/api/analytics/verdict-records',
     load: getVerdictTrackRecords,
     figure: (payload) => {
-      const parts = ['metals', 'crypto', 'fx'].map((key) => payload.records?.[key]).filter((record) => record?.status === 'calculated')
+      const parts = ['metals', 'crypto', 'fx', 'equities'].map((key) => payload.records?.[key]).filter((record) => record?.status === 'calculated')
         .map((record) => `${record.name}: ${record.readings} replays from ${record.from}, now ${record.presentation === 'state' ? `reading ${record.current.label}` : record.current.call}`);
       return parts.length ? parts.join('; ') : null;
     },
@@ -184,6 +184,8 @@ export const SOURCES = [
       { label: 'gold composite replays', value: payload.records?.metals?.readings, min: 150, max: 560 },
       { label: 'bitcoin verdict replays', value: payload.records?.crypto?.readings, min: 100, max: 260 },
       { label: 'dollar composite replays', value: payload.records?.fx?.readings, min: 150, max: 280 },
+      // SPY from 2002 plus a year of closes before the first call: about 2004 on.
+      { label: 'S&P 500 verdict replays', value: payload.records?.equities?.readings, min: 150, max: 600 },
     ],
   },
   {

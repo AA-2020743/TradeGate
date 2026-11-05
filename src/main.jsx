@@ -1049,7 +1049,7 @@ function VerdictBrief({ onNavigate }) {
         </button>
       </li>)}
     </ul> : null}
-    {published ? <p className="model-footnote">Each line is that page&apos;s own verdict, unchanged; open it for what is helping, what is holding it back and how it was reached. Record grades come from replaying each verdict on data it was not built on - risk assets and the S&amp;P 500 do not have a replayed verdict record yet.</p> : null}
+    {published ? <p className="model-footnote">Each line is that page&apos;s own verdict, unchanged; open it for what is helping, what is holding it back and how it was reached. Record grades come from replaying each verdict on data it was not built on - the risk-assets verdict does not have a replayed record yet.</p> : null}
   </section>;
 }
 
@@ -2266,10 +2266,10 @@ function VerdictRecordPanel({ section, liveCall = null }) {
   const { status: loadStatus, data: payload, error } = useLazyResource('/api/analytics/verdict-records');
   const model = payload?.records?.[section] ?? null;
   const published = model?.status === 'calculated';
-  const asset = { metals: 'gold', crypto: 'bitcoin', fx: 'dollar' }[section] ?? section;
+  const asset = { metals: 'gold', crypto: 'bitcoin', fx: 'dollar', equities: 'S&P 500' }[section] ?? section;
   // The gold and dollar sections present their composite as a state, so their
-  // record speaks of the composite's bands; bitcoin's keeps its calls.
-  const state = model?.presentation ? model.presentation === 'state' : section !== 'crypto';
+  // record speaks of the composite's bands; bitcoin's and the S&P 500's keep their calls.
+  const state = model?.presentation ? model.presentation === 'state' : !['crypto', 'equities'].includes(section);
   const noun = state ? 'composite' : 'verdict';
   const by = state ? 'BY COMPOSITE BAND' : 'BY REPLAYED CALL';
   const states = model?.record?.horizons?.[0]?.states ?? [];
@@ -2575,6 +2575,23 @@ function EquityPicture({ brief }) {
   </section>;
 }
 
+const EQUITY_PAGE_SECTIONS = [
+  ['equity-signals', 'Signals'],
+  ['equity-sectors', 'Sectors'],
+  ['equity-breadth', 'Risk appetite'],
+  ['equity-positioning', 'Positioning & sentiment'],
+  ['equity-sources', 'Sources'],
+];
+
+/** Jump links: the page runs to two dozen panels, and a reader looking for one should not have to scroll for it. */
+function EquityPageNav() {
+  const open = (anchor) => document.getElementById(anchor)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  return <nav className="equity-page-nav" aria-label="Equities sections">
+    <span>Jump to</span>
+    {EQUITY_PAGE_SECTIONS.map(([anchor, label]) => <button type="button" key={anchor} onClick={() => open(anchor)}>{label}</button>)}
+  </nav>;
+}
+
 function EquitiesDashboard({ platformData }) {
   const [selectedSymbol, setSelectedSymbol] = React.useState('SPY');
   const research = useEquityResearch(selectedSymbol);
@@ -2608,10 +2625,22 @@ function EquitiesDashboard({ platformData }) {
 
   return <div className="equities-dashboard">
     <section className="equities-intro">
-      <div><p className="eyebrow">GLOBAL EQUITY RESEARCH</p><h1>Participation before prediction.</h1><p className="intro">Global index proxies, regime-aware signals, breadth readiness, and sector rotation with explicit source coverage.</p></div>
-      <div className="equities-pulse"><EquityStatus status={research.status} label={research.status === 'live' ? 'API connected' : research.status} /><div><b>{selectedIndex?.name ?? 'Loading index'}</b><small>{selectedIndex ? `${selectedIndex.symbol} · ${selectedIndex.instrument}` : 'Awaiting catalog'}</small></div></div>
+      <div><p className="eyebrow">GLOBAL EQUITY RESEARCH</p><h1>Where stocks stand today.</h1><p className="intro">The verdict and the equity picture answer the main questions first. Every panel below them is the evidence, with its own source and date.</p></div>
+      <div className="equities-pulse">
+        <label className="equity-index-select"><span>Index</span>
+          <select value={selectedSymbol} onChange={(event) => setSelectedSymbol(event.target.value)} aria-label="Index to analyse">
+            {groupedIndices.length ? groupedIndices.map(([region, indices]) => <optgroup key={region} label={region}>{indices.map((index) => <option key={index.id} value={index.symbol}>{index.name} ({index.symbol})</option>)}</optgroup>) : <option value={selectedSymbol}>{selectedSymbol}</option>}
+          </select>
+        </label>
+        <EquityStatus status={research.status} label={research.status === 'live' ? 'API connected' : research.status} />
+      </div>
     </section>
     <section className="equity-disclosure"><span>i</span><div><b>Coverage-aware research</b><p>ETF prices are labeled as proxies. Unavailable breadth, positioning, sentiment, flow, and historical-vintage inputs remain blank rather than being replaced with designed values.</p></div></section>
+
+    {/* The replayed record is the S&P 500's; another index's verdict has none. */}
+    <VerdictBanner verdict={dashboard?.verdict} recordSection={selectedSymbol === 'SPY' ? 'equities' : null} />
+    <EquityPicture brief={equityBrief} />
+    <EquityPageNav />
 
     <section className="equity-index-layout">
       <article className="equity-index-panel panel">
@@ -2630,10 +2659,8 @@ function EquitiesDashboard({ platformData }) {
       </article>
     </section>
 
-    <VerdictBanner verdict={dashboard?.verdict} />
-    <EquityPicture brief={equityBrief} />
 
-    <section className="equity-section-heading"><div><p className="section-kicker">INDEX SIGNAL STACK</p><h2>What can be calculated now</h2></div><span className="data-pill">No synthetic fallbacks</span></section>
+    <section id="equity-signals" className="equity-section-heading"><div><p className="section-kicker">INDEX SIGNAL STACK</p><h2>What can be calculated now</h2></div><span className="data-pill">No synthetic fallbacks</span></section>
     <section className="equity-signal-grid">
       <EquitySignalCard kicker="DYNAMIC REGIME" title="Regime unavailable" model={regime} empty="Price trend, momentum, and volatility are mandatory before a regime can be classified." />
       <EquitySignalCard kicker="TOP-RISK DETECTION" title="Top risk unavailable" model={dashboard?.topRisk} empty="Top risk requires technical deterioration plus constituent breadth and independent confirmation." />
@@ -2654,6 +2681,8 @@ function EquitiesDashboard({ platformData }) {
       <article className="equity-driver-panel panel"><div className="panel-title"><div><p className="section-kicker">REGIME INPUTS</p><h3>{regime?.regime ?? 'Waiting for minimum coverage'}</h3></div><EquityStatus status={regime?.status} label={Number.isFinite(regime?.coverage) ? `${regime.coverage}% coverage` : 'unavailable'} /></div><div className="equity-driver-list">{(regime?.drivers ?? []).map((driver) => <div key={driver.key}><span><b>{driver.name}</b><small>{driver.source ?? 'Source unavailable'}</small></span><i><b style={{ width: `${driver.score ?? 0}%` }}></b></i><strong>{driver.score ?? '—'}</strong></div>)}</div></article>
       <article className="equity-settings-panel panel"><div className="panel-title"><div><p className="section-kicker">DYNAMIC PLAYBOOK</p><h3>Regime-dependent settings</h3></div><span className="data-pill">{regime?.version ?? 'No model'}</span></div>{regime?.settings ? <div className="equity-settings"><div><span>Alert threshold</span><b>{regime.settings.alertThreshold}/100</b></div><div><span>Holding period</span><b>{regime.settings.holdingPeriod}</b></div><div><span>Trend / momentum</span><b>{regime.settings.trend}% / {regime.settings.momentum}%</b></div><div><span>Mean reversion</span><b>{regime.settings.meanReversion}%</b></div><div><span>Defensive / macro</span><b>{regime.settings.defensive}% / {regime.settings.macro}%</b></div></div> : <div className="equity-empty">Settings are not published without a regime.</div>}<p>Weights, thresholds, and expected holding periods change with the classified regime; one static model is not applied across all conditions.</p></article>
     </section>
+
+    {selectedSymbol === 'SPY' ? <div className="equity-record-wide"><VerdictRecordPanel section="equities" liveCall={dashboard?.verdict?.call ?? null} /></div> : null}
 
     <section id="equity-sectors" className="equity-section-heading"><div><p className="section-kicker">SECTOR AND SUBSECTOR ROTATION</p><h2>Relative strength with stored history</h2></div><EquityStatus status={rotation?.status} /></section>
     {(rotation?.enteringLeadership?.length || rotation?.leavingLeadership?.length) ? <p className="watchlist-summary">Over the last {rotation.rotationLookbackSessions} sessions {rotation.enteringLeadership.length ? `${rotation.enteringLeadership.join(', ')} rotated into leadership` : 'no sector rotated into leadership'}{rotation.leavingLeadership.length ? ` · ${rotation.leavingLeadership.join(', ')} rolled out of it` : ' · none rolled out of it'}</p> : null}
@@ -2698,7 +2727,7 @@ function EquitiesDashboard({ platformData }) {
       </article>
     </section>
 
-    <section className="equity-section-heading"><div><p className="section-kicker">POSITIONING · CALCULATED</p><h2>Leveraged-fund exposure from CFTC commitments</h2></div><EquityStatus status={positioning?.status} label="CFTC pending" /></section>
+    <section id="equity-positioning" className="equity-section-heading"><div><p className="section-kicker">POSITIONING · CALCULATED</p><h2>Leveraged-fund exposure from CFTC commitments</h2></div><EquityStatus status={positioning?.status} label="CFTC pending" /></section>
     <section className="equity-macro-matrix">
       <article className="equity-rotation-panel panel wide">
         <div className="equity-rotation-head cot-head"><span>Contract</span><span>Net spec</span><span>WoW change</span><span>Percentile</span><span>Stance</span></div>
@@ -2778,17 +2807,18 @@ function EquitiesDashboard({ platformData }) {
       </article>
     </section>
 
-    <section className="equity-section-heading"><div><p className="section-kicker">PARTICIPATION AND POSITIONING</p><h2>Inputs still required for reliable extremes</h2></div><EquityStatus status="unavailable" label="Feeds pending" /></section>
-    <section className="equity-requirement-grid">
-      <RequirementPanel title="Market breadth" dataset={dashboard?.breadth} requirements={catalog?.requiredFeeds?.breadth} />
-      <RequirementPanel title="Sentiment" dataset={dashboard?.sentiment} requirements={catalog?.requiredFeeds?.sentiment} />
-      <RequirementPanel title="Positioning" dataset={dashboard?.positioning} requirements={catalog?.requiredFeeds?.positioning} />
-    </section>
-
-    <section className="equity-bottom-layout">
+    <section id="equity-sources" className="equity-bottom-layout">
       <article className="equity-history-panel panel"><div className="panel-title"><div><p className="section-kicker">HISTORICAL TOP STUDY</p><h3>Point-in-time warning review</h3></div><EquityStatus status={dashboard?.historicalTopStudy?.status} /></div><p>{dashboard?.historicalTopStudy?.reason ?? 'Historical study status is unavailable.'}</p><div><span>Price-only backtest</span><b>Rejected</b></div><div><span>Point-in-time vintages</span><b>Required</b></div><div><span>Constituent breadth history</span><b>Required</b></div></article>
       <article className="equity-source-panel panel"><div className="panel-title"><div><p className="section-kicker">SOURCE LEDGER</p><h3>What supports this view</h3></div><span className="data-pill">{dashboard?.version ?? 'Awaiting API'}</span></div>{(dashboard?.sources ?? []).map((source) => <div className="equity-source-row" key={source.name}><span><b>{source.name}</b><small>{source.source ?? source.disclosure ?? 'No connected source'}</small></span><EquityStatus status={source.status} /></div>)}</article>
     </section>
+    <details className="equity-gaps">
+      <summary>Data this section still lacks, and what it would add</summary>
+      <section className="equity-requirement-grid">
+        <RequirementPanel title="Market breadth" dataset={dashboard?.breadth} requirements={catalog?.requiredFeeds?.breadth} />
+        <RequirementPanel title="Sentiment" dataset={dashboard?.sentiment} requirements={catalog?.requiredFeeds?.sentiment} />
+        <RequirementPanel title="Positioning" dataset={dashboard?.positioning} requirements={catalog?.requiredFeeds?.positioning} />
+      </section>
+    </details>
     <p className="independence-note">TradeGate is an independent market research platform and is not affiliated with Tradegate AG.</p>
   </div>;
 }

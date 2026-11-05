@@ -994,3 +994,30 @@ html[data-theme='dark'] .equity-answer-neutral { color: #e6c97f; }
 html[data-theme='dark'] .equity-answer-negative { color: #eba79a; }
 html[data-theme='dark'] .equity-answer-link { color: #a8dd9f; }
 #equity-focus, #equity-risk, #equity-valuation, #equity-revisions, #equity-sectors, #equity-breadth, #equity-sentiment { scroll-margin-top: 80px; }
+
+/* Equities: jump links, the S&P 500 record, and the folded data gaps. */
+.equity-page-nav { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin: 4px 0 18px; }
+.equity-page-nav > span { font-size: 11px; letter-spacing: 0.05em; text-transform: uppercase; color: #5b645c; margin-right: 4px; }
+.equity-page-nav button { border: 1px solid var(--hairline, rgba(127, 127, 127, 0.25)); background: transparent; color: inherit; border-radius: 999px; padding: 4px 11px; font-size: 12px; cursor: pointer; }
+.equity-page-nav button:hover { background: #f0f4ed; }
+.equity-page-nav button:focus-visible { outline: 2px solid #4d7948; outline-offset: 1px; }
+html[data-theme='dark'] .equity-page-nav > span { color: #b3beb2; }
+html[data-theme='dark'] .equity-page-nav button:hover { background: #27332b; }
+html[data-theme='dark'] .equity-page-nav button:focus-visible { outline-color: #a8dd9f; }
+.equity-record-wide { margin: 18px 0; }
+.equity-record-wide > .verdict-record-panel { margin-top: 0; }
+#equity-signals, #equity-positioning, #equity-sources { scroll-margin-top: 80px; }
+.equity-gaps { margin: 18px 0 8px; }
+.equity-gaps > summary { cursor: pointer; font-size: 13px; font-weight: 600; color: #3f6a3a; width: fit-content; }
+html[data-theme='dark'] .equity-gaps > summary { color: #a8dd9f; }
+.equity-gaps[open] > summary { margin-bottom: 12px; }
+.equity-index-select { display: flex; flex-direction: column; gap: 3px; flex: 1; }
+.equity-index-select > span { font-size: 10px; letter-spacing: 0.05em; text-transform: uppercase; color: #5b645c; }
+.equity-index-select select { font: 600 13px inherit; padding: 5px 6px; border: 1px solid #d5dbd1; border-radius: 5px; background: #fff; color: #26332b; max-width: 100%; }
+.equity-index-select select:focus-visible { outline: 2px solid #4d7948; outline-offset: 1px; }
+html[data-theme='dark'] .equity-index-select > span { color: #b3beb2; }
+html[data-theme='dark'] .equity-index-select select { background: #111714; border-color: #39443c; color: #e1e9df; }
+/* The dropdown and the feed status share the box without either spilling out. */
+.equities-pulse:has(.equity-index-select) { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: end; min-width: 300px; }
+.equity-index-select { min-width: 0; }
+@media (max-width: 700px) { .equities-pulse:has(.equity-index-select) { min-width: 0; } }
