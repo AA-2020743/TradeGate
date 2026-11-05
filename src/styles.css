@@ -1274,3 +1274,4 @@ html[data-theme='dark'] .method-note > summary { color: #a8dd9f; }
   .paired-name { grid-column: 1 / -1; }
 }
 .btc-cycle-cell .scale-compact { width: 100%; max-width: 140px; margin: 4px 0 2px; }
+.macro-section-heading { scroll-margin-top: 80px; }

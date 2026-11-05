@@ -3,6 +3,7 @@ import { createRoot } from 'react-dom/client';
 import './styles.css';
 import { describeTechnical } from './technicalSummary.js';
 import { buildEquityBrief } from './equityBrief.js';
+import { buildMacroBrief } from './macroBrief.js';
 import { DivergingBars, MagnitudeBars, PairedBars, PercentileStrip, PointsLine, PullChart, RangeChart, ScaleMarker } from './charts.jsx';
 import { heatShare } from './chartMath.js';
 import { changeOverSpan, formatPercent, formatSpanLabel, formatTimestamp, formatUsd, useEquityResearch, useLazyResource, useMarketHistory, usePlatformData, useTechnicalAnalytics } from './liveData.js';
@@ -3581,6 +3582,29 @@ function ScreenerTrackRecordPanel() {
   </article>;
 }
 
+const MACRO_TAB_LABELS = { Liquidity: 'US liquidity', Global: 'Global liquidity', FX: 'USD & FX', Rates: 'Rates & growth' };
+
+/**
+ * The Macro page's answers in plain words, each opening the tab that backs
+ * it. See src/macroBrief.js for how each answer is read.
+ */
+function MacroPicture({ brief, onOpen }) {
+  if (!brief?.cards?.length) return null;
+  return <section className="equity-picture panel" aria-labelledby="macro-picture-title">
+    <div className="panel-title"><div><p className="section-kicker">THE MACRO PICTURE · {brief.cards.length} OF 7 ANSWERED</p><h3 id="macro-picture-title">{brief.summary ?? 'What the macro models say today'}</h3></div></div>
+    <div className="equity-picture-grid">
+      {brief.cards.map((card) => <article className="equity-answer" key={card.key}>
+        <p className="equity-question">{card.question}</p>
+        <p className={`equity-answer-word equity-answer-${card.tone}`}>{card.answer}</p>
+        {card.scale ? <ScaleMarker scale={card.scale} /> : null}
+        <p className="equity-answer-sentence">{card.sentence}</p>
+        <button type="button" className="equity-answer-link" onClick={() => onOpen(card.tab)}>Open {MACRO_TAB_LABELS[card.tab] ?? card.tab} <span aria-hidden="true">→</span></button>
+      </article>)}
+    </div>
+    <p className="model-footnote">Each answer reads a model already on this page and describes today; only the recession probability is a forecast. The tabs above hold each model's inputs, history and method.</p>
+  </section>;
+}
+
 function MacroDashboard({ data }) {
   const [activeModel, setActiveModel] = React.useState('Overview');
   const [correlationWindow, setCorrelationWindow] = React.useState('60D');
@@ -3588,6 +3612,21 @@ function MacroDashboard({ data }) {
   const [globalChartOpen, setGlobalChartOpen] = React.useState(false);
   const [sourcesOpen, setSourcesOpen] = React.useState(false);
   const closeSources = React.useCallback(() => setSourcesOpen(false), []);
+  const recession = useLazyResource('/api/analytics/recession-probability');
+  const macroBrief = buildMacroBrief({
+    liquidity: data.liquidity?.model,
+    globalLiquidity: data.liquidity?.globalLiquidity,
+    usdStrength: data.liquidity?.usdStrength,
+    growthNowcast: data.liquidity?.growthNowcast,
+    inflation: data.liquidity?.inflation,
+    yieldCurve: data.liquidity?.yieldCurve,
+    recession: recession.data,
+  });
+  // Open the tab that backs an answer, and bring its heading into view.
+  const openMacroTab = (tab) => {
+    setActiveModel(tab);
+    requestAnimationFrame(() => document.querySelector('.macro-section-heading')?.scrollIntoView({ behavior: 'smooth', block: 'start' }));
+  };
   const liquidityRaw = data.liquidity?.model;
   const liquidityModel = published(liquidityRaw) ? liquidityRaw : null;
   const liquidityRunway = data.liquidity?.liquidityRunway;
@@ -3670,12 +3709,13 @@ function MacroDashboard({ data }) {
         <div className="btc-cycle-cell"><small>Screener momentum</small><b>{(() => { const leader = screenerLeader(data.screener?.rows); return leader ? `${leader.symbol} ${leader.mom20 > 0 ? '+' : ''}${leader.mom20}%` : '—'; })()}</b><span>{data.screener?.status === 'calculated' ? (() => { const leader = screenerLeader(data.screener?.rows); return `${Number.isFinite(data.screener.calculatedCount) ? `Top of ${data.screener.calculatedCount} names` : 'Top screened name'}${leader?.sector ? ` · ${leader.sector}` : ''} by 20D momentum`; })() : 'Screener histories pending'}</span></div>
         <div className="btc-cycle-cell"><small>Crypto aggregate</small><b>{Number.isFinite(data.bitcoin?.cryptoGlobal?.mcapChange24hPct) ? `${data.bitcoin.cryptoGlobal.mcapChange24hPct > 0 ? '+' : ''}${data.bitcoin.cryptoGlobal.mcapChange24hPct.toFixed(2)}%` : '—'}</b><span>Total crypto market cap, 24 hours</span></div>
         <div className="btc-cycle-cell"><small>Fear &amp; Greed</small><b>{Number.isFinite(data.sentiment?.fearGreed?.score) ? data.sentiment.fearGreed.score : '—'}</b><span>{data.sentiment?.fearGreed?.rating ?? 'Sentiment feed pending'}</span></div>
-        <div className={`btc-cycle-cell ${data.equityRisk?.spxBreadth?.divergence?.divergent ? 'cell-warning' : ''}`}><small>Equity breadth</small><b>{Number.isFinite(data.equityRisk?.spxBreadth?.pctAbove200) ? `${data.equityRisk.spxBreadth.pctAbove200}%` : '—'}</b><span>{data.equityRisk?.spxBreadth?.status === 'calculated' ? `${data.equityRisk.spxBreadth.read}${data.equityRisk.spxBreadth.divergence?.status === 'calculated' ? ` · ${data.equityRisk.spxBreadth.divergence.state}` : ''}` : 'Breadth histories pending'}</span></div>
+        <div className={`btc-cycle-cell ${data.equityRisk?.spxBreadth?.divergence?.divergent ? 'cell-warning' : ''}`}><small>Equity breadth</small><b>{Number.isFinite(data.equityRisk?.spxBreadth?.pctAbove200) ? `${data.equityRisk.spxBreadth.pctAbove200}%` : '—'}</b><span>{data.equityRisk?.spxBreadth?.status === 'calculated' ? [data.equityRisk.spxBreadth.read, data.equityRisk.spxBreadth.divergence?.status === 'calculated' ? data.equityRisk.spxBreadth.divergence.state : null].filter(Boolean).join(' · ') || 'Calculated' : 'Breadth histories pending'}</span></div>
         {(data.alerts?.alerts ?? []).length ? <div className="btc-cycle-cell"><small>Model alerts</small><b>{data.alerts.alerts.length} recent</b><span>{data.alerts.alerts[0]?.text ?? ''}</span></div> : null}
       </div>
     </section>
 
     <VerdictBanner verdict={data.liquidity?.macroVerdict} />
+    {activeModel === 'Overview' ? <MacroPicture brief={macroBrief} onOpen={openMacroTab} /> : null}
 
     <section className="macro-section-heading"><div><p className="section-kicker">{activeModel === 'Overview' ? 'MACRO OVERVIEW' : activeModel === 'Liquidity' ? 'NET US LIQUIDITY' : activeModel === 'Global' ? 'GLOBAL CENTRAL-BANK LIQUIDITY' : activeModel === 'Risk' ? 'CROSS-ASSET CONFIRMATION' : activeModel === 'Correlations' ? 'RELATIONSHIP INTELLIGENCE' : activeModel === 'Rates' ? 'RATES, INFLATION & GROWTH' : activeModel === 'Consensus' ? 'CROSS-MODEL READ' : 'USD MACRO ENGINE'}</p><h2>{activeModel === 'Overview' ? 'What every model says, and what is live right now' : activeModel === 'Liquidity' ? 'The calculated drivers behind the impulse' : activeModel === 'Global' ? 'World central-bank liquidity in dollars' : activeModel === 'Risk' ? 'What markets are pricing now' : activeModel === 'Correlations' ? 'Correlations through the current regime' : activeModel === 'Rates' ? 'What the curve is pricing, and what growth proxies say' : activeModel === 'Consensus' ? 'Where the models agree, where they do not, and what is live' : 'Where macro points for the dollar'} {activeModel === 'Correlations' && regimeCorrelations?.status !== 'calculated' && <PreviewBadge label="Contains previews" />}</h2></div>{activeModel === 'Liquidity' && <span className="data-pill">13W calculated window</span>}{activeModel === 'Global' && <span className="data-pill">13W calculated window</span>}{activeModel === 'Correlations' && <div className="window-buttons">{[['20D', '20 obs'], ['60D', '60 obs'], ['1Y', '252 obs']].map(([item, label]) => <button className={correlationWindow === item ? 'selected' : ''} key={item} onClick={() => setCorrelationWindow(item)}>{label}</button>)}</div>}{activeModel === 'FX' && <span className="data-pill">FRED driver stack</span>}</section>
 
