@@ -4,6 +4,7 @@ import './styles.css';
 import { describeTechnical } from './technicalSummary.js';
 import { buildEquityBrief } from './equityBrief.js';
 import { DivergingBars, PullChart, ScaleMarker } from './charts.jsx';
+import { heatShare } from './chartMath.js';
 import { changeOverSpan, formatPercent, formatSpanLabel, formatTimestamp, formatUsd, useEquityResearch, useLazyResource, useMarketHistory, usePlatformData, useTechnicalAnalytics } from './liveData.js';
 import { buildRoute, parseRoute } from './routing.js';
 import { providerDegradation } from './platformStatus.js';
@@ -1061,7 +1062,8 @@ function VerdictBrief({ onNavigate }) {
           <span className="brief-asset"><b>{entry.label}</b><small>{entry.stance ? (entry.presentation === 'state' ? 'Conditions, not a call' : `Model call: ${entry.call}`) : 'No verdict'}</small></span>
           <span className="brief-stance">{entry.stance
             ? <span className={`verdict-stance verdict-stance-${entry.stance}`}>{STANCE_LABEL[entry.stance]}</span>
-            : <span className="verdict-stance verdict-stance-mixed">Unavailable</span>}</span>
+            : <span className="verdict-stance verdict-stance-mixed">Unavailable</span>}
+            {Number.isFinite(entry.score) ? <><ScaleMarker compact scale={{ value: entry.score, left: 'headwind', right: 'tailwind', polarity: 'pos-right', label: `Score ${entry.score} of 100` }} /><small className="brief-score">{entry.score}/100</small></> : null}</span>
           <span className="brief-line">{entry.stance ? entry.bottomLine : entry.reason}</span>
           <span className="brief-meta">
             {entry.confidence ? <b className={`verdict-confidence verdict-confidence-${entry.confidence}`}>{entry.confidence} confidence</b> : null}
@@ -2749,15 +2751,21 @@ function EquitiesDashboard({ platformData }) {
     <section className="equity-section-heading"><div><p className="section-kicker">MACRO SENSITIVITY MATRIX · CALCULATED</p><h2>How each ETF trades against macro drivers</h2></div><span className="data-pill">{sectorData?.macroSensitivity?.window ?? '60 aligned changes'}</span></section>
     <section className="equity-macro-matrix">
       <article className="equity-rotation-panel panel wide">
+        <div className="heat-legend" aria-hidden="true"><span>Moves against the driver</span><i /><span>Moves with it</span></div>
         <div className="equity-rotation-head macro-head"><span>ETF</span><span>Broad dollar</span><span>10Y real yield</span><span>VIX</span><span>HY spread</span><span>Catalog sensitivity</span></div>
         {[...(rotation?.sectors ?? []), ...(rotation?.subsectors ?? [])].map((row) => {
           const ms = row.macroSensitivity ?? {};
           const cell = (value, key) => {
             const detail = ms.detail?.[key];
             const slow = detail?.status === 'calculated' && detail.daily === false;
+            const heat = heatShare(value);
+            const driver = { dollar: 'the broad dollar', realYield: 'the 10-year real yield', vix: 'the VIX', credit: 'high-yield spreads' }[key];
+            const reading = !Number.isFinite(value) ? 'No sensitivity published'
+              : `${row.name} ${Math.abs(value) < 0.25 ? 'has little relationship with' : value > 0 ? 'tends to move with' : 'tends to move against'} ${driver} (correlation ${value > 0 ? '+' : ''}${value.toFixed(2)})`;
             return <span
-              className={!Number.isFinite(value) ? 'neutral' : value >= 0.25 ? 'positive' : value <= -0.25 ? 'negative' : 'neutral'}
-              title={detail ? detail.status === 'calculated' ? `${detail.windowLabel} · ${detail.observations} aligned changes${detail.asOf ? ` to ${detail.asOf}` : ''}` : detail.reason : 'No sensitivity published'}
+              className={`heat-cell${heat ? ` heat-${heat.side}` : ''}`}
+              style={heat && heat.side !== 'flat' ? { '--heat': `${heat.percent}%` } : undefined}
+              title={`${reading}${detail ? detail.status === 'calculated' ? ` · ${detail.windowLabel} · ${detail.observations} aligned changes${detail.asOf ? ` to ${detail.asOf}` : ''}` : ` · ${detail.reason}` : ''}`}
             >{Number.isFinite(value) ? `${value > 0 ? '+' : ''}${value.toFixed(2)}` : '—'}{slow ? <i className="slow-cadence" aria-label="weekly driver">·w</i> : null}</span>;
           };
           return <div className="equity-rotation-row macro-row" key={`ms-${row.symbol}`}><span><strong>{row.name}</strong><small>{row.symbol}</small></span>{cell(ms.dollar, 'dollar')}{cell(ms.realYield, 'realYield')}{cell(ms.vix, 'vix')}{cell(ms.credit, 'credit')}<small>{row.sensitivity ?? '—'}</small></div>;

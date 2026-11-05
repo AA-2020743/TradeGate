@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { divergingPosition, divergingTicks, niceLimit, pullBar, scalePosition } from './chartMath.js';
+import { divergingPosition, divergingTicks, heatShare, niceLimit, pullBar, scalePosition } from './chartMath.js';
 
 test('a reading pulls from the neutral line toward the side it favours', () => {
   assert.deepEqual(pullBar(72), { side: 'pos', left: 50, width: 22 });
@@ -32,4 +32,11 @@ test('a scale marker is placed by value and kept on its track', () => {
   assert.equal(scalePosition(15, 10, 20), 50);
   assert.equal(scalePosition(-5), 0);
   assert.equal(scalePosition(Number.NaN), null);
+});
+
+test('a heat cell tints toward the side its value leans, more for stronger values', () => {
+  assert.deepEqual(heatShare(0.8), { side: 'pos', percent: 44 });
+  assert.deepEqual(heatShare(-1.4), { side: 'opp', percent: 55 });
+  assert.deepEqual(heatShare(0), { side: 'flat', percent: 0 });
+  assert.equal(heatShare(null), null);
 });

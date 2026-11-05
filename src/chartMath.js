@@ -51,3 +51,13 @@ export function scalePosition(value, minimum = 0, maximum = 100) {
   if (!Number.isFinite(value) || maximum <= minimum) return null;
   return clamp(((value - minimum) / (maximum - minimum)) * 100, 0, 100);
 }
+
+/**
+ * A heatmap cell's tint for a signed value: which pole it leans to and how far
+ * toward that pole's colour, capped so the cell's text stays readable on it.
+ */
+export function heatShare(value, limit = 1, maximumPercent = 55) {
+  if (!Number.isFinite(value) || !(limit > 0)) return null;
+  const share = Math.min(1, Math.abs(value) / limit);
+  return { side: value > 0 ? 'pos' : value < 0 ? 'opp' : 'flat', percent: Math.round(share * maximumPercent) };
+}

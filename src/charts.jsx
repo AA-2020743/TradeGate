@@ -87,10 +87,17 @@ export function PullChart({ rows, subject }) {
  * better for an investor than the other, and in one neutral tone when neither
  * is (a sentiment reading is not good or bad in itself).
  */
-export function ScaleMarker({ scale }) {
+export function ScaleMarker({ scale, compact = false }) {
   const at = scalePosition(scale?.value, scale?.min ?? 0, scale?.max ?? 100);
   if (at === null) return null;
   const polarity = scale.polarity ?? 'none';
+  // A row-sized version: the track alone, named for assistive technology and
+  // on hover, for lists whose rows already print the value.
+  if (compact) {
+    return <div className={`scale-marker scale-compact scale-${polarity}`} role="img" aria-label={`${scale.label}, on a scale from ${scale.left} to ${scale.right}`} title={`${scale.label} (${scale.left} to ${scale.right})`}>
+      <div className="scale-track"><b className="scale-dot" style={{ left: `${at}%` }} /></div>
+    </div>;
+  }
   return <div className={`scale-marker scale-${polarity}`}>
     <div className="scale-track" aria-hidden="true">
       <b className="scale-dot" style={{ left: `${at}%` }} />

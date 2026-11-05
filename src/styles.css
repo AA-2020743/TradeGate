@@ -1140,3 +1140,19 @@ html[data-theme='dark'] .verdict-view-toggle { color: #a8dd9f; }
   .diverging-row, .diverging-axis { grid-template-columns: minmax(0, 38%) minmax(0, 1fr) 50px; gap: 8px; }
   .diverging-chart { padding: 14px 10px 10px; }
 }
+
+/* Correlation heatmap: blue moves with the driver, orange against it. */
+:root { --viz-opp: #eb6834; }
+html[data-theme='dark'] { --viz-opp: #d95926; }
+.heat-legend { display: flex; align-items: center; justify-content: flex-end; gap: 8px; margin: 0 0 8px; font-size: 11.5px; color: var(--viz-ink-2); }
+.heat-legend > i { width: 140px; height: 8px; border-radius: 999px; background: linear-gradient(90deg, color-mix(in srgb, var(--viz-opp) 55%, var(--viz-mid)), var(--viz-mid) 50%, color-mix(in srgb, var(--viz-pos) 55%, var(--viz-mid))); }
+.equity-rotation-row .heat-cell { justify-self: stretch; text-align: center; padding: 4px 2px; border-radius: 4px; color: var(--viz-ink); background: var(--viz-mid); font-weight: 600; cursor: help; }
+.equity-rotation-row .heat-cell.heat-pos { background: color-mix(in srgb, var(--viz-pos) var(--heat, 0%), var(--viz-mid)); }
+.equity-rotation-row .heat-cell.heat-opp { background: color-mix(in srgb, var(--viz-opp) var(--heat, 0%), var(--viz-mid)); }
+.equity-rotation-row .heat-cell:hover { outline: 2px solid var(--viz-ink); outline-offset: -2px; }
+.scale-compact { margin: 6px 0 0; width: 88px; }
+.scale-compact .scale-track { height: 6px; }
+.scale-compact .scale-dot { width: 10px; height: 10px; margin: -5px 0 0 -5px; }
+.brief-stance { display: flex; flex-direction: column; align-items: flex-start; }
+.brief-score { margin-top: 3px; font: 600 10.5px 'DM Mono', monospace; color: var(--viz-ink-2); }
+@media (max-width: 760px) { .brief-stance { align-items: flex-end; } }
