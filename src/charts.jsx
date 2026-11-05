@@ -1,5 +1,5 @@
 import React from 'react';
-import { divergingPosition, divergingTicks, niceLimit, ordinal, pullBar, scalePosition } from './chartMath.js';
+import { divergingPosition, divergingTicks, niceLimit, niceTicks, ordinal, pullBar, scalePosition } from './chartMath.js';
 
 /**
  * The app's charts, in plain HTML positioned by percentage so they reflow at
@@ -44,6 +44,27 @@ function TipBody({ value, label, lines = [] }) {
 }
 
 /**
+ * The shared frame for the row charts: a header that puts the scale above the
+ * rows (so the units are read before the bars), gridlines through every row
+ * at each tick, and value columns that sit next to the bars rather than at
+ * the far edge of a wide card. `ticks` are { at: percent, label }.
+ */
+function AxisHead({ nameLabel = '', ticks, valueLabels = [] }) {
+  return <div className="viz-grid viz-head" aria-hidden="true" style={{ '--values': valueLabels.length || 1 }}>
+    <span className="viz-head-name">{nameLabel}</span>
+    <span className="viz-ticks">{ticks.map((tick, index) => <i key={`${tick.at}-${index}`} className={index === 0 ? 'viz-tick-first' : index === ticks.length - 1 ? 'viz-tick-last' : ''} style={{ left: `${tick.at}%` }}>{tick.label}</i>)}</span>
+    {valueLabels.length ? valueLabels.map((label) => <span key={label} className="viz-head-value">{label}</span>) : <span className="viz-head-value" />}
+  </div>;
+}
+
+function Gridlines({ ticks, baseline = null }) {
+  return <>
+    {ticks.map((tick, index) => <i key={`${tick.at}-${index}`} className={`viz-gridline ${tick.at === baseline ? 'viz-baseline' : ''}`} style={{ left: `${tick.at}%` }} />)}
+  </>;
+}
+
+
+/**
  * A verdict's readings as bars pulling from the neutral line: right helps the
  * asset, left holds it back, length is the distance from neutral. Sorted from
  * the strongest help to the strongest drag, so the chart reads top-down as
@@ -53,30 +74,34 @@ export function PullChart({ rows, subject }) {
   const { box, handlers, node } = useTooltip();
   const scored = rows.filter((row) => Number.isFinite(row.score)).sort((left, right) => right.score - left.score);
   if (!scored.length) return null;
-  return <figure className="viz pull-chart" ref={box}>
+  const ticks = [{ at: 0, label: '0' }, { at: 25, label: '25' }, { at: 50, label: '50 neutral' }, { at: 75, label: '75' }, { at: 100, label: '100' }];
+  return <figure className="viz pull-chart viz-axis-chart" ref={box}>
     <div className="pull-legend" aria-hidden="true">
-      <span><i className="viz-key viz-key-neg" />Holding {subject} back</span>
-      <span>Helping {subject}<i className="viz-key viz-key-pos" /></span>
+      <span><i className="viz-key viz-key-neg" />Below 50: holds {subject} back</span>
+      <span><i className="viz-key viz-key-pos" />Above 50: helps {subject}</span>
     </div>
-    <ul className="pull-rows" aria-label={`Each reading's pull on the verdict for ${subject}, from 0 to 100 where 50 is neutral`}>
+    <AxisHead nameLabel="Reading" ticks={ticks} valueLabels={['Score']} />
+    <ul className="viz-rows" aria-label={`Each reading's pull on the verdict for ${subject}, from 0 to 100 where 50 is neutral`}>
       {scored.map((row) => {
         const bar = pullBar(row.score);
         const side = bar.side === 'pos' ? `helps ${subject}` : bar.side === 'neg' ? `holds ${subject} back` : 'neutral';
         const weight = Number.isFinite(row.weight) ? `${Math.round(row.weight * 100)}% of the verdict's weight` : null;
-        return <li key={row.key} className="pull-row" tabIndex={0} aria-label={`${row.name}: ${row.score} of 100, ${side}${row.detail ? `, ${row.detail}` : ''}`}
-          {...handlers(<TipBody value={`${row.score} / 100`} label={`${row.name} ${side}`} lines={[row.detail, weight]} />)}>
-          <span className="pull-name">{row.name}{row.detail ? <small>{row.detail}</small> : null}</span>
-          <span className="pull-track">
-            <i className="pull-neutral" />
+        // Whole points, as the verdict's own score is printed: "53.2" beside "60" reads as false precision.
+        const shown = Math.round(row.score);
+        return <li key={row.key} className="viz-grid viz-row" style={{ '--values': 1 }} tabIndex={0} aria-label={`${row.name}: ${shown} of 100, ${side}${row.detail ? `, ${row.detail}` : ''}`}
+          {...handlers(<TipBody value={`${shown} / 100`} label={`${row.name} ${side}`} lines={[row.detail, weight]} />)}>
+          <span className="viz-name">{row.name}{row.detail ? <small>{row.detail}</small> : null}</span>
+          <span className="viz-track">
+            <Gridlines ticks={ticks} baseline={50} />
             {bar.side === 'flat'
               ? <b className="pull-dot" style={{ left: '50%' }} />
-              : <b className={`pull-bar pull-${bar.side}`} style={{ left: `${bar.left}%`, width: `${bar.width}%` }} />}
+              : <b className={`viz-bar pull-bar pull-${bar.side}`} style={{ left: `${bar.left}%`, width: `${bar.width}%` }} />}
           </span>
-          <span className="pull-value">{row.score}</span>
+          <span className="viz-val">{shown}</span>
         </li>;
       })}
     </ul>
-    <figcaption>Each reading is scored 0–100. The centre line is 50, neutral; a bar's length is how far the reading sits from it.</figcaption>
+    <figcaption>Each reading is scored 0–100 and the centre line is 50, neutral. A bar's length is how far the reading sits from it.</figcaption>
     {node}
   </figure>;
 }
@@ -115,39 +140,39 @@ export function ScaleMarker({ scale, compact = false }) {
  * a second measure in the same unit (sector performance against the index
  * over 60 and 20 sessions). One axis, so the two can be compared directly.
  */
-export function DivergingBars({ rows, barLabel, dotLabel, unit = '%', caption, formatValue = (value) => `${value > 0 ? '+' : ''}${value.toFixed(1)}${unit}` }) {
+export function DivergingBars({ rows, barLabel, dotLabel, barShort = null, dotShort = null, nameLabel = '', unit = '%', caption, formatValue = (value) => `${value > 0 ? '+' : ''}${value.toFixed(1)}${unit}`, formatTick = (value) => `${value > 0 ? '+' : ''}${Number(value.toFixed(2))}${unit}` }) {
   const { box, handlers, node } = useTooltip();
   const usable = rows.filter((row) => Number.isFinite(row.bar));
   if (!usable.length) return null;
   const limit = niceLimit(Math.max(...usable.flatMap((row) => [Math.abs(row.bar), Number.isFinite(row.dot) ? Math.abs(row.dot) : 0])));
-  const ticks = divergingTicks(limit);
-  return <figure className="viz diverging-chart" ref={box}>
+  const ticks = divergingTicks(limit).map((tick) => ({ at: 50 + ((tick / limit) * 50), label: tick === 0 ? '0' : formatTick(tick) }));
+  const hasDot = Boolean(dotLabel) && usable.some((row) => Number.isFinite(row.dot));
+  const shortOf = (label) => label.replace(/^Last /, '').replace(/ (against|vs) .*$/, '');
+  const valueLabels = hasDot ? [barShort ?? shortOf(barLabel), dotShort ?? shortOf(dotLabel)] : [barShort ?? shortOf(barLabel)];
+  return <figure className="viz diverging-chart viz-axis-chart" ref={box}>
     <div className="diverging-legend">
-      <span><i className="viz-key viz-key-pos" /><i className="viz-key viz-key-neg" />{barLabel}</span>
-      {dotLabel ? <span><i className="viz-key viz-key-dot" />{dotLabel}</span> : null}
+      <span><i className="viz-key viz-key-pos" /><i className="viz-key viz-key-neg" />Bar: {barLabel}</span>
+      {hasDot ? <span><i className="viz-key viz-key-dot" />Dot: {dotLabel}</span> : null}
     </div>
-    <ul className="diverging-rows">
+    <AxisHead nameLabel={nameLabel} ticks={ticks} valueLabels={valueLabels} />
+    <ul className="viz-rows">
       {usable.map((row) => {
         const bar = divergingPosition(row.bar, limit);
-        const dot = Number.isFinite(row.dot) ? divergingPosition(row.dot, limit) : null;
-        return <li key={row.key} className="diverging-row" tabIndex={0}
+        const dot = hasDot && Number.isFinite(row.dot) ? divergingPosition(row.dot, limit) : null;
+        return <li key={row.key} className="viz-grid viz-row" style={{ '--values': valueLabels.length }} tabIndex={0}
           aria-label={`${row.name}: ${barLabel} ${formatValue(row.bar)}${dot ? `, ${dotLabel} ${formatValue(row.dot)}` : ''}${row.note ? `, ${row.note}` : ''}`}
           {...handlers(<TipBody value={formatValue(row.bar)} label={`${row.name}, ${barLabel.charAt(0).toLowerCase()}${barLabel.slice(1)}`} lines={[dot ? `${dotLabel}: ${formatValue(row.dot)}` : null, row.note]} />)}>
-          <span className="diverging-name">{row.name}{row.sub ? <small>{row.sub}</small> : null}</span>
-          <span className="diverging-track">
-            <i className="diverging-zero" />
-            <b className={`diverging-bar diverging-${bar.side}`} style={{ left: `${bar.left}%`, width: `${bar.width}%` }} />
+          <span className="viz-name">{row.name}{row.sub ? <small>{row.sub}</small> : null}</span>
+          <span className="viz-track">
+            <Gridlines ticks={ticks} baseline={50} />
+            <b className={`viz-bar diverging-bar diverging-${bar.side}`} style={{ left: `${bar.left}%`, width: `${bar.width}%` }} />
             {dot ? <b className="diverging-dot" style={{ left: `${dot.at}%` }} /> : null}
           </span>
-          <span className="diverging-value">{formatValue(row.bar)}</span>
+          <span className="viz-val">{formatValue(row.bar)}</span>
+          {hasDot ? <span className="viz-val viz-val-2">{Number.isFinite(row.dot) ? formatValue(row.dot) : '—'}</span> : null}
         </li>;
       })}
     </ul>
-    <div className="diverging-axis" aria-hidden="true">
-      <span />
-      <span className="diverging-ticks">{ticks.map((tick) => <i key={tick} style={{ left: `${50 + ((tick / limit) * 50)}%` }}>{tick === 0 ? '0' : formatValue(tick)}</i>)}</span>
-      <span />
-    </div>
     {caption ? <figcaption>{caption}</figcaption> : null}
     {node}
   </figure>;
@@ -159,21 +184,25 @@ export function DivergingBars({ rows, barLabel, dotLabel, unit = '%', caption, f
  * a context grey, for charts where one bar is the point and the others are
  * there to judge it by ("today's fall against the typical and the worst").
  */
-export function MagnitudeBars({ rows, tone = 'neg', caption, label, maximum: fixedMaximum = null, reference = null, referenceLabel = null }) {
+export function MagnitudeBars({ rows, tone = 'neg', caption, label, maximum: fixedMaximum = null, reference = null, referenceLabel = null, formatTick = null, valueLabel = '' }) {
   const { box, handlers, node } = useTooltip();
   const usable = rows.filter((row) => Number.isFinite(row.value));
   if (!usable.length) return null;
-  const maximum = fixedMaximum ?? (Math.max(...usable.map((row) => Math.abs(row.value))) || 1);
-  return <figure className="viz magnitude-chart" ref={box} aria-label={label}>
-    <ul className="magnitude-rows">
-      {usable.map((row) => <li key={row.key} className="magnitude-row" tabIndex={0} aria-label={`${row.label}: ${row.display}${row.note ? `, ${row.note}` : ''}`}
+  const maximum = fixedMaximum ?? niceLimit(Math.max(...usable.map((row) => Math.abs(row.value))) || 1);
+  const ticks = niceTicks(maximum).map((value) => ({ at: (value / maximum) * 100, label: formatTick ? formatTick(value) : '' }));
+  const referenceAt = Number.isFinite(reference) ? (reference / maximum) * 100 : null;
+  return <figure className="viz magnitude-chart viz-axis-chart" ref={box} aria-label={label}>
+    {formatTick ? <AxisHead ticks={ticks} valueLabels={[valueLabel]} /> : null}
+    <ul className="viz-rows">
+      {usable.map((row) => <li key={row.key} className="viz-grid viz-row" style={{ '--values': 1 }} tabIndex={0} aria-label={`${row.label}: ${row.display}${row.note ? `, ${row.note}` : ''}`}
         {...handlers(<TipBody value={row.display} label={row.label} lines={[row.note]} />)}>
-        <span className="magnitude-name">{row.label}{row.sub ? <small>{row.sub}</small> : null}</span>
-        <span className="magnitude-track">
-          {Number.isFinite(reference) ? <i className="magnitude-ref" style={{ left: `${(reference / maximum) * 100}%` }} /> : null}
-          <b className={`magnitude-bar ${row.emphasis ? `magnitude-${tone}` : 'magnitude-context'}`} style={{ width: `${Math.max(1.5, (Math.abs(row.value) / maximum) * 100)}%` }} />
+        <span className="viz-name">{row.label}{row.sub ? <small>{row.sub}</small> : null}</span>
+        <span className="viz-track">
+          <Gridlines ticks={ticks} baseline={0} />
+          {referenceAt !== null ? <i className="viz-reference" style={{ left: `${referenceAt}%` }} /> : null}
+          <b className={`viz-bar magnitude-bar ${row.emphasis ? `magnitude-${tone}` : 'magnitude-context'}`} style={{ left: 0, width: `${Math.max(1.5, Math.min(100, (Math.abs(row.value) / maximum) * 100))}%` }} />
         </span>
-        <span className="magnitude-value">{row.display}</span>
+        <span className="viz-val">{row.display}</span>
       </li>)}
     </ul>
     {referenceLabel ? <p className="magnitude-ref-label"><i className="paired-ref-key" />{referenceLabel}</p> : null}
@@ -257,17 +286,18 @@ export function PercentileStrip({ rows, lowLabel, highLabel, caption }) {
   const { box, handlers, node } = useTooltip();
   const usable = rows.filter((row) => Number.isFinite(row.value));
   if (!usable.length) return null;
-  return <figure className="viz percentile-chart" ref={box}>
-    <div className="percentile-ends" aria-hidden="true"><span /><span><span>{lowLabel}</span><span>{highLabel}</span></span><span /></div>
-    <ul className="percentile-rows">
+  const ticks = [{ at: 0, label: lowLabel ?? '0' }, { at: 25, label: '25th' }, { at: 50, label: '50th' }, { at: 75, label: '75th' }, { at: 100, label: highLabel ?? '100th' }];
+  return <figure className="viz percentile-chart viz-axis-chart" ref={box}>
+    <AxisHead ticks={ticks} valueLabels={['Pctl.']} />
+    <ul className="viz-rows">
       {usable.map((row) => {
         const at = scalePosition(row.value, 0, 100);
         const extreme = row.value <= 10 || row.value >= 90;
-        return <li key={row.key} className="percentile-row" tabIndex={0} aria-label={`${row.name}: ${ordinal(row.value)} percentile of its own history${row.note ? `, ${row.note}` : ''}`}
+        return <li key={row.key} className="viz-grid viz-row" style={{ '--values': 1 }} tabIndex={0} aria-label={`${row.name}: ${ordinal(row.value)} percentile of its own history${row.note ? `, ${row.note}` : ''}`}
           {...handlers(<TipBody value={`${ordinal(row.value)} percentile`} label={row.name} lines={[row.note, extreme ? 'An extreme: outside 90% of its own history' : null]} />)}>
-          <span className="percentile-name">{row.name}{row.sub ? <small>{row.sub}</small> : null}</span>
-          <span className="percentile-track"><i className="percentile-zone percentile-zone-low" /><i className="percentile-zone percentile-zone-high" /><b className={`percentile-dot ${extreme ? 'percentile-extreme' : ''}`} style={{ left: `${at}%` }} /></span>
-          <span className="percentile-value">{row.value}</span>
+          <span className="viz-name">{row.name}{row.sub ? <small>{row.sub}</small> : null}</span>
+          <span className="viz-track percentile-track"><i className="percentile-zone percentile-zone-low" /><i className="percentile-zone percentile-zone-high" /><Gridlines ticks={ticks} baseline={50} /><b className={`percentile-dot ${extreme ? 'percentile-extreme' : ''}`} style={{ left: `${at}%` }} /></span>
+          <span className="viz-val">{ordinal(row.value)}</span>
         </li>;
       })}
     </ul>
@@ -288,19 +318,24 @@ export function PairedBars({ rows, aLabel, bLabel, reference = 100, unit = '%', 
   const limit = niceLimit(Math.max(reference, ...usable.flatMap((row) => [row.a, row.b]).filter(Number.isFinite)));
   const width = (value) => (Number.isFinite(value) ? Math.max(0, Math.min(100, (value / limit) * 100)) : 0);
   const show = (value) => (Number.isFinite(value) ? `${value}${unit}` : '—');
-  return <figure className="viz paired-chart" ref={box}>
+  const ticks = niceTicks(limit).map((value) => ({ at: (value / limit) * 100, label: `${value}${unit}` }));
+  const referenceAt = (reference / limit) * 100;
+  return <figure className="viz paired-chart viz-axis-chart" ref={box}>
     <div className="diverging-legend"><span><i className="viz-key viz-key-pos" />{aLabel}</span><span><i className="viz-key viz-key-opp" />{bLabel}</span><span><i className="paired-ref-key" />{reference}{unit}: moves one-for-one</span></div>
-    <ul className="paired-rows">
-      {usable.map((row) => <li key={row.key} className="paired-row" tabIndex={0}
+    <AxisHead ticks={ticks} valueLabels={[aLabel.replace(/ capture$/i, ''), bLabel.replace(/ capture$/i, '')]} />
+    <ul className="viz-rows">
+      {usable.map((row) => <li key={row.key} className="viz-grid viz-row" style={{ '--values': 2 }} tabIndex={0}
         aria-label={`${row.name}: ${aLabel} ${show(row.a)}, ${bLabel} ${show(row.b)}${row.note ? `, ${row.note}` : ''}`}
         {...handlers(<TipBody value={`${show(row.a)} up · ${show(row.b)} down`} label={row.name} lines={[row.note]} />)}>
-        <span className="paired-name">{row.name}{row.sub ? <small>{row.sub}</small> : null}</span>
-        <span className="paired-track">
-          <i className="paired-ref" style={{ left: `${(reference / limit) * 100}%` }} />
+        <span className="viz-name">{row.name}{row.sub ? <small>{row.sub}</small> : null}</span>
+        <span className="viz-track paired-track">
+          <Gridlines ticks={ticks} baseline={0} />
+          <i className="viz-reference" style={{ left: `${referenceAt}%` }} />
           <b className="paired-bar paired-a" style={{ width: `${width(row.a)}%` }} />
           <b className="paired-bar paired-b" style={{ width: `${width(row.b)}%` }} />
         </span>
-        <span className="paired-values"><span>{show(row.a)}</span><span>{show(row.b)}</span></span>
+        <span className="viz-val">{show(row.a)}</span>
+        <span className="viz-val viz-val-2">{show(row.b)}</span>
       </li>)}
     </ul>
     {caption ? <figcaption>{caption}</figcaption> : null}

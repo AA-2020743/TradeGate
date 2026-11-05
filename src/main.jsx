@@ -870,6 +870,8 @@ function DrawdownProfilePanel({ drawdown, id }) {
       <div className="detail-score"><span>Below the running peak</span><b>{drawdown.drawdownPercent}%</b><small>{drawdown.inDrawdown ? `${drawdown.sessionsSincePeak} sessions since the ${drawdown.peakDate} peak of ${drawdown.peak}` : `New high — this history spent ${drawdown.underwaterSharePercent}% of its sessions below a prior peak`}</small></div>
       <MagnitudeBars
         label="Today's fall from the peak against this history's typical and worst completed falls"
+        formatTick={(value) => (value ? `-${value}%` : '0')}
+        valueLabel="Fall"
         rows={[
           { key: 'now', label: 'Today', sub: drawdown.inDrawdown ? `${drawdown.sessionsSincePeak} sessions since the ${drawdown.peakDate} peak` : 'at a new high', value: drawdown.drawdownPercent, display: `${drawdown.drawdownPercent}%`, emphasis: true, note: `Deeper than ${drawdown.depthPercentile}% of sessions in this history` },
           { key: 'typical', label: 'Typical fall here', sub: `median of ${drawdown.completedEpisodes} completed`, value: drawdown.medianCompletedTrough, display: `${drawdown.medianCompletedTrough}%` },
@@ -1164,6 +1166,8 @@ function VolatilityTermPanel({ volatility }) {
     {published ? <MagnitudeBars
       tone="pos"
       label="Annualized realized volatility over each window"
+      formatTick={(value) => `${value}%`}
+      valueLabel="Vol."
       rows={(volatility.terms ?? []).map((term, index, terms) => ({
         key: String(term.window),
         label: `Last ${term.window} sessions`,
@@ -1550,6 +1554,7 @@ function FactorReturnsPanel({ factors }) {
         }))}
         barLabel="Last 12 months"
         dotLabel="Last 3 months"
+        nameLabel="Factor"
         caption="Long-short factor returns: blue factors made money over the year, red lost it; the dot is the last three months on the same scale."
       />
       <div className="factor-head"><span>Factor</span><span>1M</span><span>3M</span><span>12M</span><span>12M vs history</span><span>Drawdown</span><span>Vol vs history</span></div>
@@ -2811,6 +2816,7 @@ function EquitiesDashboard({ platformData }) {
         }))}
         barLabel="Last 60 sessions vs the S&P 500"
         dotLabel="Last 20 sessions"
+        nameLabel="Sector"
         caption="Blue bars beat the S&P 500 over 60 sessions, red bars trailed it; the dot is the last 20 sessions on the same scale. Ahead on both is Leading, ahead on 60 but behind on 20 is Weakening, behind on 60 but ahead on 20 is Improving, behind on both is Lagging."
       />
     </div> : null}
@@ -2865,6 +2871,7 @@ function EquitiesDashboard({ platformData }) {
           }))}
           barLabel="Last 60 sessions"
           dotLabel="Last 20 sessions"
+          nameLabel="Pair"
           caption="A blue bar means the first of the pair has beaten the second over 60 sessions, a red bar that it has trailed; the dot is the last 20 sessions on the same scale."
         />
         <div className="equity-rotation-head styles-head"><span>Rotation pair</span><span>20D spread</span><span>60D spread</span><span>Leader</span><span>Regime</span></div>
@@ -2958,6 +2965,8 @@ function EquitiesDashboard({ platformData }) {
             reference={50}
             referenceLabel="Half the universe"
             label="Share of the ETF universe participating"
+            formatTick={(value) => `${value}%`}
+            valueLabel="Share"
             rows={[
               { key: 'above50', label: 'Above 50-day average', value: sectorData.sectorBreadth.pctAbove50, display: `${sectorData.sectorBreadth.pctAbove50}%`, emphasis: true, note: 'Shorter-term trend participation' },
               { key: 'above200', label: 'Above 200-day average', value: sectorData.sectorBreadth.pctAbove200, display: `${sectorData.sectorBreadth.pctAbove200}%`, emphasis: true, note: 'Long-cycle participation' },
@@ -4321,7 +4330,7 @@ function ForexDashboard({ data }) {
     <AnswerPicture titleId="fx-picture-title" kicker="THE CURRENCY PICTURE" total={6} brief={fxBrief} fallbackTitle="What the evidence says about the dollar today" onOpen={(card) => scrollToAnchor(card.anchor)}
       footnote="Each answer reads a panel on this page and describes today; none is a forecast. The dollar composite above is shown as a state for the same reason: its replayed calls did not rank what followed." />
     {strengthRows.length ? <div id="fx-strength" className="panel chart-panel">
-      <DivergingBars rows={strengthRows} barLabel="Last 20 sessions against the dollar" dotLabel="Last 60 sessions"
+      <DivergingBars rows={strengthRows} nameLabel="Currency" barLabel="Last 20 sessions against the dollar" dotLabel="Last 60 sessions"
         caption="Blue bars gained against the dollar, red bars lost to it; the dot is the last 60 sessions on the same scale. A currency whose dot and bar sit on opposite sides has turned." />
     </div> : null}
     <FxCarryPanel id="fx-carry" />

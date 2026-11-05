@@ -70,3 +70,21 @@ export function ordinal(value) {
   if (lastTwo >= 11 && lastTwo <= 13) return `${rounded}th`;
   return `${rounded}${{ 1: 'st', 2: 'nd', 3: 'rd' }[Math.abs(rounded) % 10] ?? 'th'}`;
 }
+
+/**
+ * Round tick values from zero to `limit`, at most `maxIntervals` apart:
+ * 150 -> 0, 50, 100, 150; 100 -> 0, 25, 50, 75, 100; 8 -> 0, 2, 4, 6, 8.
+ * Never the "38%, 113%" an even quartering of 150 prints.
+ */
+export function niceTicks(limit, maxIntervals = 5) {
+  if (!(limit > 0)) return [0];
+  const magnitude = 10 ** Math.floor(Math.log10(limit));
+  for (const base of [0.1, 0.25, 0.2, 0.5, 1, 2.5, 2, 5, 10]) {
+    const step = base * magnitude;
+    const count = limit / step;
+    if (count <= maxIntervals && Math.abs(count - Math.round(count)) < 1e-9) {
+      return Array.from({ length: Math.round(count) + 1 }, (_unused, index) => Number((index * step).toPrecision(6)));
+    }
+  }
+  return [0, limit];
+}
