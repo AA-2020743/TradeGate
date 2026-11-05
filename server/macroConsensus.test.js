@@ -535,6 +535,7 @@ test('the macro verdict agrees with the regime card it sits above', () => {
 
 test('the macro verdict declines when the regime model has not published', () => {
   assert.equal(calculateMacroVerdict({}).status, 'unavailable');
+  assert.equal(calculateMacroVerdict({ macroRegime: { status: 'unavailable', reason: 'Fewer than three regime inputs reported.' } }).reason, 'The macro regime model it is built from did not publish: fewer than three regime inputs reported.');
   assert.equal(calculateMacroVerdict({ macroRegime: { status: 'unavailable', reason: 'no drivers' } }).status, 'unavailable');
 });
 

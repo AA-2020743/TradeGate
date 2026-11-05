@@ -38,6 +38,15 @@ test('health answers with the provider posture rather than failing', async () =>
 
 
 
+test('the Overview brief answers for all five sections even with no provider reachable', async () => {
+  const response = await get('/api/analytics/verdicts');
+  assert.equal(response.status, 200);
+  const body = await response.json();
+  assert.deepEqual(body.entries.map((entry) => entry.key), ['macro', 'equities', 'metals', 'fx', 'crypto']);
+  // A section that could not answer says why instead of dropping off the card.
+  for (const entry of body.entries) assert.ok(entry.stance || entry.reason, `${entry.key} has neither a stance nor a reason`);
+});
+
 test('every read route answers JSON even with no provider reachable', async () => {
   const paths = [
     '/api/analytics/dxy-btc',

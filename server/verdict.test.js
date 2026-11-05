@@ -326,3 +326,11 @@ test('strong readings cancelling in a neutral verdict still hold confidence back
   assert.doesNotMatch(verdict.confidenceText, /weight|split/);
   assert.match(verdict.confidenceWhy, /^[A-Z].*the readings disagree.*\.$/);
 });
+
+test('a verdict with nothing to weigh says why, not "0 of the 0 inputs"', () => {
+  const bare = buildVerdict({ title: 'Macro conditions', signals: [] });
+  assert.equal(bare.status, 'unavailable');
+  assert.equal(bare.reason, 'None of its inputs were available to weigh.');
+  const told = buildVerdict({ signals: [], emptyReason: 'the macro regime model did not publish' });
+  assert.equal(told.reason, 'The macro regime model did not publish.');
+});

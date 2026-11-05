@@ -28,6 +28,7 @@ import { MODEL_REGISTRY } from './modelRegistry.js';
 import { buildWorkspaceSnapshot, snapshotToCsv } from './workspaceSnapshot.js';
 import { DAILY_SNAPSHOT_MODEL_ID, getDailyChanges } from './dailySnapshot.js';
 import { buildScorecard } from './scorecard.js';
+import { BRIEF_SECTIONS, buildVerdictBrief } from './verdictBrief.js';
 import { withCache } from './cache.js';
 
 const app = express();
@@ -390,6 +391,40 @@ app.get('/api/analytics/scorecard', async (_request, response, next) => {
   try {
     const settled = await Promise.allSettled(SCORECARD_SOURCES.map((source) => withTimeout(Promise.resolve().then(source.load), SCORECARD_LOADER_TIMEOUT_MS, source.name)));
     response.json(buildScorecard(SCORECARD_SOURCES.map((source, index) => ({ ...source, result: settled[index] }))));
+  } catch (error) {
+    next(error);
+  }
+});
+
+// Each section's own verdict, gathered for the Overview. The workspaces are
+// cached for 15-30 minutes by their loaders; the equity dashboard is not, so
+// its verdict is held here for ten rather than re-running the dashboard's six
+// reads on every Overview visit.
+const BRIEF_LOADERS = {
+  macro: () => getLiquiditySnapshot().then((snapshot) => snapshot?.macroVerdict ?? null),
+  equities: () => withCache('brief:spy-verdict', 10 * 60_000, () => getEquityDashboard('SPY').then((dashboard) => dashboard?.verdict ?? null)),
+  metals: () => getMetalsWorkspace().then((workspace) => workspace?.verdict ?? null),
+  fx: () => getFxWorkspace().then((workspace) => workspace?.verdict ?? null),
+  crypto: () => getBitcoinCycleWorkspace().then((workspace) => workspace?.verdict ?? null),
+};
+const BRIEF_LOADER_TIMEOUT_MS = 30_000;
+
+app.get('/api/analytics/verdicts', async (_request, response, next) => {
+  try {
+    const keys = BRIEF_SECTIONS.map((section) => section.key);
+    const [settled, records] = await Promise.all([
+      Promise.allSettled(keys.map((key) => withTimeout(Promise.resolve().then(BRIEF_LOADERS[key]), BRIEF_LOADER_TIMEOUT_MS, `The ${key} verdict`))),
+      // The grades are a garnish: a slow replay leaves them off rather than
+      // holding back the five answers.
+      withTimeout(getVerdictTrackRecords(), BRIEF_LOADER_TIMEOUT_MS, 'The verdict records').catch(() => null),
+    ]);
+    const verdicts = {};
+    const failures = {};
+    keys.forEach((key, index) => {
+      if (settled[index].status === 'fulfilled') verdicts[key] = settled[index].value;
+      else failures[key] = settled[index].reason?.message ?? String(settled[index].reason);
+    });
+    response.json(buildVerdictBrief({ verdicts, failures, records }));
   } catch (error) {
     next(error);
   }

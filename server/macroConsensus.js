@@ -812,7 +812,14 @@ export function calculateConsensusHistory(outputs = [], { minimumObservations = 
 export function calculateMacroVerdict(models = {}) {
   const { macroRegime } = models;
   if (!macroRegime || macroRegime.status === 'unavailable') {
-    return buildVerdict({ title: 'Macro conditions', version: 'macro-verdict-v1', subject: 'risk assets', signals: [] });
+    const why = String(macroRegime?.reason ?? '').trim().replace(/\.$/, '');
+    return buildVerdict({
+      title: 'Macro conditions',
+      version: 'macro-verdict-v1',
+      subject: 'risk assets',
+      signals: [],
+      emptyReason: `the macro regime model it is built from did not publish${why ? `: ${why.charAt(0).toLowerCase()}${why.slice(1)}` : ''}`,
+    });
   }
   return buildVerdictFromModel(macroRegime, {
     title: 'Macro conditions',

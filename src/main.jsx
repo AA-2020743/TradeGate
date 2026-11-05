@@ -628,6 +628,8 @@ function App() {
 
           <DataDisclosure data={platformData} message="Quotes and charts come from market data providers. The technical state, the day's changes and the wire's tone are calculated from them, and a panel marked Unavailable did not receive its inputs rather than showing an estimate." />
 
+          <VerdictBrief onNavigate={setActiveNav} />
+
           <section className="market-strip">
             <div className="market-label"><span className="globe">◉</span><div><b>Live market proxies</b><small>{formatTimestamp(platformData.markets?.asOf)}</small></div></div>
             <MarketCell name="S&P 500 ETF" quote={quotesByKey.SPY} />
@@ -1008,6 +1010,43 @@ function VerdictBanner({ verdict, recordSection = null }) {
       {record ? <p className="verdict-reason"><b>Track record, in full:</b> {record.text}{record.caution ? <> <b className="verdict-record-caution">{record.caution}</b></> : null}</p> : null}
       {verdict.methodology ? <p className="verdict-reason"><b>Method:</b> {verdict.methodology}</p> : null}
     </details>
+  </section>;
+}
+
+/**
+ * Every section's verdict on one card: an investor reads what the platform
+ * thinks about risk assets, stocks, gold, the dollar and bitcoin without
+ * opening five pages, each line in the same words as the page it opens.
+ */
+function VerdictBrief({ onNavigate }) {
+  const { status, data: brief, error } = useLazyResource('/api/analytics/verdicts');
+  const entries = brief?.entries ?? [];
+  const published = entries.some((entry) => entry.stance);
+  return <section className="verdict-brief panel" aria-labelledby="verdict-brief-title">
+    <div className="card-heading">
+      <div><p className="section-kicker">WHERE THINGS STAND · {status === 'loading' ? 'LOADING' : published ? (brief.status === 'calculated' ? 'CALCULATED' : 'PARTIAL') : 'UNAVAILABLE'}</p><h3 id="verdict-brief-title">Today&apos;s verdicts, in one place</h3></div>
+      {brief?.asOf ? <span className="data-pill">{formatTimestamp(brief.asOf)}</span> : null}
+    </div>
+    {status === 'loading' ? <p className="brief-summary brief-muted">Gathering each section&apos;s verdict…</p>
+      : status === 'unavailable' ? <p className="brief-summary brief-muted">The verdicts could not be loaded: {error}</p>
+        : brief?.summary ? <p className="brief-summary">{brief.summary}</p> : null}
+    {entries.length ? <ul className="brief-rows">
+      {entries.map((entry) => <li key={entry.key}>
+        <button type="button" className="brief-row" onClick={() => onNavigate(entry.page)} title={`Open ${entry.page} for the full verdict`}>
+          <span className="brief-asset"><b>{entry.label}</b><small>{entry.stance ? (entry.presentation === 'state' ? 'Conditions, not a call' : `Model call: ${entry.call}`) : 'No verdict'}</small></span>
+          <span className="brief-stance">{entry.stance
+            ? <span className={`verdict-stance verdict-stance-${entry.stance}`}>{STANCE_LABEL[entry.stance]}</span>
+            : <span className="verdict-stance verdict-stance-mixed">Unavailable</span>}</span>
+          <span className="brief-line">{entry.stance ? entry.bottomLine : entry.reason}</span>
+          <span className="brief-meta">
+            {entry.confidence ? <b className={`verdict-confidence verdict-confidence-${entry.confidence}`}>{entry.confidence} confidence</b> : null}
+            {entry.record ? <b className={`verdict-grade verdict-grade-${entry.record.tone}`} title={entry.record.sentence}>Record: {entry.record.grade}</b> : null}
+          </span>
+          <span className="brief-go" aria-hidden="true">→</span>
+        </button>
+      </li>)}
+    </ul> : null}
+    {published ? <p className="model-footnote">Each line is that page&apos;s own verdict, unchanged; open it for what is helping, what is holding it back and how it was reached. Record grades come from replaying each verdict on data it was not built on - risk assets and the S&amp;P 500 do not have a replayed verdict record yet.</p> : null}
   </section>;
 }
 

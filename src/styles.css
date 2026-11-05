@@ -910,3 +910,49 @@ html[data-theme='dark'] .chart-csv { border-color: #303b34; color: #dce5dc; }
 @media print { .chart-csv, .dialog-actions { display: none !important; } }
 
 html[data-theme='dark'] .price-tag { background: #63b954; color: #10180f; }
+
+/* Overview: every section's verdict on one card. */
+.verdict-brief { margin-top: 18px; padding: 18px 21px 16px; }
+.brief-summary { margin: 10px 0 4px; font-size: 15px; line-height: 1.45; font-weight: 600; max-width: 70ch; }
+.brief-muted { font-weight: 400; font-size: 12px; color: #5b645c; }
+html[data-theme='dark'] .brief-muted { color: #b3beb2; }
+.brief-rows { list-style: none; margin: 8px 0 0; padding: 0; }
+.brief-rows > li + li { border-top: 1px solid var(--hairline, rgba(127, 127, 127, 0.18)); }
+.brief-row {
+  width: 100%;
+  display: grid;
+  grid-template-columns: minmax(118px, 150px) 96px minmax(0, 1fr) auto 16px;
+  gap: 14px;
+  align-items: center;
+  padding: 11px 6px;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  border-radius: 6px;
+}
+.brief-row:hover { background: #f0f4ed; }
+html[data-theme='dark'] .brief-row:hover { background: #27332b; }
+.brief-row:focus-visible { outline: 2px solid #4d7948; outline-offset: -2px; }
+html[data-theme='dark'] .brief-row:focus-visible { outline-color: #a8dd9f; }
+.brief-asset b, .brief-asset small { display: block; }
+.brief-asset b { font-size: 13px; }
+.brief-asset small { margin-top: 2px; font-size: 11px; color: #5b645c; }
+html[data-theme='dark'] .brief-asset small { color: #b3beb2; }
+.brief-stance .verdict-stance { display: inline-block; font-size: 10px; }
+.brief-line { font-size: 13px; line-height: 1.45; }
+.brief-meta { display: flex; flex-direction: column; align-items: flex-end; gap: 4px; }
+.brief-meta .verdict-confidence { margin: 0; font-size: 10px; }
+.brief-meta .verdict-grade { margin: 0; font-size: 10px; }
+.brief-go { color: #5b645c; font-size: 14px; }
+html[data-theme='dark'] .brief-go { color: #b3beb2; }
+@media (max-width: 760px) {
+  .brief-row { grid-template-columns: minmax(0, 1fr) auto; gap: 6px 10px; }
+  .brief-asset { grid-column: 1; }
+  .brief-stance { grid-column: 2; justify-self: end; }
+  .brief-line { grid-column: 1 / -1; }
+  .brief-meta { grid-column: 1 / -1; flex-direction: row; flex-wrap: wrap; align-items: center; justify-content: flex-start; }
+  .brief-go { display: none; }
+}

@@ -101,6 +101,10 @@ export function buildVerdict({
   // What the verdict is about, as a reader would name it mid-sentence:
   // "bitcoin", "gold", "the dollar". Used by the bottom line.
   subject = null,
+  // Why there is nothing to weigh, when the caller passes no signals at all
+  // because the model they come from did not publish. Counting "0 of the 0
+  // inputs" says nothing about that.
+  emptyReason = null,
 } = {}) {
   const scored = signals.filter((signal) => Number.isFinite(signal?.score));
   const totalWeight = signals.reduce((total, signal) => total + (signal?.weight ?? 1), 0);
@@ -118,7 +122,9 @@ export function buildVerdict({
   const tooFew = scored.length < minimumSignals;
   const tooThin = coverage < minimumCoverage;
   if (tooFew || tooThin) {
-    const shortfall = tooFew && tooThin
+    const shortfall = !signals.length
+      ? emptyReason ?? 'none of its inputs were available to weigh'
+      : tooFew && tooThin
       ? `only ${scored.length} of the ${signals.length} inputs reported, covering ${Math.round(coverage * 100)}% of the weight - short of both the ${minimumSignals}-reading minimum and the ${Math.round(minimumCoverage * 100)}% coverage floor`
       : tooFew
         ? `${scored.length} of the ${signals.length} inputs reported and a verdict needs at least ${minimumSignals}. The ${scored.length} that did report cover ${Math.round(coverage * 100)}% of the weight, so it is the number of independent readings that is short, not the weight behind them`
@@ -127,7 +133,8 @@ export function buildVerdict({
       version,
       title,
       status: 'unavailable',
-      reason: `${shortfall}.${missing.length ? ` Missing: ${missing.map((entry) => entry.name).join(', ')}.` : ''}`,
+      // Shown as a sentence on its own, so it starts with a capital.
+      reason: `${shortfall.replace(/^./, (letter) => letter.toUpperCase())}.${missing.length ? ` Missing: ${missing.map((entry) => entry.name).join(', ')}.` : ''}`,
       coverage: Math.round(coverage * 100),
       score: null,
       call: null,
