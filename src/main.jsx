@@ -4,6 +4,7 @@ import './styles.css';
 import { describeTechnical } from './technicalSummary.js';
 import { buildEquityBrief } from './equityBrief.js';
 import { buildMacroBrief } from './macroBrief.js';
+import { buildMetalsBrief } from './metalsBrief.js';
 import { DivergingBars, MagnitudeBars, PairedBars, PercentileStrip, PointsLine, PullChart, RangeChart, ScaleMarker } from './charts.jsx';
 import { heatShare } from './chartMath.js';
 import { changeOverSpan, formatPercent, formatSpanLabel, formatTimestamp, formatUsd, useEquityResearch, useLazyResource, useMarketHistory, usePlatformData, useTechnicalAnalytics } from './liveData.js';
@@ -1297,7 +1298,7 @@ function TrackRecordTable({ record, current = null, title = 'TRACK RECORD', stat
  * read has to move to change the multiple, and what the rule would have paid
  * against a flat schedule over the asset's own history.
  */
-function AccumulationPanel({ accumulation, only = null, title = 'ACCUMULATION RULE' }) {
+function AccumulationPanel({ accumulation, only = null, title = 'ACCUMULATION RULE', id }) {
   const status = accumulation?.status ?? 'unavailable';
   const all = accumulation?.schedules ?? [];
   const schedules = only ? all.filter((schedule) => schedule.key === only) : all;
@@ -1319,7 +1320,7 @@ function AccumulationPanel({ accumulation, only = null, title = 'ACCUMULATION RU
   // asset elsewhere in the payload could not be ranked.
   const shownStatus = single ? single.status : scored.length === all.length && status !== 'unavailable' ? 'calculated' : scored.length ? 'provisional' : 'unavailable';
 
-  return <article className={`panel dca-panel ${published ? '' : 'preview-section'}`}>
+  return <article id={id} className={`panel dca-panel ${published ? '' : 'preview-section'}`}>
     <div className="panel-title">
       <div>
         <p className="section-kicker">{title} · {shownStatus.toUpperCase()}</p>
@@ -2650,26 +2651,29 @@ function CaptureProfileSection({ capture }) {
 }
 
 /**
- * The equity section's answers in plain words, each linking to the panel that
- * backs it. See src/equityBrief.js for how each answer is read.
+ * A page's answers in plain words: one card per question, each with its
+ * answer, a scale where the answer is a position, one sentence, and a link to
+ * the evidence. The page's brief module (equityBrief.js, macroBrief.js,
+ * metalsBrief.js) decides what each card says; this only draws it.
  */
-function EquityPicture({ brief }) {
+function AnswerPicture({ titleId, kicker, total, brief, fallbackTitle, footnote, onOpen, linkLabel = () => 'See the evidence ↓' }) {
   if (!brief?.cards?.length) return null;
-  const open = (anchor) => document.getElementById(anchor)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
-  return <section className="equity-picture panel" aria-labelledby="equity-picture-title">
-    <div className="panel-title"><div><p className="section-kicker">THE EQUITY PICTURE · {brief.cards.length} OF 7 ANSWERED</p><h3 id="equity-picture-title">{brief.summary ?? 'What the evidence says today'}</h3></div></div>
+  return <section className="equity-picture panel" aria-labelledby={titleId}>
+    <div className="panel-title"><div><p className="section-kicker">{kicker} · {brief.cards.length} OF {total} ANSWERED</p><h3 id={titleId}>{brief.summary ?? fallbackTitle}</h3></div></div>
     <div className="equity-picture-grid">
       {brief.cards.map((card) => <article className="equity-answer" key={card.key}>
         <p className="equity-question">{card.question}</p>
         <p className={`equity-answer-word equity-answer-${card.tone}`}>{card.answer}</p>
         {card.scale ? <ScaleMarker scale={card.scale} /> : null}
         <p className="equity-answer-sentence">{card.sentence}</p>
-        <button type="button" className="equity-answer-link" onClick={() => open(card.anchor)}>See the evidence <span aria-hidden="true">↓</span></button>
+        <button type="button" className="equity-answer-link" onClick={() => onOpen(card)}>{linkLabel(card)}</button>
       </article>)}
     </div>
-    <p className="model-footnote">Each answer describes today from the panels below; none is a forecast. Trend and risk follow the index selected above; valuation, breadth, earnings, sectors and sentiment are measured on US stocks.</p>
+    {footnote ? <p className="model-footnote">{footnote}</p> : null}
   </section>;
 }
+
+const scrollToAnchor = (anchor) => document.getElementById(anchor)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
 
 const EQUITY_PAGE_SECTIONS = [
   ['equity-signals', 'Signals'],
@@ -2735,7 +2739,8 @@ function EquitiesDashboard({ platformData }) {
 
     {/* The replayed record is the S&P 500's; another index's verdict has none. */}
     <VerdictBanner verdict={dashboard?.verdict} recordSection={selectedSymbol === 'SPY' ? 'equities' : null} />
-    <EquityPicture brief={equityBrief} />
+    <AnswerPicture titleId="equity-picture-title" kicker="THE EQUITY PICTURE" total={7} brief={equityBrief} fallbackTitle="What the evidence says today" onOpen={(card) => scrollToAnchor(card.anchor)}
+      footnote="Each answer describes today from the panels below; none is a forecast. Trend and risk follow the index selected above; valuation, breadth, earnings, sectors and sentiment are measured on US stocks." />
     <EquityPageNav />
 
     <section className="equity-index-layout">
@@ -3089,6 +3094,21 @@ function MetalsDashboard({ data }) {
   const selectedMetal = assets.find((asset) => asset.symbol === selectedSymbol) ?? assets[0];
   const cot = workspace?.cot;
   const macro = workspace?.macro;
+  const realYield = useLazyResource('/api/analytics/gold-real-yield');
+  const metalsBrief = buildMetalsBrief({
+    gold: assets.find((asset) => asset.symbol === 'XAU') ?? null,
+    accumulation: data.accumulation,
+    realYield: realYield.data,
+    macro,
+    goldSilver: workspace?.ratios?.goldSilver,
+    cot,
+  });
+  // The trend and macro panels follow the selected metal; the answers are
+  // about gold, so their links select it first.
+  const openMetalsEvidence = (card) => {
+    if (['metals-trend', 'metals-macro'].includes(card.anchor)) setSelectedSymbol('XAU');
+    requestAnimationFrame(() => scrollToAnchor(card.anchor));
+  };
   const formatPrice = (value) => Number.isFinite(value) ? `$${value.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : '—';
   const technicalRows = selectedMetal ? [
     ['Technical score', String(selectedMetal.score), selectedMetal.regime, selectedMetal.score >= 55 ? 'positive' : selectedMetal.score <= 35 ? 'negative' : 'neutral'],
@@ -3110,6 +3130,8 @@ function MetalsDashboard({ data }) {
       <div className="metals-pulse">{workspace?.status !== 'calculated' && <PreviewBadge />}<div><b>{workspace?.calculatedCount ? `${workspace.calculatedCount} of ${workspace.universeSize} series calculated` : 'Awaiting provider histories'}</b><small>technical-v1 · COMEX futures · COT</small></div></div>
     </section>
     <VerdictBanner verdict={workspace?.verdict} recordSection="metals" />
+    <AnswerPicture titleId="metals-picture-title" kicker="THE GOLD PICTURE" total={6} brief={metalsBrief} fallbackTitle="What the evidence says about gold today" onOpen={openMetalsEvidence}
+      footnote="Each answer reads a panel already on this page and describes today; none is a forecast. The gold composite above is shown as a state for the same reason: its replayed calls did not rank what followed." />
     <DataDisclosure data={data} message={workspace?.status === 'calculated' ? 'Spot metals prices come from front COMEX/CME futures via Yahoo Finance; scores, momentum, volatility, and RSI are technical-v1 calculations. ETF flows, physical-market indicators, and producer costs remain previews until dedicated feeds are connected.' : 'The metals workspace publishes once futures and miner histories are available.'} />
 
     <section className={`metal-asset-strip ${assets.length ? '' : 'preview-section'}`}>{assets.map((asset) => <button className={`metal-asset ${selectedMetal?.symbol === asset.symbol ? 'selected' : ''}`} onClick={() => setSelectedSymbol(asset.symbol)} key={asset.symbol}><span className="metal-symbol" style={{ '--metal-color': metalColors[asset.symbol] }}>{asset.symbol}</span><span><b>{asset.name}</b><small>{asset.regime}</small></span><span className="metal-price"><b>{formatPrice(asset.price)}</b><small className={(asset.change20d ?? 0) >= 0 ? 'positive' : 'negative'}>{Number.isFinite(asset.change20d) ? `${asset.change20d > 0 ? '+' : ''}${asset.change20d}%` : '—'} 20s</small></span><span className="metal-spark"><Sparkline color={metalColors[asset.symbol]} values={asset.sparkline ?? []} /></span></button>)}{!assets.length && <div className="equity-empty">Futures histories are required before metals can publish.</div>}</section>
@@ -3118,25 +3140,25 @@ function MetalsDashboard({ data }) {
     <section className="metals-focus-heading"><div><p className="section-kicker">{selectedMetal.symbol} RESEARCH MAP · CALCULATED</p><h2>{selectedMetal.name} <span>·</span> {selectedMetal.regime}</h2></div><span className="data-pill">technical-v1</span></section>
 
     <section className="metals-primary-grid">
-      <article className="metal-price-panel panel"><div className="panel-title"><div><p className="section-kicker">PRICE AND TECHNICALS</p><h3>{selectedMetal.trend ?? selectedMetal.regime}</h3></div><span className="data-pill">front future</span></div><div className="metal-quote"><b>{formatPrice(selectedMetal.price)}</b><span className={(selectedMetal.change20d ?? 0) >= 0 ? 'positive' : 'negative'}>{Number.isFinite(selectedMetal.change20d) ? `${selectedMetal.change20d > 0 ? '+' : ''}${selectedMetal.change20d}%` : '—'} (20 sessions)</span><small>USD, continuous front contract</small></div><div className="metal-chart"><Sparkline color={metalColors[selectedMetal.symbol]} values={selectedMetal.sparkline ?? []} /></div><div className="technical-grid">{technicalRows.map(([name, value, detail, tone]) => <div className="technical-item" key={name}><span>{name}</span><b className={tone}>{value}</b><small>{detail}</small></div>)}</div></article>
-      <article className={`metal-macro-panel panel ${macroRows.length ? '' : 'preview-section'}`}><div className="panel-title"><div><p className="section-kicker">MACRO READINGS · CALCULATED</p><h3>Dollar and liquidity backdrop</h3></div>{macroRows.length ? null : <PreviewBadge />}</div><div className="metal-macro-list">{macroRows.map(([name, state, detail, tone]) => <div className="metal-macro-row" key={name}><div><b>{name}</b><small>{detail}</small></div><span className={tone}>{state}</span></div>)}{!macroRows.length && <div className="equity-empty">Macro readings require the liquidity snapshot.</div>}</div><div className="macro-conclusion"><span>Model read</span><p>{macro ? `A ${macro.dollar.score >= 55 ? 'firm' : 'soft'} dollar (${macro.dollar.score}/100) with ${macro.globalLiquidity.regime.toLowerCase()} global liquidity (${macro.globalLiquidity.score}/100) frames the monetary backdrop for ${selectedMetal.name.toLowerCase()}.` : 'Waiting on stored FRED histories to frame the monetary backdrop.'}</p></div></article>
+      <article id="metals-trend" className="metal-price-panel panel"><div className="panel-title"><div><p className="section-kicker">PRICE AND TECHNICALS</p><h3>{selectedMetal.trend ?? selectedMetal.regime}</h3></div><span className="data-pill">front future</span></div><div className="metal-quote"><b>{formatPrice(selectedMetal.price)}</b><span className={(selectedMetal.change20d ?? 0) >= 0 ? 'positive' : 'negative'}>{Number.isFinite(selectedMetal.change20d) ? `${selectedMetal.change20d > 0 ? '+' : ''}${selectedMetal.change20d}%` : '—'} (20 sessions)</span><small>USD, continuous front contract</small></div><div className="metal-chart"><Sparkline color={metalColors[selectedMetal.symbol]} values={selectedMetal.sparkline ?? []} /></div><div className="technical-grid">{technicalRows.map(([name, value, detail, tone]) => <div className="technical-item" key={name}><span>{name}</span><b className={tone}>{value}</b><small>{detail}</small></div>)}</div></article>
+      <article id="metals-macro" className={`metal-macro-panel panel ${macroRows.length ? '' : 'preview-section'}`}><div className="panel-title"><div><p className="section-kicker">MACRO READINGS · CALCULATED</p><h3>Dollar and liquidity backdrop</h3></div>{macroRows.length ? null : <PreviewBadge />}</div><div className="metal-macro-list">{macroRows.map(([name, state, detail, tone]) => <div className="metal-macro-row" key={name}><div><b>{name}</b><small>{detail}</small></div><span className={tone}>{state}</span></div>)}{!macroRows.length && <div className="equity-empty">Macro readings require the liquidity snapshot.</div>}</div><div className="macro-conclusion"><span>Model read</span><p>{macro ? `A ${macro.dollar.score >= 55 ? 'firm' : 'soft'} dollar (${macro.dollar.score}/100) with ${macro.globalLiquidity.regime.toLowerCase()} global liquidity (${macro.globalLiquidity.score}/100) frames the monetary backdrop for ${selectedMetal.name.toLowerCase()}.` : 'Waiting on stored FRED histories to frame the monetary backdrop.'}</p></div></article>
     </section>
     </> }
 
     <section className="metals-section-heading"><div><p className="section-kicker">VALUATION AND ACCUMULATION</p><h2>Is gold cheap against itself and against what it is measured in?</h2></div></section>
     <section className="metals-research-grid">
-      <AccumulationPanel accumulation={data.accumulation} only="gold" title="GOLD ACCUMULATION" />
+      <AccumulationPanel id="metals-accumulation" accumulation={data.accumulation} only="gold" title="GOLD ACCUMULATION" />
       <AccumulationPanel accumulation={data.accumulation} />
       <div className="metals-research-wide"><HardMoneyPanel hardMoney={data.hardMoney} /></div>
-      <div className="metals-research-wide"><GoldRealYieldPanel /></div>
+      <div id="metals-real-yield" className="metals-research-wide"><GoldRealYieldPanel /></div>
       <div className="metals-research-wide"><GoldSilverRecordPanel /></div>
       <div className="metals-research-wide"><VerdictRecordPanel section="metals" liveCall={workspace?.verdict?.call ?? null} /></div>
     </section>
 
     <section className="metals-section-heading"><div><p className="section-kicker">POSITIONING AND FLOWS</p><h2>Who owns the trade, and where is demand coming from?</h2></div><span className="data-pill">{cot ? 'COT calculated' : 'Flows preview'}</span></section>
     <section className="metals-flow-grid">
-      <article className={`positioning-panel panel ${cot ? '' : 'preview-section'}`}><div className="panel-title"><div><StatusKicker label="CFTC COT · GOLD" published={Boolean(cot) && Number.isFinite(cot.percentile)} /><h3>Leveraged-fund exposure</h3></div><span className="positioning-percentile">{cot && Number.isFinite(cot.percentile) ? ordinal(cot.percentile) : '—'}<span> pct.</span></span></div><div className="positioning-rows"><div><span>Managed Money</span><i><b className="managed" style={{ width: `${Math.min(workspace?.cotDetail?.managedMoney?.percentile ?? 0, 100)}%` }}></b></i><small>{Number.isFinite(workspace?.cotDetail?.managedMoney?.net) ? `${workspace.cotDetail.managedMoney.net.toLocaleString()} (${ordinal(workspace.cotDetail.managedMoney.percentile)})` : '—'}</small></div><div><span>Producers / Merchants</span><i><b className="producer" style={{ width: `${Math.min(Math.abs(workspace?.cotDetail?.producers?.percentile ?? 0), 100)}%` }}></b></i><small>{Number.isFinite(workspace?.cotDetail?.producers?.net) ? `${workspace.cotDetail.producers.net.toLocaleString()} (${ordinal(workspace.cotDetail.producers.percentile)})` : '—'}</small></div><div><span>Swap Dealers</span><i><b className="swap" style={{ width: `${Math.min(Math.abs(workspace?.cotDetail?.swapDealers?.percentile ?? 0), 100)}%` }}></b></i><small>{Number.isFinite(workspace?.cotDetail?.swapDealers?.net) ? `${workspace.cotDetail.swapDealers.net.toLocaleString()} (${ordinal(workspace.cotDetail.swapDealers.percentile)})` : '—'}</small></div><div><span>Net non-commercial</span><i><b className="commercial" style={{ width: `${Math.min(((cot?.percentile ?? 0)), 100)}%` }}></b></i><small>{Number.isFinite(cot?.netNoncomm) ? `${cot.netNoncomm.toLocaleString()} · ${cot.crowd}` : '—'}</small></div><div><span>Weekly change (MM)</span><i><b className="speculator" style={{ width: `${Math.min(Math.abs(workspace?.cotDetail?.managedMoney?.weeklyChange ?? 0) / 200, 100)}%` }}></b></i><small>{Number.isFinite(workspace?.cotDetail?.managedMoney?.weeklyChange) ? `${workspace.cotDetail.managedMoney.weeklyChange >= 0 ? '+' : ''}${workspace.cotDetail.managedMoney.weeklyChange.toLocaleString()}` : '—'}</small></div></div><div className="positioning-note"><b>Positioning percentile</b><span>{cot ? `Three-year ranks of net disaggregated and legacy speculative positions as of ${workspace?.cotDetail?.asOf ?? cot.asOf}.` : 'CFTC commitment histories are required before positioning can publish.'}</span></div></article>
-      <article className={`metal-flows-panel panel ${workspace?.ratios?.goldSilver?.status === 'calculated' || workspace?.ratios?.goldCopper?.status === 'calculated' ? '' : 'preview-section'}`}><div className="panel-title"><div><StatusKicker label="CROSS RATIOS" published={workspace?.ratios?.goldSilver?.status === 'calculated'} /><h3>Relative monetary vs industrial demand</h3></div><span className="data-pill">1Y percentile</span></div><div className="metal-flow-row" key="gs"><div><b>Gold / Silver</b><small>{workspace?.ratios?.goldSilver?.status === 'calculated' ? `${workspace.ratios.goldSilver.change20d >= 0 ? '+' : ''}${workspace.ratios.goldSilver.change20d}% 20d · ${workspace.ratios.goldSilver.observations} obs` : workspace?.ratios?.goldSilver?.reason}</small></div><span className="neutral">{workspace?.ratios?.goldSilver?.status === 'calculated' ? `${workspace.ratios.goldSilver.ratio} · ${ordinal(workspace.ratios.goldSilver.percentile)}` : '—'}</span></div><div className="metal-flow-row" key="gc"><div><b>Gold / Copper</b><small>{workspace?.ratios?.goldCopper?.status === 'calculated' ? `${workspace.ratios.goldCopper.change20d >= 0 ? '+' : ''}${workspace.ratios.goldCopper.change20d}% 20d · ${workspace.ratios.goldCopper.read}` : workspace?.ratios?.goldCopper?.reason}</small></div><span className="neutral">{workspace?.ratios?.goldCopper?.status === 'calculated' ? `${workspace.ratios.goldCopper.ratio} · ${ordinal(workspace.ratios.goldCopper.percentile)}` : '—'}</span></div><div className="cost-callout"><span>What matters next</span><p>A rising gold/silver ratio signals a monetary bid dominating industrial demand; the gold/copper ratio is a compact risk-appetite gauge for the metals complex.</p></div></article>
+      <article id="metals-positioning" className={`positioning-panel panel ${cot ? '' : 'preview-section'}`}><div className="panel-title"><div><StatusKicker label="CFTC COT · GOLD" published={Boolean(cot) && Number.isFinite(cot.percentile)} /><h3>Leveraged-fund exposure</h3></div><span className="positioning-percentile">{cot && Number.isFinite(cot.percentile) ? ordinal(cot.percentile) : '—'}<span> pct.</span></span></div><div className="positioning-rows"><div><span>Managed Money</span><i><b className="managed" style={{ width: `${Math.min(workspace?.cotDetail?.managedMoney?.percentile ?? 0, 100)}%` }}></b></i><small>{Number.isFinite(workspace?.cotDetail?.managedMoney?.net) ? `${workspace.cotDetail.managedMoney.net.toLocaleString()} (${ordinal(workspace.cotDetail.managedMoney.percentile)})` : '—'}</small></div><div><span>Producers / Merchants</span><i><b className="producer" style={{ width: `${Math.min(Math.abs(workspace?.cotDetail?.producers?.percentile ?? 0), 100)}%` }}></b></i><small>{Number.isFinite(workspace?.cotDetail?.producers?.net) ? `${workspace.cotDetail.producers.net.toLocaleString()} (${ordinal(workspace.cotDetail.producers.percentile)})` : '—'}</small></div><div><span>Swap Dealers</span><i><b className="swap" style={{ width: `${Math.min(Math.abs(workspace?.cotDetail?.swapDealers?.percentile ?? 0), 100)}%` }}></b></i><small>{Number.isFinite(workspace?.cotDetail?.swapDealers?.net) ? `${workspace.cotDetail.swapDealers.net.toLocaleString()} (${ordinal(workspace.cotDetail.swapDealers.percentile)})` : '—'}</small></div><div><span>Net non-commercial</span><i><b className="commercial" style={{ width: `${Math.min(((cot?.percentile ?? 0)), 100)}%` }}></b></i><small>{Number.isFinite(cot?.netNoncomm) ? `${cot.netNoncomm.toLocaleString()} · ${cot.crowd}` : '—'}</small></div><div><span>Weekly change (MM)</span><i><b className="speculator" style={{ width: `${Math.min(Math.abs(workspace?.cotDetail?.managedMoney?.weeklyChange ?? 0) / 200, 100)}%` }}></b></i><small>{Number.isFinite(workspace?.cotDetail?.managedMoney?.weeklyChange) ? `${workspace.cotDetail.managedMoney.weeklyChange >= 0 ? '+' : ''}${workspace.cotDetail.managedMoney.weeklyChange.toLocaleString()}` : '—'}</small></div></div><div className="positioning-note"><b>Positioning percentile</b><span>{cot ? `Three-year ranks of net disaggregated and legacy speculative positions as of ${workspace?.cotDetail?.asOf ?? cot.asOf}.` : 'CFTC commitment histories are required before positioning can publish.'}</span></div></article>
+      <article id="metals-ratios" className={`metal-flows-panel panel ${workspace?.ratios?.goldSilver?.status === 'calculated' || workspace?.ratios?.goldCopper?.status === 'calculated' ? '' : 'preview-section'}`}><div className="panel-title"><div><StatusKicker label="CROSS RATIOS" published={workspace?.ratios?.goldSilver?.status === 'calculated'} /><h3>Relative monetary vs industrial demand</h3></div><span className="data-pill">1Y percentile</span></div><div className="metal-flow-row" key="gs"><div><b>Gold / Silver</b><small>{workspace?.ratios?.goldSilver?.status === 'calculated' ? `${workspace.ratios.goldSilver.change20d >= 0 ? '+' : ''}${workspace.ratios.goldSilver.change20d}% 20d · ${workspace.ratios.goldSilver.observations} obs` : workspace?.ratios?.goldSilver?.reason}</small></div><span className="neutral">{workspace?.ratios?.goldSilver?.status === 'calculated' ? `${workspace.ratios.goldSilver.ratio} · ${ordinal(workspace.ratios.goldSilver.percentile)}` : '—'}</span></div><div className="metal-flow-row" key="gc"><div><b>Gold / Copper</b><small>{workspace?.ratios?.goldCopper?.status === 'calculated' ? `${workspace.ratios.goldCopper.change20d >= 0 ? '+' : ''}${workspace.ratios.goldCopper.change20d}% 20d · ${workspace.ratios.goldCopper.read}` : workspace?.ratios?.goldCopper?.reason}</small></div><span className="neutral">{workspace?.ratios?.goldCopper?.status === 'calculated' ? `${workspace.ratios.goldCopper.ratio} · ${ordinal(workspace.ratios.goldCopper.percentile)}` : '—'}</span></div><div className="cost-callout"><span>What matters next</span><p>A rising gold/silver ratio signals a monetary bid dominating industrial demand; the gold/copper ratio is a compact risk-appetite gauge for the metals complex.</p></div></article>
       <article className="physical-market-panel panel preview-section"><div className="panel-title"><div><p className="section-kicker">PHYSICAL VS PAPER</p><h3>Market plumbing has no keyless source.</h3></div><PreviewBadge label="Inputs required" /></div>{physicalMarket.map(([name, requirement]) => <div className="physical-row" key={name}><div><b>{name}</b><small>{requirement}</small></div><span className="neutral">Unavailable</span></div>)}<p className="model-footnote">Spot-versus-paper dislocation is only meaningful when measured. Each row names the feed it needs; none is published on a keyless public endpoint, so none is estimated here.</p></article>
     </section>
 
@@ -3584,27 +3606,6 @@ function ScreenerTrackRecordPanel() {
 
 const MACRO_TAB_LABELS = { Liquidity: 'US liquidity', Global: 'Global liquidity', FX: 'USD & FX', Rates: 'Rates & growth' };
 
-/**
- * The Macro page's answers in plain words, each opening the tab that backs
- * it. See src/macroBrief.js for how each answer is read.
- */
-function MacroPicture({ brief, onOpen }) {
-  if (!brief?.cards?.length) return null;
-  return <section className="equity-picture panel" aria-labelledby="macro-picture-title">
-    <div className="panel-title"><div><p className="section-kicker">THE MACRO PICTURE · {brief.cards.length} OF 7 ANSWERED</p><h3 id="macro-picture-title">{brief.summary ?? 'What the macro models say today'}</h3></div></div>
-    <div className="equity-picture-grid">
-      {brief.cards.map((card) => <article className="equity-answer" key={card.key}>
-        <p className="equity-question">{card.question}</p>
-        <p className={`equity-answer-word equity-answer-${card.tone}`}>{card.answer}</p>
-        {card.scale ? <ScaleMarker scale={card.scale} /> : null}
-        <p className="equity-answer-sentence">{card.sentence}</p>
-        <button type="button" className="equity-answer-link" onClick={() => onOpen(card.tab)}>Open {MACRO_TAB_LABELS[card.tab] ?? card.tab} <span aria-hidden="true">→</span></button>
-      </article>)}
-    </div>
-    <p className="model-footnote">Each answer reads a model already on this page and describes today; only the recession probability is a forecast. The tabs above hold each model's inputs, history and method.</p>
-  </section>;
-}
-
 function MacroDashboard({ data }) {
   const [activeModel, setActiveModel] = React.useState('Overview');
   const [correlationWindow, setCorrelationWindow] = React.useState('60D');
@@ -3715,7 +3716,9 @@ function MacroDashboard({ data }) {
     </section>
 
     <VerdictBanner verdict={data.liquidity?.macroVerdict} />
-    {activeModel === 'Overview' ? <MacroPicture brief={macroBrief} onOpen={openMacroTab} /> : null}
+    {activeModel === 'Overview' ? <AnswerPicture titleId="macro-picture-title" kicker="THE MACRO PICTURE" total={7} brief={macroBrief} fallbackTitle="What the macro models say today"
+      onOpen={(card) => openMacroTab(card.tab)} linkLabel={(card) => `Open ${MACRO_TAB_LABELS[card.tab] ?? card.tab} →`}
+      footnote="Each answer reads a model already on this page and describes today; only the recession probability is a forecast. The tabs above hold each model's inputs, history and method." /> : null}
 
     <section className="macro-section-heading"><div><p className="section-kicker">{activeModel === 'Overview' ? 'MACRO OVERVIEW' : activeModel === 'Liquidity' ? 'NET US LIQUIDITY' : activeModel === 'Global' ? 'GLOBAL CENTRAL-BANK LIQUIDITY' : activeModel === 'Risk' ? 'CROSS-ASSET CONFIRMATION' : activeModel === 'Correlations' ? 'RELATIONSHIP INTELLIGENCE' : activeModel === 'Rates' ? 'RATES, INFLATION & GROWTH' : activeModel === 'Consensus' ? 'CROSS-MODEL READ' : 'USD MACRO ENGINE'}</p><h2>{activeModel === 'Overview' ? 'What every model says, and what is live right now' : activeModel === 'Liquidity' ? 'The calculated drivers behind the impulse' : activeModel === 'Global' ? 'World central-bank liquidity in dollars' : activeModel === 'Risk' ? 'What markets are pricing now' : activeModel === 'Correlations' ? 'Correlations through the current regime' : activeModel === 'Rates' ? 'What the curve is pricing, and what growth proxies say' : activeModel === 'Consensus' ? 'Where the models agree, where they do not, and what is live' : 'Where macro points for the dollar'} {activeModel === 'Correlations' && regimeCorrelations?.status !== 'calculated' && <PreviewBadge label="Contains previews" />}</h2></div>{activeModel === 'Liquidity' && <span className="data-pill">13W calculated window</span>}{activeModel === 'Global' && <span className="data-pill">13W calculated window</span>}{activeModel === 'Correlations' && <div className="window-buttons">{[['20D', '20 obs'], ['60D', '60 obs'], ['1Y', '252 obs']].map(([item, label]) => <button className={correlationWindow === item ? 'selected' : ''} key={item} onClick={() => setCorrelationWindow(item)}>{label}</button>)}</div>}{activeModel === 'FX' && <span className="data-pill">FRED driver stack</span>}</section>
 

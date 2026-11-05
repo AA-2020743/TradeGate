@@ -1275,3 +1275,7 @@ html[data-theme='dark'] .method-note > summary { color: #a8dd9f; }
 }
 .btc-cycle-cell .scale-compact { width: 100%; max-width: 140px; margin: 4px 0 2px; }
 .macro-section-heading { scroll-margin-top: 80px; }
+#metals-trend, #metals-macro, #metals-accumulation, #metals-real-yield, #metals-positioning, #metals-ratios { scroll-margin-top: 80px; }
+/* The metal badge sits on the metal's own colour in both themes, so its text
+   stays near-black: the dark theme's light span colour read 1:1 on gold. */
+.metal-asset .metal-symbol, html[data-theme='dark'] .metal-asset .metal-symbol { color: #1d1a14; font-weight: 700; }
