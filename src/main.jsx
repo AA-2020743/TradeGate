@@ -3,7 +3,7 @@ import { createRoot } from 'react-dom/client';
 import './styles.css';
 import { describeTechnical } from './technicalSummary.js';
 import { buildEquityBrief } from './equityBrief.js';
-import { DivergingBars, PullChart, ScaleMarker } from './charts.jsx';
+import { DivergingBars, MagnitudeBars, PointsLine, PullChart, RangeChart, ScaleMarker } from './charts.jsx';
 import { heatShare } from './chartMath.js';
 import { changeOverSpan, formatPercent, formatSpanLabel, formatTimestamp, formatUsd, useEquityResearch, useLazyResource, useMarketHistory, usePlatformData, useTechnicalAnalytics } from './liveData.js';
 import { buildRoute, parseRoute } from './routing.js';
@@ -847,6 +847,12 @@ function SectorDispersionSection({ dispersion }) {
 }
 
 /** Where the index sits inside its own drawdown history. */
+/** A panel's methodology, folded under the reading it explains. */
+function MethodNote({ children }) {
+  if (!children || !String(children).trim()) return null;
+  return <details className="method-note"><summary>How it is measured</summary><p>{children}</p></details>;
+}
+
 function DrawdownProfilePanel({ drawdown, id }) {
   const status = drawdown?.status ?? 'unavailable';
   const published = status === 'calculated';
@@ -854,11 +860,19 @@ function DrawdownProfilePanel({ drawdown, id }) {
     <div className="panel-title"><div><p className="section-kicker">DRAWDOWN PROFILE · {status.toUpperCase()}</p><h3>{published ? drawdown.state : 'Awaiting a multi-year close history'}</h3></div>{published ? <span className="data-pill">{drawdown.observations} sessions</span> : null}</div>
     {published ? <>
       <div className="detail-score"><span>Below the running peak</span><b>{drawdown.drawdownPercent}%</b><small>{drawdown.inDrawdown ? `${drawdown.sessionsSincePeak} sessions since the ${drawdown.peakDate} peak of ${drawdown.peak}` : `New high — this history spent ${drawdown.underwaterSharePercent}% of its sessions below a prior peak`}</small></div>
+      <MagnitudeBars
+        label="Today's fall from the peak against this history's typical and worst completed falls"
+        rows={[
+          { key: 'now', label: 'Today', sub: drawdown.inDrawdown ? `${drawdown.sessionsSincePeak} sessions since the ${drawdown.peakDate} peak` : 'at a new high', value: drawdown.drawdownPercent, display: `${drawdown.drawdownPercent}%`, emphasis: true, note: `Deeper than ${drawdown.depthPercentile}% of sessions in this history` },
+          { key: 'typical', label: 'Typical fall here', sub: `median of ${drawdown.completedEpisodes} completed`, value: drawdown.medianCompletedTrough, display: `${drawdown.medianCompletedTrough}%` },
+          { key: 'worst', label: 'Worst fall here', sub: drawdown.deepest ? `from the ${drawdown.deepest.peakDate} peak` : null, value: drawdown.deepest?.trough, display: `${drawdown.deepest?.trough}%`, note: drawdown.deepest ? `${drawdown.deepest.recoverySessions} sessions to recover` : null },
+        ]}
+        caption={`Falls from the running peak of this ${drawdown.observations}-session history.`}
+      />
       <div className="stat-row"><span><strong>Depth percentile</strong><small>Against every session in this history</small></span><b>{ordinal(drawdown.depthPercentile)}</b></div>
-      <div className="stat-row"><span><strong>Completed episodes</strong><small>{Number.isFinite(drawdown.medianCompletedTrough) ? `Median trough ${drawdown.medianCompletedTrough}%` : 'None completed inside this window'}</small></span><b>{drawdown.completedEpisodes}</b></div>
-      <div className="stat-row"><span><strong>Worst completed episode</strong><small>{drawdown.deepest ? `From the ${drawdown.deepest.peakDate} peak · ${drawdown.deepest.recoverySessions} sessions to recover` : 'No episode has completed inside this window'}</small></span><b>{drawdown.deepest ? `${drawdown.deepest.trough}%` : '—'}</b></div>
     </> : <div className="equity-empty">{drawdown?.reason ?? 'A multi-year daily close history is required.'}</div>}
-    <p className="model-footnote">{published ? `${drawdown.read} Measured on ${drawdown.source ?? 'the available close history'}.` : ''} {drawdown?.methodology ?? ''}</p>
+    {published ? <p className="panel-read">{drawdown.read}</p> : null}
+    <MethodNote>{`${drawdown?.methodology ?? ''}${published ? ` Measured on ${drawdown.source ?? 'the available close history'}.` : ''}`}</MethodNote>
   </article>;
 }
 
@@ -1139,11 +1153,22 @@ function VolatilityTermPanel({ volatility }) {
   const published = status !== 'unavailable';
   return <article className={`panel ${published ? '' : 'preview-section'}`}>
     <div className="panel-title"><div><p className="section-kicker">VOLATILITY TERM STRUCTURE · {status.toUpperCase()}</p><h3>{published ? volatility.state ?? 'Term structure incomplete' : 'Awaiting a multi-year close history'}</h3></div>{published && Number.isFinite(volatility.ratio) ? <span className="data-pill">{volatility.ratio} short/long</span> : null}</div>
-    {published ? (volatility.terms ?? []).map((term) => <div className="stat-row" key={term.window}>
-      <span><strong>{`${term.window}-session realized`}</strong><small>{Number.isFinite(term.percentile) ? `${ordinal(term.percentile)} percentile of ${term.rankedAgainst} readings` : `Ranked against only ${term.rankedAgainst} readings`}</small></span>
-      <b>{Number.isFinite(term.annualizedPercent) ? `${term.annualizedPercent}%` : '—'}</b>
-    </div>) : <div className="equity-empty">{volatility?.reason ?? 'A multi-year daily close history is required.'}</div>}
-    <p className="model-footnote">{published ? volatility.read : ''} {volatility?.methodology ?? ''}</p>
+    {published ? <MagnitudeBars
+      tone="pos"
+      label="Annualized realized volatility over each window"
+      rows={(volatility.terms ?? []).map((term, index, terms) => ({
+        key: String(term.window),
+        label: `Last ${term.window} sessions`,
+        sub: Number.isFinite(term.percentile) ? `${ordinal(term.percentile)} percentile of its own history` : `ranked against only ${term.rankedAgainst} readings`,
+        value: term.annualizedPercent,
+        display: Number.isFinite(term.annualizedPercent) ? `${term.annualizedPercent}%` : '—',
+        emphasis: term.window === Math.min(...terms.map((entry) => entry.window)),
+        note: Number.isFinite(term.percentile) ? `Higher than ${term.percentile}% of its last ${term.rankedAgainst} readings` : null,
+      }))}
+      caption="Annualized volatility of daily returns. The most recent window is highlighted: well above the longer ones is a shock in progress, well below is a calm patch."
+    /> : <div className="equity-empty">{volatility?.reason ?? 'A multi-year daily close history is required.'}</div>}
+    {published ? <p className="panel-read">{volatility.read}</p> : null}
+    <MethodNote>{volatility?.methodology}</MethodNote>
   </article>;
 }
 
@@ -1506,6 +1531,19 @@ function FactorReturnsPanel({ factors }) {
       {published ? <span className={`data-pill ${factors.stale ? 'negative' : ''}`}>data to {factors.asOf}</span> : null}
     </div>
     {published ? <>
+      <DivergingBars
+        rows={factors.factors.filter((factor) => factor.status === 'calculated' && Number.isFinite(factor.returns?.year)).sort((left, right) => right.returns.year - left.returns.year).map((factor) => ({
+          key: factor.key,
+          name: factor.name,
+          sub: factor.description,
+          bar: factor.returns.year,
+          dot: Number.isFinite(factor.returns.quarter) ? factor.returns.quarter : null,
+          note: Number.isFinite(factor.yearPercentile) ? `12-month return higher than ${factor.yearPercentile}% of its history` : null,
+        }))}
+        barLabel="Last 12 months"
+        dotLabel="Last 3 months"
+        caption="Long-short factor returns: blue factors made money over the year, red lost it; the dot is the last three months on the same scale."
+      />
       <div className="factor-head"><span>Factor</span><span>1M</span><span>3M</span><span>12M</span><span>12M vs history</span><span>Drawdown</span><span>Vol vs history</span></div>
       {factors.factors.map((factor) => factor.status !== 'calculated'
         ? <div className="factor-row" key={factor.key}><span><b>{factor.name}</b></span><small className="treasury-missing">{factor.reason}</small></div>
@@ -2488,6 +2526,19 @@ function ExpectedMovePanel({ expectedMove }) {
         : null}
     </div>
     {published ? <>
+      <RangeChart
+        center={expectedMove.spot}
+        centerLabel="Latest close"
+        rows={(expectedMove.horizons ?? []).map((horizon) => ({
+          key: String(horizon.horizon),
+          label: `Next ${horizon.horizon} sessions`,
+          sub: `±${horizon.sigmaPercent}%`,
+          lower: horizon.lower,
+          upper: horizon.upper,
+          note: Number.isFinite(horizon.heldPercent) ? `Held ${horizon.heldPercent}% of ${horizon.testedWindows} past windows; a normal distribution claims 68%` : null,
+        }))}
+        caption="A one-standard-deviation band from recent volatility: where about two moves in three would land if returns were normal. The table shows how often it has actually held."
+      />
       <div className="expected-move-head"><span>Horizon</span><span>Band</span><span>Held</span><span>Worst break</span></div>
       {(expectedMove.horizons ?? []).map((horizon) => <div className="expected-move-row" key={horizon.horizon}>
         <span><strong>{horizon.horizon} sessions</strong><small>±{horizon.sigmaPercent}%</small></span>
@@ -2503,7 +2554,8 @@ function ExpectedMovePanel({ expectedMove }) {
         <b className="negative">{expectedMove.excessKurtosis}</b>
       </div> : null}
     </> : <div className="equity-empty">{expectedMove?.reason ?? 'A multi-year daily close history is required.'}</div>}
-    <p className="model-footnote">{published ? expectedMove.read : ''} {expectedMove?.methodology ?? ''}{expectedMove?.source ? ` Measured on ${expectedMove.source}.` : ''}</p>
+    {published ? <p className="panel-read">{expectedMove.read}</p> : null}
+    <MethodNote>{`${expectedMove?.methodology ?? ''}${expectedMove?.source ? ` Measured on ${expectedMove.source}.` : ''}`}</MethodNote>
   </article>;
 }
 
@@ -2722,7 +2774,7 @@ function EquitiesDashboard({ platformData }) {
 
     <section id="equity-sectors" className="equity-section-heading"><div><p className="section-kicker">SECTOR AND SUBSECTOR ROTATION</p><h2>Relative strength with stored history</h2></div><EquityStatus status={rotation?.status} /></section>
     {(rotation?.enteringLeadership?.length || rotation?.leavingLeadership?.length) ? <p className="watchlist-summary">Over the last {rotation.rotationLookbackSessions} sessions {rotation.enteringLeadership.length ? `${rotation.enteringLeadership.join(', ')} rotated into leadership` : 'no sector rotated into leadership'}{rotation.leavingLeadership.length ? ` · ${rotation.leavingLeadership.join(', ')} rolled out of it` : ' · none rolled out of it'}</p> : null}
-    {rotation?.sectors?.some((sector) => Number.isFinite(sector.relative60)) ? <div className="panel">
+    {rotation?.sectors?.some((sector) => Number.isFinite(sector.relative60)) ? <div className="panel chart-panel">
       <DivergingBars
         rows={[...rotation.sectors].filter((sector) => Number.isFinite(sector.relative60)).sort((left, right) => right.relative60 - left.relative60).map((sector) => ({
           key: sector.symbol,
@@ -2799,6 +2851,13 @@ function EquitiesDashboard({ platformData }) {
           <div className="panel-title"><div><StatusKicker label="MARKET SENTIMENT" published={hasSentiment} /><h3>CNN Fear &amp; Greed composite</h3></div><span className="data-pill">{hasSentiment ? fearGreed.rating : 'Unconfigured'}</span></div>
           {hasSentiment ? <>
             <div className="sentiment-hero"><strong>{fearGreed.score}</strong><div><b>{fearGreed.rating}</b><small>{Number.isFinite(fearGreed.percentile1y) ? `${ordinal(fearGreed.percentile1y)} percentile of trailing-year readings · ${fearGreed.observations} observations` : 'Trailing-year history unavailable'}</small></div></div>
+            <PointsLine label="CNN Fear & Greed a year, a month and a week ago, yesterday and now" points={[
+              { key: 'year', label: 'One year ago', short: '1 yr ago', value: fearGreed.oneYearAgo },
+              { key: 'month', label: 'One month ago', short: '1 mo ago', value: fearGreed.oneMonthAgo },
+              { key: 'week', label: 'One week ago', short: '1 wk ago', value: fearGreed.oneWeekAgo },
+              { key: 'previous', label: 'Previous close', short: 'Yesterday', value: fearGreed.previousClose },
+              { key: 'now', label: 'Now', short: 'Now', value: fearGreed.score, note: fearGreed.rating },
+            ]} />
             <div className="equity-rotation-head sentiment-head"><span>Reference points</span><span>Score</span></div>
             <div className="equity-rotation-row sentiment-row"><span><strong>Previous close</strong><small>Last published session</small></span><b>{Number.isFinite(fearGreed.previousClose) ? Math.round(fearGreed.previousClose * 10) / 10 : '—'}</b></div>
             <div className="equity-rotation-row sentiment-row"><span><strong>One week ago</strong><small>Weekly comparison</small></span><b>{Number.isFinite(fearGreed.oneWeekAgo) ? Math.round(fearGreed.oneWeekAgo * 10) / 10 : '—'}</b></div>

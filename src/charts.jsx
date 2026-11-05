@@ -152,3 +152,96 @@ export function DivergingBars({ rows, barLabel, dotLabel, unit = '%', caption, f
     {node}
   </figure>;
 }
+
+/**
+ * Magnitudes from one baseline, one bar per row, the value printed at the
+ * bar's end. Rows marked `emphasis` take the accent colour and the rest stay
+ * a context grey, for charts where one bar is the point and the others are
+ * there to judge it by ("today's fall against the typical and the worst").
+ */
+export function MagnitudeBars({ rows, tone = 'neg', caption, label }) {
+  const { box, handlers, node } = useTooltip();
+  const usable = rows.filter((row) => Number.isFinite(row.value));
+  if (!usable.length) return null;
+  const maximum = Math.max(...usable.map((row) => Math.abs(row.value))) || 1;
+  return <figure className="viz magnitude-chart" ref={box} aria-label={label}>
+    <ul className="magnitude-rows">
+      {usable.map((row) => <li key={row.key} className="magnitude-row" tabIndex={0} aria-label={`${row.label}: ${row.display}${row.note ? `, ${row.note}` : ''}`}
+        {...handlers(<TipBody value={row.display} label={row.label} lines={[row.note]} />)}>
+        <span className="magnitude-name">{row.label}{row.sub ? <small>{row.sub}</small> : null}</span>
+        <span className="magnitude-track">
+          <b className={`magnitude-bar ${row.emphasis ? `magnitude-${tone}` : 'magnitude-context'}`} style={{ width: `${Math.max(1.5, (Math.abs(row.value) / maximum) * 100)}%` }} />
+        </span>
+        <span className="magnitude-value">{row.display}</span>
+      </li>)}
+    </ul>
+    {caption ? <figcaption>{caption}</figcaption> : null}
+    {node}
+  </figure>;
+}
+
+/**
+ * Price bands around today's price, one row per horizon, on one shared price
+ * axis so a wider band reads as wider. The line through every row is today.
+ */
+export function RangeChart({ rows, center, centerLabel, format = (value) => value.toFixed(2), caption }) {
+  const { box, handlers, node } = useTooltip();
+  const usable = rows.filter((row) => Number.isFinite(row.lower) && Number.isFinite(row.upper));
+  if (!usable.length || !Number.isFinite(center)) return null;
+  const low = Math.min(center, ...usable.map((row) => row.lower));
+  const high = Math.max(center, ...usable.map((row) => row.upper));
+  const pad = (high - low) * 0.06 || Math.abs(center) * 0.01 || 1;
+  const at = (value) => ((value - (low - pad)) / ((high + pad) - (low - pad))) * 100;
+  return <figure className="viz range-chart" ref={box}>
+    <ul className="range-rows">
+      {usable.map((row) => <li key={row.key} className="range-row" tabIndex={0} aria-label={`${row.label}: ${format(row.lower)} to ${format(row.upper)}${row.note ? `, ${row.note}` : ''}`}
+        {...handlers(<TipBody value={`${format(row.lower)} – ${format(row.upper)}`} label={row.label} lines={[row.sub, row.note]} />)}>
+        <span className="range-name">{row.label}<small>{row.sub ? `${row.sub} · ` : ''}{format(row.lower)} – {format(row.upper)}</small></span>
+        <span className="range-track">
+          <i className="range-center" style={{ left: `${at(center)}%` }} />
+          <b className="range-band" style={{ left: `${at(row.lower)}%`, width: `${at(row.upper) - at(row.lower)}%` }} />
+        </span>
+      </li>)}
+    </ul>
+    <p className="range-center-label"><i className="range-key" />{centerLabel ?? 'Today'}: {format(center)}</p>
+    {caption ? <figcaption>{caption}</figcaption> : null}
+    {node}
+  </figure>;
+}
+
+/**
+ * A handful of readings over time on a 0-100 scale, joined by a line, with
+ * the latest emphasised and labelled. Each point is a hover and focus target.
+ */
+export function PointsLine({ points, low = 'Fear', high = 'Greed', label }) {
+  const { box, handlers, node } = useTooltip();
+  const usable = points.filter((point) => Number.isFinite(point.value));
+  if (usable.length < 2) return null;
+  const width = 320;
+  const height = 130;
+  const left = 34;
+  const right = 18;
+  const top = 12;
+  const bottom = 26;
+  const x = (index) => left + ((width - left - right) * index) / (usable.length - 1);
+  const y = (value) => top + ((height - top - bottom) * (100 - Math.max(0, Math.min(100, value)))) / 100;
+  const path = usable.map((point, index) => `${index ? 'L' : 'M'}${x(index).toFixed(1)},${y(point.value).toFixed(1)}`).join(' ');
+  const last = usable.at(-1);
+  return <figure className="viz points-line" ref={box}>
+    <svg viewBox={`0 0 ${width} ${height}`} role="img" aria-label={label ?? usable.map((point) => `${point.label} ${Math.round(point.value)}`).join(', ')}>
+      {[0, 50, 100].map((tick) => <line key={tick} className={tick === 50 ? 'points-mid' : 'points-grid'} x1={left} x2={width - right} y1={y(tick)} y2={y(tick)} />)}
+      <text className="points-axis" x={left - 6} y={y(100) + 4} textAnchor="end">{high}</text>
+      <text className="points-axis" x={left - 6} y={y(50) + 4} textAnchor="end">50</text>
+      <text className="points-axis" x={left - 6} y={y(0) + 4} textAnchor="end">{low}</text>
+      <path className="points-path" d={path} />
+      {usable.map((point, index) => <g key={point.key} tabIndex={0} className="points-hit" aria-label={`${point.label}: ${Math.round(point.value)} of 100`}
+        {...handlers(<TipBody value={`${Math.round(point.value)} / 100`} label={point.label} lines={[point.note]} />)}>
+        <circle cx={x(index)} cy={y(point.value)} r="12" className="points-target" />
+        <circle cx={x(index)} cy={y(point.value)} r={point === last ? 5.5 : 4} className={point === last ? 'points-dot points-last' : 'points-dot'} />
+        <text className="points-axis" x={x(index)} y={height - 8} textAnchor="middle">{point.short ?? point.label}</text>
+      </g>)}
+      <text className="points-value" x={x(usable.length - 1) - 10} y={y(last.value) - 10} textAnchor="end">{Math.round(last.value)}</text>
+    </svg>
+    {node}
+  </figure>;
+}

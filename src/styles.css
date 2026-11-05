@@ -1111,7 +1111,8 @@ html[data-theme='dark'] .verdict-view-toggle { color: #a8dd9f; }
 .scale-value { font-weight: 700; color: var(--viz-ink); text-align: center; }
 
 /* Signed values on one axis: a bar and, optionally, a dot. */
-.diverging-chart { margin: 4px 0 14px; padding: 16px 18px 12px; }
+.diverging-chart { margin: 4px 0 14px; }
+.chart-panel { padding: 16px 18px 4px; margin-bottom: 14px; }
 .diverging-legend { display: flex; flex-wrap: wrap; gap: 6px 18px; font-size: 12px; color: var(--viz-ink-2); }
 .diverging-legend > span { display: inline-flex; align-items: center; }
 .diverging-legend .viz-key:first-child { margin-left: 0; }
@@ -1138,7 +1139,7 @@ html[data-theme='dark'] .verdict-view-toggle { color: #a8dd9f; }
   .pull-legend > span { flex: 1 1 0; }
   .pull-legend > span:last-child { text-align: right; }
   .diverging-row, .diverging-axis { grid-template-columns: minmax(0, 38%) minmax(0, 1fr) 50px; gap: 8px; }
-  .diverging-chart { padding: 14px 10px 10px; }
+  .chart-panel { padding: 14px 10px 4px; }
 }
 
 /* Correlation heatmap: blue moves with the driver, orange against it. */
@@ -1156,3 +1157,70 @@ html[data-theme='dark'] { --viz-opp: #d95926; }
 .brief-stance { display: flex; flex-direction: column; align-items: flex-start; }
 .brief-score { margin-top: 3px; font: 600 10.5px 'DM Mono', monospace; color: var(--viz-ink-2); }
 @media (max-width: 760px) { .brief-stance { align-items: flex-end; } }
+
+/* Magnitude bars: one accent bar judged against grey context bars. */
+:root { --viz-context: #9da199; }
+html[data-theme='dark'] { --viz-context: #5d675f; }
+.magnitude-chart { margin: 12px 0 6px; }
+.magnitude-rows { list-style: none; margin: 0; padding: 0; }
+.magnitude-row { display: grid; grid-template-columns: minmax(0, 42%) minmax(0, 1fr) 62px; gap: 10px; align-items: center; padding: 4px; border-radius: 6px; outline: none; }
+.magnitude-row:hover, .magnitude-row:focus-visible { background: rgba(127, 127, 127, 0.08); }
+.magnitude-row:focus-visible { box-shadow: inset 0 0 0 2px var(--viz-pos); }
+.magnitude-name { display: flex; flex-direction: column; font-size: 12px; font-weight: 600; min-width: 0; }
+.magnitude-name small { font-weight: 400; font-size: 10.5px; color: var(--viz-ink-2); }
+.magnitude-track { position: relative; height: 14px; border-left: 1px solid var(--viz-axis); }
+.magnitude-bar { position: absolute; left: 0; top: 2px; height: 10px; border-radius: 0 4px 4px 0; }
+.magnitude-neg { background: var(--viz-neg); }
+.magnitude-pos { background: var(--viz-pos); }
+.magnitude-context { background: var(--viz-context); }
+.magnitude-value { text-align: right; font: 600 12px 'DM Mono', monospace; color: var(--viz-ink); }
+
+/* Price bands around today. */
+.range-chart { margin: 12px 0 6px; }
+.range-rows { list-style: none; margin: 0; padding: 0; }
+.range-row { display: grid; grid-template-columns: 92px minmax(0, 1fr); gap: 10px; align-items: center; padding: 6px 4px; border-radius: 6px; outline: none; }
+.range-row:hover, .range-row:focus-visible { background: rgba(127, 127, 127, 0.08); }
+.range-row:focus-visible { box-shadow: inset 0 0 0 2px var(--viz-pos); }
+.range-name { display: flex; flex-direction: column; font-size: 12px; font-weight: 600; }
+.range-name small { font-weight: 400; font-size: 10.5px; color: var(--viz-ink-2); }
+.range-track { position: relative; height: 34px; }
+.range-center { position: absolute; top: 0; bottom: 0; width: 2px; margin-left: -1px; background: var(--viz-ink); opacity: 0.55; }
+.range-band { position: absolute; top: 6px; height: 10px; border-radius: 4px; background: color-mix(in srgb, var(--viz-pos) 45%, var(--viz-mid)); }
+.range-end { position: absolute; top: 19px; font: 10.5px 'DM Mono', monospace; font-style: normal; color: var(--viz-ink-2); white-space: nowrap; }
+.range-end-low { transform: translateX(-100%); padding-right: 2px; }
+.range-end-high { padding-left: 2px; }
+.range-center-label { margin: 6px 0 0; font-size: 11.5px; color: var(--viz-ink-2); }
+.range-key { display: inline-block; width: 2px; height: 11px; margin: 0 6px -1px 0; background: var(--viz-ink); opacity: 0.55; }
+
+/* A few readings over time on a 0-100 scale. */
+.points-line { margin: 10px 0 4px; max-width: 460px; }
+.points-line svg { display: block; width: 100%; height: auto; overflow: visible; }
+.points-grid { stroke: var(--viz-mid); stroke-width: 1; }
+.points-mid { stroke: var(--viz-axis); stroke-width: 1; }
+.points-axis { font: 9.5px system-ui, sans-serif; fill: var(--viz-ink-2); }
+.points-path { fill: none; stroke: var(--viz-pos); stroke-width: 2; stroke-linejoin: round; stroke-linecap: round; }
+.points-dot { fill: var(--viz-pos); stroke: var(--viz-ring); stroke-width: 2; }
+.points-last { fill: var(--viz-ink); }
+.points-target { fill: transparent; }
+.points-hit { outline: none; cursor: default; }
+.points-hit:focus-visible .points-target { stroke: var(--viz-pos); stroke-width: 2; }
+.points-value { font: 700 12px system-ui, sans-serif; fill: var(--viz-ink); }
+
+/* Long method notes fold away under the reading they explain. */
+.method-note { margin-top: 10px; }
+.method-note > summary { cursor: pointer; font-size: 11.5px; font-weight: 600; color: #3f6a3a; width: fit-content; }
+html[data-theme='dark'] .method-note > summary { color: #a8dd9f; }
+.method-note > p { margin: 6px 0 0; font-size: 11px; line-height: 1.5; color: var(--viz-ink-2); }
+.panel-read { margin: 10px 0 0; font-size: 12px; line-height: 1.5; }
+/* Charts reflow by the width of the card they sit in, not the window. */
+.magnitude-chart, .range-chart, .diverging-chart { container-type: inline-size; }
+.range-track { height: 22px; }
+@container (max-width: 340px) {
+  .magnitude-row { grid-template-columns: minmax(0, 1fr) 58px; row-gap: 3px; }
+  .magnitude-name { grid-column: 1 / -1; }
+  .range-row { grid-template-columns: minmax(0, 1fr); row-gap: 2px; }
+  .diverging-row, .diverging-axis { grid-template-columns: minmax(0, 1fr) 52px; row-gap: 2px; }
+  .diverging-name { grid-column: 1 / -1; }
+  .diverging-axis > span:first-child { display: none; }
+}
+.range-center { z-index: 1; }
